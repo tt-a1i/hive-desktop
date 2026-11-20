@@ -79,6 +79,7 @@ pub struct DiffSettings {
     pub default_diff_mode: PreferredDiffMode,
     pub inline_diff: InlineDiffMode,
     pub collapse_multi_file_diffs: bool,
+    pub group_changes_by_folder: bool,
     pub ignore_whitespace: bool,
     pub pr_default_draft: bool,
     pub pr_default_base: String,
@@ -90,6 +91,7 @@ impl Default for DiffSettings {
             default_diff_mode: PreferredDiffMode::Unified,
             inline_diff: InlineDiffMode::Word,
             collapse_multi_file_diffs: false,
+            group_changes_by_folder: false,
             ignore_whitespace: false,
             pr_default_draft: true,
             pr_default_base: "main".to_owned(),
@@ -299,6 +301,10 @@ pub fn reset(cx: &mut App) -> bool {
 
 pub fn current(cx: &App) -> DiffSettings {
     cx.global::<DiffPreferences>().settings.clone()
+}
+
+pub(crate) fn group_changes_by_folder(cx: &App) -> bool {
+    cx.global::<DiffPreferences>().settings.group_changes_by_folder
 }
 
 pub fn notice(cx: &App) -> Option<(bool, String)> {
@@ -549,6 +555,23 @@ mod tests {
     use gpui_kit::component::diff::DiffFile;
 
     #[test]
+    fn git_changes_grouping_defaults_to_flat_and_roundtrips() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join(FILE), r#"{"ignore_whitespace": true}"#).unwrap();
+        let mut settings = load(root.path()).unwrap();
+        assert!(!settings.group_changes_by_folder);
+        assert!(settings.ignore_whitespace);
+
+        settings.group_changes_by_folder = true;
+        save(root.path(), &settings).unwrap();
+        assert_eq!(load(root.path()).unwrap(), settings);
+
+        settings.group_changes_by_folder = false;
+        save(root.path(), &settings).unwrap();
+        assert!(!load(root.path()).unwrap().group_changes_by_folder);
+    }
+
+    #[test]
     fn roundtrip_and_base_branch_validation() {
         let root = tempfile::tempdir().unwrap();
         assert_eq!(load(root.path()).unwrap(), DiffSettings::default());
@@ -557,6 +580,7 @@ mod tests {
             default_diff_mode: PreferredDiffMode::Split,
             inline_diff: InlineDiffMode::Character,
             collapse_multi_file_diffs: true,
+            group_changes_by_folder: true,
             ignore_whitespace: true,
             pr_default_draft: false,
             pr_default_base: "develop".to_owned(),

@@ -28,7 +28,7 @@ use serde::Deserialize;
 use serde_json::json;
 use snoozes::{Delay, Reminder, Snoozes, Wake, now_ms};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     io,
 };
 use undo::{UNDO_CHANGED, UndoChange, UndoSlot, VerifiedUndo, expire_later};
@@ -359,6 +359,60 @@ struct Entry {
     updated_at: u64,
 }
 
+const UNREAD_CONVERSATION: &str = "未读会话";
+
+impl Entry {
+    fn plain_unread_session(&self, workspace: &str) -> Option<&Session> {
+        match &self.target {
+            Destination::Session(session)
+                if self.label == UNREAD_CONVERSATION && session.workspace_id == workspace =>
+            {
+                Some(session)
+            }
+            _ => None,
+        }
+    }
+}
+
+struct MarkInboxRead {
+    workspace: String,
+    session: String,
+    sequence: Option<u64>,
+}
+
+impl MarkInboxRead {
+    fn for_entry(app: &HiveApp, workspace: &str, entry: &Entry) -> Option<Self> {
+        let session = entry.plain_unread_session(workspace)?;
+        Some(Self {
+            workspace: workspace.to_owned(),
+            session: session.id.clone(),
+            sequence: app.background_sequences.get(&session.id).copied(),
+        })
+    }
+
+    fn matches(&self, entry: &Entry) -> bool {
+        entry
+            .plain_unread_session(&self.workspace)
+            .is_some_and(|session| session.id == self.session)
+    }
+
+    fn clear(&self, app: &mut HiveApp, cx: &mut Context<HiveApp>) -> bool {
+        let sequence = app.background_sequences.get(&self.session).copied();
+        if !self.consume(&mut app.unread, sequence) {
+            return false;
+        }
+        app.collaboration
+            .inbox_badge
+            .forget_unread(&self.workspace, &self.session);
+        cx.notify();
+        true
+    }
+
+    fn consume(&self, unread: &mut HashSet<String>, sequence: Option<u64>) -> bool {
+        self.sequence == sequence && unread.remove(&self.session)
+    }
+}
+
 fn sort_entries(rows: &mut [(&str, Entry)]) {
     rows.sort_by_cached_key(|(workspace, entry)| {
         (
@@ -585,7 +639,7 @@ impl HiveApp {
         } else if activity.is_some_and(|activity| activity.pending_report_count > 0) {
             ("待处理的汇报", Priority::Unread)
         } else if self.unread.contains(&session.id) {
-            ("未读会话", Priority::Unread)
+            (UNREAD_CONVERSATION, Priority::Unread)
         } else if include_active
             && (self.busy.contains(&session.id)
                 || activity.is_some_and(|activity| activity.runtime_state == "working"))
@@ -766,6 +820,26 @@ impl HiveApp {
                     .flatten();
                 let workspace = workspace.to_owned();
                 let snooze_workspace = workspace.clone();
+                let connection = self.connection_generation;
+                let mark_read = MarkInboxRead::for_entry(self, &workspace, &entry).map(|mark| {
+                    Button::new("mark-inbox-session-read")
+                        .disabled(!self.connected || self.closing)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if this.connected
+                                && !this.closing
+                                && this.connection_generation == connection
+                                && this.workspace.as_deref() == Some(mark.workspace.as_str())
+                                && this.workspace_removing.as_deref()
+                                    != Some(mark.workspace.as_str())
+                                && this
+                                    .scoped_entries(&mark.workspace)
+                                    .iter()
+                                    .any(|entry| mark.matches(entry))
+                            {
+                                mark.clear(this, cx);
+                            }
+                        }))
+                });
                 let target = entry.target.clone();
                 let origin = self.history_link_target();
                 let action = Button::new("open-inbox-item").on_click(cx.listener(
@@ -793,6 +867,7 @@ impl HiveApp {
                     reminder,
                     current && inbox.reminders.saved.is_some() && !self.closing,
                     action.disabled(!self.connected || self.closing),
+                    mark_read,
                     scroll,
                     cx,
                     None,
@@ -952,6 +1027,7 @@ fn inbox_row<T: 'static>(
     reminder: Option<Reminder>,
     can_snooze: bool,
     open: Button,
+    mark_read: Option<Button>,
     scroll: &ScrollHandle,
     cx: &Context<T>,
     interaction: Option<InboxRowInteraction>,
@@ -1132,6 +1208,17 @@ fn inbox_row<T: 'static>(
                             })
                         }))
                     })
+                    .when_some(mark_read, |buttons, mark_read| {
+                        let mark = tr("标为已读");
+                        buttons.child(
+                            mark_read
+                                .ghost()
+                                .compact()
+                                .xsmall()
+                                .label(mark)
+                                .accessibility_label(format!("{mark} · {label} · {subject}")),
+                        )
+                    })
                     .child(
                         open.ghost()
                             .compact()
@@ -1148,10 +1235,57 @@ fn inbox_row<T: 'static>(
 #[cfg(test)]
 mod tests {
     use super::{
-        Attention, Delay, Destination, Entry, Priority, Reminders, SnoozeEdit, Snoozes, Wake,
-        now_ms, sort_entries,
+        Attention, Delay, Destination, Entry, MarkInboxRead, Priority, Reminders, SnoozeEdit,
+        Snoozes, UNREAD_CONVERSATION, Wake, now_ms, sort_entries,
     };
     use serde_json::json;
+    use std::collections::HashSet;
+
+    #[test]
+    fn inbox_mark_read_rejects_stale_or_actionable_rows_and_clears_only_the_exact_unread() {
+        let mark = MarkInboxRead {
+            workspace: "beacon".into(),
+            session: "beacon-chat".into(),
+            sequence: Some(7),
+        };
+        let session = |workspace: &str, id: &str| {
+            serde_json::from_value(json!({
+                "id": id,
+                "workspaceId": workspace,
+                "title": "Same title",
+            }))
+            .unwrap()
+        };
+        let mut entry = Entry {
+            label: UNREAD_CONVERSATION,
+            subject: "Same title".into(),
+            target: Destination::Session(session("beacon", "beacon-chat")),
+            related_members: [None, None],
+            snooze_key: None,
+            wake: None,
+            priority: Priority::Unread,
+            updated_at: 0,
+        };
+        assert!(mark.matches(&entry));
+        for label in ["等待你的操作", "投递失败", "待处理的汇报"] {
+            entry.label = label;
+            assert!(!mark.matches(&entry));
+        }
+        entry.label = UNREAD_CONVERSATION;
+        entry.target = Destination::Session(session("atlas", "beacon-chat"));
+        assert!(!mark.matches(&entry));
+        entry.target = Destination::Session(session("beacon", "different-chat"));
+        assert!(!mark.matches(&entry));
+
+        let mut unread = HashSet::from(["beacon-chat".into(), "different-chat".into()]);
+        assert!(!mark.consume(&mut unread, Some(8)));
+        assert_eq!(unread.len(), 2);
+        assert!(mark.consume(&mut unread, Some(7)));
+        assert_eq!(unread, HashSet::from(["different-chat".into()]));
+        unread.insert("beacon-chat".into());
+        assert!(!mark.consume(&mut unread, Some(8)));
+        assert!(unread.contains("beacon-chat"));
+    }
 
     #[test]
     fn undo_restores_the_exact_reminder_in_all_three_directions() {

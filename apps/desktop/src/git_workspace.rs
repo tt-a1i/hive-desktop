@@ -1,10 +1,12 @@
 pub(crate) mod patch_reader;
 pub(crate) mod file_tree;
+mod change_list;
 mod remotes;
 mod review;
 use patch_reader::PatchReader;
 use crate::{
     app::HiveApp,
+    diffs_settings::{self, DiffPreferences},
     focus_scroll::{Reveal, Viewport},
     language::tr,
     palette::Color,
@@ -487,7 +489,7 @@ pub(crate) struct GitWorkspace {
     status_loading: bool,
     status_generation: u64,
     offset: usize,
-    selected: usize,
+    selected: Option<usize>,
     comparison: Comparison,
     diff: Option<FileDiff>,
     diff_error: Option<Fault>,
@@ -496,6 +498,9 @@ pub(crate) struct GitWorkspace {
     reload_diff_on_open: bool,
     body_scroll: ScrollHandle,
     files_scroll: ScrollHandle,
+    files_focus: FocusHandle,
+    changes_grouped: bool,
+    grouping_save_failed: bool,
     file_patch_reader: Option<PatchReader>,
     diff_state: Entity<DiffState>,
     diff_raw: bool,
@@ -575,6 +580,7 @@ impl HiveApp {
         let connection = self.connection_generation;
         let open_request = self.open_request;
         let state = cx.new(|cx| {
+            cx.observe_global::<DiffPreferences>(GitWorkspace::sync_change_grouping).detach();
             if let Some(parent) = app.upgrade() {
                 cx.observe(&parent, |this: &mut GitWorkspace, _, cx| {
                     if !this.current(cx) {
@@ -621,7 +627,7 @@ impl HiveApp {
                 status_loading: false,
                 status_generation: 0,
                 offset: 0,
-                selected: 0,
+                selected: None,
                 comparison: Comparison::Unstaged,
                 diff: None,
                 diff_error: None,
@@ -630,6 +636,9 @@ impl HiveApp {
                 reload_diff_on_open: false,
                 body_scroll: ScrollHandle::new(),
                 files_scroll: ScrollHandle::new(),
+                files_focus: cx.focus_handle().tab_index(0).tab_stop(true),
+                changes_grouped: diffs_settings::group_changes_by_folder(cx),
+                grouping_save_failed: false,
                 file_patch_reader: None,
                 diff_state: cx.new(|cx| {
                     let prefs = crate::diffs_settings::current(cx);
@@ -846,6 +855,7 @@ impl HiveApp {
             "                         } else {\n"
         );
         state.update(cx, |ws, cx| {
+            ws.selected = Some(0);
             ws.status = Some(Status {
                 identity: Identity {
                     project_root: "/Users/demo/hive-desktop".into(),
@@ -1016,6 +1026,7 @@ impl GitWorkspace {
         };
         let selected_path = self.selected_change().map(|change| change.path.clone());
         self.status = None;
+        self.selected = None;
         self.status_error = None;
         self.status_loading = true;
         self.clear_file_diff(cx);
@@ -1061,7 +1072,7 @@ impl GitWorkspace {
                 }
                 match result {
                     Ok(mut status) => {
-                        if let Some(file) = file.as_ref() {
+                        let preserve_selection = if let Some(file) = file.as_ref() {
                             let Some(index) = status.select_live_file(file) else {
                                 this.offset = 0;
                                 this.status_error = Some(Fault {
@@ -1077,21 +1088,27 @@ impl GitWorkspace {
                             } else {
                                 Comparison::Unstaged
                             };
-                            this.selected = index;
+                            this.selected = Some(index);
+                            true
                         } else {
-                            this.selected = selected_path.as_ref().and_then(|path| {
+                            let previous = selected_path.as_ref().and_then(|path| {
                                 status.entries.iter().position(|change| &change.path == path)
-                            }).unwrap_or(0);
-                        }
+                            });
+                            this.selected = previous.or((!status.entries.is_empty()).then_some(0));
+                            previous.is_some()
+                        };
                         this.offset = status.offset;
                         this.status = Some(status);
+                        if this.changes_grouped {
+                            this.keep_grouped_selection_visible(preserve_selection, cx);
+                        }
                         this.index_refresh_required = false;
                         this.index_error = None;
                         if this.index_notice == Some("Git 索引已更改，请刷新状态后再操作。") {
                             this.index_notice = None;
                         }
                         if file.is_some() {
-                            this.files_scroll.scroll_to_item(this.selected);
+                            this.scroll_to_selected_change(cx);
                             this.load_diff(cx);
                         }
                     }
@@ -1103,7 +1120,131 @@ impl GitWorkspace {
         .detach();
     }
     fn selected_change(&self) -> Option<&Change> {
-        self.status.as_ref()?.entries.get(self.selected)
+        self.status.as_ref()?.entries.get(self.selected?)
+    }
+
+    fn folder_view<'a>(&self, cx: &'a App) -> Option<&'a change_list::FolderView> {
+        let root = &self.status.as_ref()?.identity.project_root;
+        cx.try_global::<change_list::FolderViews>()?.get(&self.workspace, root)
+    }
+
+    fn change_rows(&self, cx: &App) -> change_list::Rows<'_> {
+        let entries = self.status.as_ref().map_or(&[][..], |status| &status.entries);
+        change_list::Rows::new(entries, self.changes_grouped, self.folder_view(cx))
+    }
+
+    fn scroll_to_selected_change(&self, cx: &App) {
+        if let Some(index) = self.selected
+            && let Some(row) = self.change_rows(cx).position(index)
+        {
+            self.files_scroll.scroll_to_item(row);
+        }
+    }
+
+    fn keep_grouped_selection_visible(&mut self, preserve: bool, cx: &mut Context<Self>) {
+        if !preserve {
+            let first_visible = self.change_rows(cx).files().next();
+            self.selected = first_visible;
+        } else if let (Some(status), Some(change)) = (&self.status, self.selected_change()) {
+            cx.default_global::<change_list::FolderViews>()
+                .get_mut(&self.workspace, &status.identity.project_root)
+                .reveal(change);
+        }
+        self.scroll_to_selected_change(cx);
+    }
+
+    fn toggle_change_grouping(&mut self, cx: &mut Context<Self>) {
+        if self.busy(cx) || !self.current(cx) || self.status.is_none() {
+            return;
+        }
+        let mut settings = diffs_settings::current(cx);
+        settings.group_changes_by_folder = !settings.group_changes_by_folder;
+        self.grouping_save_failed = !diffs_settings::set(settings, cx);
+        self.sync_change_grouping(cx);
+        cx.notify();
+    }
+
+    fn sync_change_grouping(&mut self, cx: &mut Context<Self>) {
+        let grouped = diffs_settings::group_changes_by_folder(cx);
+        if self.changes_grouped == grouped {
+            return;
+        }
+        self.changes_grouped = grouped;
+        self.grouping_save_failed = false;
+        if !self.current(cx) {
+            return;
+        }
+        if grouped {
+            self.keep_grouped_selection_visible(true, cx);
+        } else {
+            if self.selected.is_none() && self.status.as_ref().is_some_and(|status| !status.entries.is_empty()) {
+                self.selected = Some(0);
+            }
+            self.scroll_to_selected_change(cx);
+        }
+        cx.notify();
+    }
+
+    fn toggle_change_folder(&mut self, parent: &str, cx: &mut Context<Self>) {
+        if !self.changes_grouped || self.busy(cx) || !self.current(cx) {
+            return;
+        }
+        let Some(status) = &self.status else { return };
+        if !status.entries.iter().any(|change| change.dir_name().unwrap_or("") == parent) {
+            return;
+        }
+        let expanded = !self.folder_view(cx).is_some_and(|view| view.folded.contains(parent));
+        let hidden_selection = self.selected.filter(|&index| expanded
+            && status.entries.get(index).is_some_and(|change| change.dir_name().unwrap_or("") == parent));
+        let replacement = hidden_selection.and_then(|index| {
+            self.change_rows(cx).replacement(index, |candidate| status.entries[candidate].dir_name().unwrap_or("") != parent)
+        });
+        let folded = &mut cx.default_global::<change_list::FolderViews>()
+            .get_mut(&self.workspace, &status.identity.project_root).folded;
+        if expanded {
+            folded.insert(parent.to_owned());
+        } else {
+            folded.remove(parent);
+        }
+        if hidden_selection.is_some() {
+            self.set_selected_change(replacement, false, cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    fn change_folder_row(
+        parent: &str,
+        count: usize,
+        expanded: bool,
+        disabled: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let label = if parent.is_empty() { tr("顶层目录") } else { parent };
+        let path = SharedString::from(parent.to_owned());
+        div()
+            .id(SharedString::from(format!("git-change-folder-{parent}")))
+            .role(Role::Group)
+            .aria_expanded(expanded)
+            .aria_label(label.to_owned())
+            .child(
+                Button::new("toggle-git-change-folder")
+                    .ghost()
+                    .compact()
+                    .small()
+                    .w_full()
+                    .min_w_0()
+                    .justify_start()
+                    .px_2()
+                    .disabled(disabled)
+                    .icon(if expanded { Glyph::ChevronDown } else { Glyph::ChevronRight })
+                    .tooltip(label.to_owned())
+                    .accessibility_label(format!("{label} · {count}"))
+                    .child(div().flex_1().min_w_0().truncate().text_xs().child(label.to_owned()))
+                    .child(div().flex_shrink_0().text_xs().text_color(Color::Muted.get(cx)).child(count.to_string()))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_change_folder(&path, cx))),
+            )
+            .into_any_element()
     }
 
     fn reveal_selected_file(&self, path: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -1134,18 +1275,24 @@ impl GitWorkspace {
             });
         });
     }
-    fn select(&mut self, index: usize, load: bool, cx: &mut Context<Self>) {
-        if self.status_loading
-            || self.index_busy
-            || !self.current(cx)
-            || self
-                .status
-                .as_ref()
-                .is_none_or(|status| index >= status.entries.len())
-        {
-            return;
+    fn select(&mut self, index: usize, load: bool, cx: &mut Context<Self>) -> bool {
+        if self.status_loading || self.index_busy || !self.current(cx) {
+            return false;
         }
-        self.selected = index;
+        let Some(change) = self.status.as_ref().and_then(|status| status.entries.get(index)) else {
+            return false;
+        };
+        if self.changes_grouped && self.folder_view(cx).is_some_and(|view| {
+            view.folded.contains(change.dir_name().unwrap_or(""))
+        }) {
+            return false;
+        }
+        self.set_selected_change(Some(index), load, cx);
+        true
+    }
+
+    fn set_selected_change(&mut self, selected: Option<usize>, load: bool, cx: &mut Context<Self>) {
+        self.selected = selected;
         self.index_generation += 1;
         self.index_preview = None;
         self.clear_commit_preview();
@@ -1153,7 +1300,7 @@ impl GitWorkspace {
         self.index_notice = None;
         self.reload_diff_on_open = false;
         self.clear_file_diff(cx);
-        self.files_scroll.scroll_to_item(index);
+        self.scroll_to_selected_change(cx);
         cx.notify();
         if load {
             self.load_diff(cx);
@@ -1499,23 +1646,24 @@ impl GitWorkspace {
             });
         }).detach();
     }
-    fn key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let m = event.keystroke.modifiers;
         if m.control || m.platform || m.alt || m.shift {
             return;
         }
-        let len = self
-            .status
-            .as_ref()
-            .map(|status| status.entries.len())
-            .unwrap_or(0);
-        if len == 0 {
-            return;
-        }
         match event.keystroke.key.as_str() {
-            "down" => self.select((self.selected + 1) % len, false, cx),
-            "up" => self.select((self.selected + len - 1) % len, false, cx),
-            "enter" => self.load_diff(cx),
+            direction @ ("down" | "up") => {
+                let next = self.change_rows(cx).step(self.selected, direction == "down");
+                let Some(index) = next else { return };
+                if self.select(index, false, cx) && self.changes_grouped {
+                    self.files_focus.focus(window, cx);
+                }
+            }
+            "enter" if self.selected_change().is_some()
+                && (self.files_focus.is_focused(window) || !self.changes_grouped) =>
+            {
+                self.load_diff(cx)
+            }
             _ => return,
         }
         cx.stop_propagation();
@@ -2901,11 +3049,24 @@ impl Render for GitWorkspace {
                     let error_color = Color::Error.get(cx);
                     let warning_color = rgb(if Theme::global(cx).is_dark() { 0xfbbf24 } else { 0xd97706 });
                     let can_index = current && !self.status_loading && !self.index_busy && !self.index_refresh_required && !self.preview_mock;
+                    let grouped = self.changes_grouped;
+                    let change_rows = self.change_rows(cx);
+                    let grouping_label = tr(if grouped { "将改动显示为单个列表" } else { "按文件夹分组显示改动" });
                     let selected_can_stage = selected_change.as_ref().is_some_and(|c| c.has_unstaged());
                     let selected_can_unstage = selected_change.as_ref().is_some_and(|c| c.has_staged());
                     let has_any_staged = status.can_preview_commit();
 
-                    view.when(!status.complete || !status.warnings.is_empty(), |view| {
+                    view.when(self.grouping_save_failed, |view| {
+                        view.child(
+                            div()
+                                .id("git-change-grouping-save-error")
+                                .role(Role::Status)
+                                .text_xs()
+                                .text_color(Color::Error.get(cx))
+                                .child(tr("保存 Diff 与 PR 设置失败")),
+                        )
+                    })
+                    .when(!status.complete || !status.warnings.is_empty(), |view| {
                         view.child(
                             div()
                                 .id("git-status-warnings")
@@ -2966,6 +3127,19 @@ impl Render for GitWorkspace {
                                             .items_center()
                                             .gap_1()
                                             .child(
+                                                Button::new("git-group-changes-by-folder")
+                                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                                    .compact()
+                                                    .xsmall()
+                                                    .size(px(22.))
+                                                    .icon(Glyph::FolderOpen)
+                                                    .selected(grouped)
+                                                    .tooltip(grouping_label)
+                                                    .accessibility_label(grouping_label)
+                                                    .disabled(!current || busy || status.entries.is_empty())
+                                                    .on_click(cx.listener(|this, _, _, cx| this.toggle_change_grouping(cx))),
+                                            )
+                                            .child(
                                                 Button::new("git-stage-selected")
                                                     .outline()
                                                     .xsmall()
@@ -3016,9 +3190,9 @@ impl Render for GitWorkspace {
                                         .id("git-changed-files")
                                         .role(Role::List)
                                         .aria_label(tr("Git 改动文件"))
-                                        .tab_index(0)
-                                        .capture_key_down(move |event, _, cx| {
-                                            keys.update(cx, |this, cx| this.key(event, cx))
+                                        .track_focus(&self.files_focus)
+                                        .capture_key_down(move |event, window, cx| {
+                                            keys.update(cx, |this, cx| this.key(event, window, cx))
                                         })
                                         .flex_1()
                                         .min_h_0()
@@ -3041,7 +3215,18 @@ impl Render for GitWorkspace {
                                                     }),
                                             )
                                         })
-                                        .children(status.entries.iter().enumerate().map(|(index, change)| {
+                                        .children(change_rows.0.into_iter().map(|row| {
+                                            let index = match row {
+                                                change_list::Row::Folder { parent, count, expanded } => {
+                                                    return Self::change_folder_row(
+                                                        parent, count, expanded,
+                                                        !current || busy,
+                                                        cx,
+                                                    );
+                                                }
+                                                change_list::Row::File(index) => index,
+                                            };
+                                            let change = &status.entries[index];
                                             let (letter, tone) = change.badge();
                                             let badge_color = match tone {
                                                 "added" => success,
@@ -3050,9 +3235,9 @@ impl Render for GitWorkspace {
                                                 "renamed" => accent,
                                                 _ => warning_color,
                                             };
-                                            let selected = index == self.selected;
+                                            let selected = Some(index) == self.selected;
                                             let file_name = change.file_name().to_owned();
-                                            let dir_name = change.dir_name().map(str::to_owned);
+                                            let dir_name = (!grouped).then(|| change.dir_name()).flatten().map(str::to_owned);
                                             let staged = change.has_staged();
                                             let unstaged = change.has_unstaged();
                                             let meta_tip = change.metadata();
@@ -3140,8 +3325,10 @@ impl Render for GitWorkspace {
                                                                         )
                                                                     }),
                                                             )
-                                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                                this.select(index, true, cx)
+                                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                                if this.select(index, true, cx) && this.changes_grouped {
+                                                                    this.files_focus.focus(window, cx);
+                                                                }
                                                             })),
                                                     )
                                                     .when(can_index && (unstaged || staged), |row| {
@@ -3159,12 +3346,13 @@ impl Render for GitWorkspace {
                                                                 .icon(icon)
                                                                 .tooltip(tip)
                                                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                                                    this.select(index, false, cx);
-                                                                    this.preview_index(op, cx);
+                                                                    if this.select(index, false, cx) {
+                                                                        this.preview_index(op, cx);
+                                                                    }
                                                                 })),
                                                         )
                                                     }),
-                                            )
+                                            ).into_any_element()
                                         })),
                                 )),
                             )
@@ -3876,6 +4064,7 @@ impl Render for GitWorkspace {
 
 #[cfg(test)]
 mod tests {
+    use super::change_list::{FolderView, FolderViews, Row, Rows};
     use super::{commit_result_label, Change, CommitPatchResponse, CommitPreview, CommitResult, FileDiff, IndexApplyResponse, IndexOperation, IndexPreview, Status, decode, git_params, valid_write_state, FILE_TREE_STATUS_LIMIT};
     #[test]
     fn commit_result_accessible_label_includes_reason_and_warnings() {
@@ -4016,6 +4205,69 @@ mod tests {
     }
 
     #[test]
+    fn change_groups_keep_original_file_indices_for_selection_and_actions() {
+        let status = change_status(vec![
+            changed_file("api/settings.ts", "M"),
+            changed_file("README.md", "M"),
+            changed_file("ui/settings.ts", "M"),
+            changed_file("api/errors.ts", "M"),
+        ], 4);
+        let mut view = FolderView::default();
+        assert_eq!(Rows::new(&status.entries, false, Some(&view)).files().collect::<Vec<_>>(), [0, 1, 2, 3]);
+        let rows = Rows::new(&status.entries, true, None);
+        assert_eq!(rows.0[0], Row::Folder { parent: "api", count: 2, expanded: true });
+        assert_eq!(rows.files().collect::<Vec<_>>(), [0, 3, 1, 2]);
+        assert_eq!(rows.position(3), Some(2));
+        assert_eq!(rows.replacement(0, |index| status.entries[index].dir_name() != Some("api")), Some(1));
+        view.folded.insert("api".into());
+        let rows = Rows::new(&status.entries, true, Some(&view));
+        assert_eq!(rows.0[0], Row::Folder { parent: "api", count: 2, expanded: false });
+        assert_eq!(rows.position(0), None);
+        let next = rows.step(Some(1), true).unwrap();
+        assert_eq!(status.entries[next].path, "ui/settings.ts");
+        assert_eq!(status.entries[next].repository_path, "project/ui/settings.ts");
+        assert_eq!(rows.position(next), Some(4));
+        assert_eq!(rows.step(Some(next), true), Some(1));
+        assert_eq!(rows.step(Some(1), false), Some(next));
+    }
+
+    #[test]
+    fn folding_every_change_folder_has_no_file_selection_until_reveal() {
+        let status = change_status(vec![
+            changed_file("api/settings.ts", "M"),
+            changed_file("ui/settings.ts", "M"),
+        ], 2);
+        let mut view = FolderView {
+            folded: ["api".to_owned()].into(),
+        };
+        let rows = Rows::new(&status.entries, true, Some(&view));
+        assert_eq!(rows.replacement(1, |index| status.entries[index].dir_name() != Some("ui")), None);
+        view.folded.insert("ui".into());
+        let rows = Rows::new(&status.entries, true, Some(&view));
+        assert_eq!(rows.files().next(), None);
+        assert_eq!(rows.step(None, true), None);
+        assert_eq!(rows.step(None, false), None);
+        view.reveal(&status.entries[1]);
+        let rows = Rows::new(&status.entries, true, Some(&view));
+        assert_eq!(rows.step(None, true), Some(1));
+        assert_eq!(rows.position(1), Some(2));
+        assert_eq!(rows.position(0), None);
+        assert_eq!(Rows::new(&status.entries, false, Some(&view)).step(None, true), Some(0));
+    }
+
+    #[test]
+    fn change_folder_preferences_are_independent_in_projects_and_worktrees() {
+        let mut views = FolderViews::default();
+        let worktree = views.get_mut("project", "/worktrees/alpha");
+        worktree.folded.insert("api".into());
+        views.get_mut("project", "/worktrees/beta");
+        assert!(views.get("project", "/worktrees/beta").unwrap().folded.is_empty());
+        assert!(views.get("project", "/worktrees/alpha").unwrap().folded.contains("api"));
+        assert!(views.get("project", "/project").is_none());
+        assert!(views.get("different-project", "/worktrees/alpha").is_none());
+    }
+
+    #[test]
     fn file_tree_diff_selects_the_exact_row_on_a_later_git_page() {
         let paths = (0..221).map(|i| changed_file(&format!("a/file-{i:03}.txt"), "M")).collect();
         let mut status = change_status(paths, 221);
@@ -4028,6 +4280,11 @@ mod tests {
         assert_eq!(status.entries[selected].path, "a/file-132.txt");
         assert_eq!(status.entries.first().unwrap().path, "a/file-100.txt");
         assert_eq!(status.entries.last().unwrap().path, "a/file-199.txt");
+        let mut view = FolderView { folded: ["a".to_owned(), "other".to_owned()].into() };
+        assert_eq!(Rows::new(&status.entries, true, Some(&view)).position(selected), None);
+        view.reveal(&status.entries[selected]);
+        assert_eq!(Rows::new(&status.entries, true, Some(&view)).position(selected), Some(33));
+        assert!(view.folded.contains("other"));
     }
 
     #[test]

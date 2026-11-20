@@ -610,8 +610,11 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       return { session, sessions: chats.list(session.workspaceId) };
     }
     case 'chat.archive': {
-      const session = await chats.setArchived(text(params, 'sessionId'), params.archived);
-      return { session, sessions: chats.list(session.workspaceId) };
+      const undo = params.undo === undefined ? undefined : record(params.undo);
+      if (undo) exact(undo, ['workspaceId', 'version']);
+      const result = await chats.changeArchive(text(params, 'sessionId'), params.archived,
+        undo && {workspaceId: text(undo, 'workspaceId'), version: viewRevision(undo.version)});
+      return { ...result, sessions: chats.list(result.session.workspaceId) };
     }
     case 'chat.rename': return chats.rename(text(params, 'sessionId'), params.title);
     case 'chat.open': {

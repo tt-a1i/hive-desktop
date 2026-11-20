@@ -13,8 +13,8 @@ use super::placement::{InboxSections, RowId, RowPlacement};
 use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
 use super::{
-    ActionCenter, Destination, Entry, InboxRowInteraction, Reminders, SNOOZE_CHANGED, inbox_row,
-    inbox_status, is_snoozed, read_action_center, toggle_button,
+    ActionCenter, Destination, Entry, InboxRowInteraction, MarkInboxRead, Reminders,
+    SNOOZE_CHANGED, inbox_row, inbox_status, is_snoozed, read_action_center, toggle_button,
 };
 use crate::{
     app::HiveApp,
@@ -589,6 +589,43 @@ impl GlobalInbox {
                     && app.connected
                     && !app.closing
             })
+    }
+
+    fn mark_read(
+        &mut self,
+        mark: &MarkInboxRead,
+        row: &RowId,
+        connection: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_current(connection, cx) || !self.placement.shows(row) {
+            return;
+        }
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        let state = app.read(cx);
+        if state.workspace_removing.as_deref() == Some(&mark.workspace)
+            || !state
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.id == mark.workspace)
+            || !self.projects.get(&mark.workspace).is_some_and(|project| {
+                project
+                    .entries(state)
+                    .iter()
+                    .any(|entry| mark.matches(entry))
+            })
+        {
+            return;
+        }
+        if app.update(cx, |app, cx| mark.clear(app, cx)) {
+            self.new_items.remove(&BadgeItem::UnreadSession {
+                workspace: mark.workspace.clone(),
+                session: mark.session.clone(),
+            });
+            cx.notify();
+        }
     }
 
     fn undo_snooze(&mut self, cx: &mut Context<Self>) {
@@ -1256,8 +1293,22 @@ impl Render for GlobalInbox {
                 && let Some(item) = data.badge_item(app, id, &entry, now)
                 && !app.collaboration.inbox_badge.sees(&item)
             {
-                candidates.insert(row_id.clone(), item);
+                let revision = match &item {
+                    BadgeItem::UnreadSession { session, .. } => {
+                        app.background_sequences.get(session).copied()
+                    }
+                    BadgeItem::Question { .. } => None,
+                };
+                candidates.insert(row_id.clone(), (item, revision));
             }
+            let mark_read = MarkInboxRead::for_entry(app, id, &entry).map(|mark| {
+                let row = row_id.clone();
+                Button::new("mark-inbox-session-read").on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.mark_read(&mark, &row, connection, cx);
+                    },
+                ))
+            });
             let target = entry.target.clone();
             let id = id.to_owned();
             let button_workspace = id.clone();
@@ -1315,6 +1366,7 @@ impl Render for GlobalInbox {
                 reminder,
                 reminders.saved.is_some(),
                 open,
+                mark_read,
                 &self.scroll,
                 cx,
                 Some(interaction),
@@ -1482,9 +1534,20 @@ impl Render for GlobalInbox {
                         let parent = parent.clone();
                         window.defer(cx, move |_, cx| {
                             let _ = parent.update(cx, |app, cx| {
-                                if app.connection_generation == connection
-                                    && app.collaboration.inbox_badge.acknowledge(visible)
-                                {
+                                if app.connection_generation != connection {
+                                    return;
+                                }
+                                let current = visible.into_iter().filter_map(|(item, revision)| {
+                                    if let BadgeItem::UnreadSession { session, .. } = &item
+                                        && (!app.unread.contains(session)
+                                            || app.background_sequences.get(session).copied()
+                                                != revision)
+                                    {
+                                        return None;
+                                    }
+                                    Some(item)
+                                });
+                                if app.collaboration.inbox_badge.acknowledge(current) {
                                     cx.notify();
                                 }
                             });

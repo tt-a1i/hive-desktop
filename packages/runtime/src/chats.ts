@@ -1363,7 +1363,11 @@ export class Chats implements StructuredSessionPort {
     return changed;
   }
   async setArchived(id: string, archived: unknown): Promise<ChatRecord> {
+    return (await this.changeArchive(id, archived)).session;
+  }
+  async changeArchive(id: string, archived: unknown, undo?: {workspaceId: string; version: number}) {
     if (typeof archived !== 'boolean') throw new TypeError('Archived state must be a boolean');
+    if (undo && archived) throw new TypeError('Only restoring an archived conversation can use an undo receipt');
     if (this.closing) throw new Error('Chat runtime is closing');
     const workspaceId = this.index.get(id).workspaceId;
     return this.withWorkspace(workspaceId, async () => {
@@ -1371,9 +1375,12 @@ export class Chats implements StructuredSessionPort {
       this.assertWorkspaceAvailable(workspaceId);
       const current = this.index.get(id);
       const currentVersion = this.index.snapshotVersion(id);
+      if (undo && (undo.workspaceId !== current.workspaceId || !current.archived || undo.version !== currentVersion)) {
+        throw new SessionIdentityError('ARCHIVE_UNDO_STALE', 'The archive has changed. Review this conversation in Archived Sessions.');
+      }
       if (!!current.archived === archived) {
         this.navigationChanged(current);
-        return current;
+        return {session: current};
       }
       if (archived) {
         const assertIdle = () => {
@@ -1404,7 +1411,7 @@ export class Chats implements StructuredSessionPort {
         throw new Error('无法保存归档状态，历史与草稿仍保留，请稍后重试。', { cause: error });
       }
       this.navigationChanged(changed);
-      return changed;
+      return {session: changed, mutation: {version: this.index.snapshotVersion(id), eventSequence: this.sequences.get(id)!}};
     });
   }
   private navigationChanged(record: ChatRecord) {

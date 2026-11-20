@@ -189,12 +189,36 @@ try {
   assert.equal(await readFile(indexFile, 'utf8'), indexBeforeReference);
   assert.equal((await rpc('chat.rename', {sessionId: selected.id, title: 'Exact reference renamed'})).error, undefined);
   assert.equal((await rpc('chat.reference.resolve', selectedReference)).result.title, 'Exact reference renamed');
+
+  const matching = similarTitles.find((hit: any) => hit.session.workspaceId === workspaceId).session;
+  await rpc('chat.rename', {sessionId: matching.id, title: 'Exact reference renamed'});
+  await rpc('chat.pin', {sessionId: selected.id, pinned: true});
+  await rpc('chat.pin', {sessionId: matching.id, pinned: true});
+  const previousOrder = (await rpc('chat.pinned')).result.map((hit: any) => hit.session.id);
+  const firstArchive = await rpc('chat.archive', {sessionId: selected.id, archived: true});
+  const receipt = {workspaceId: other.result.id, version: firstArchive.result.mutation.version};
+  assert.equal(firstArchive.result.mutation.eventSequence, notifications.findLast(e => e.sessionId === selected.id).sequence);
+  assert.equal((await rpc('chat.archive', {sessionId: selected.id, archived: true})).result.mutation, undefined);
+  assert.match((await rpc('chat.archive', {sessionId: selected.id, archived: false, undo: {...receipt, workspaceId}})).error.message, /ARCHIVE_UNDO_STALE/);
+  assert.match((await rpc('chat.archive', {sessionId: matching.id, archived: false, undo: receipt})).error.message, /ARCHIVE_UNDO_STALE/);
+  const undone = await rpc('chat.archive', {sessionId: selected.id, archived: false, undo: receipt});
+  assert.equal(undone.result.session.archived, false);
+  assert.equal(undone.result.session.pinned, true);
+  assert.equal(undone.result.session.updatedAt, selected.updatedAt);
+  assert.deepEqual((await rpc('chat.pinned')).result.map((hit: any) => hit.session.id), previousOrder);
+  const nextArchive = await rpc('chat.archive', {sessionId: selected.id, archived: true});
+  assert.ok(nextArchive.result.mutation.version > receipt.version);
+  assert.match((await rpc('chat.archive', {sessionId: selected.id, archived: false, undo: receipt})).error.message, /ARCHIVE_UNDO_STALE/);
+  assert.equal((await rpc('chat.reference.resolve', selectedReference)).result.archived, true);
+  const unaffected = (await rpc('chat.reference.resolve', {sessionId: matching.id, workspaceId})).result;
+  assert.equal(unaffected.id, matching.id);
+  assert.equal(Boolean(unaffected.archived), false);
   assert.ok(notifications.every((event) => event.type === 'session_navigation'));
   assert.equal((await rpc('shutdown')).result.ok, true);
   await exited;
   assert.equal(child.exitCode, 0);
   console.log(
-    'SESSION_ARCHIVES_WIRE_OK: production JSONL four-backend archive/restore, exact conversation references, scoped cross-project pagination, persisted identity, ordered metadata notifications and clean shutdown. No Agent/model initialization.',
+    'SESSION_ARCHIVES_WIRE_OK: four-backend archive/restore, guarded undo with precise pinned order, exact references, scoped pagination, ordered metadata notifications and clean shutdown. No Agent/model initialization.',
   );
 } finally {
   if (child.exitCode === null && child.signalCode === null) {

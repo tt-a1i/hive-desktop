@@ -123,6 +123,18 @@ impl InboxBadge {
         self.seen.contains(item)
     }
 
+    pub(in crate::collaboration::inbox) fn forget_unread(
+        &mut self,
+        workspace: &str,
+        session: &str,
+    ) {
+        let item = BadgeItem::UnreadSession {
+            workspace: workspace.to_owned(),
+            session: session.to_owned(),
+        };
+        self.seen.remove(&item);
+    }
+
     pub(super) fn acknowledge(&mut self, items: impl IntoIterator<Item = BadgeItem>) -> bool {
         let before = self.seen.len();
         self.seen.extend(items);
@@ -167,6 +179,23 @@ mod tests {
         badge.replace(&["beacon".into()], Some(HashSet::new()));
         badge.replace(&["beacon".into()], Some(HashSet::from([old.clone()])));
         assert!(badge.sees(&old));
+    }
+
+    #[test]
+    fn marking_a_session_read_resets_only_its_badge_for_the_next_unread_event() {
+        let session = |workspace: &str| BadgeItem::UnreadSession {
+            workspace: workspace.into(),
+            session: "example".into(),
+        };
+        let beacon = session("beacon");
+        let atlas = session("atlas");
+        let question = item("beacon", "question");
+        let mut badge = InboxBadge::default();
+        assert!(badge.acknowledge([atlas.clone(), beacon.clone(), question.clone()]));
+        badge.forget_unread("beacon", "example");
+        assert!(!badge.sees(&beacon));
+        assert!(badge.sees(&atlas));
+        assert!(badge.sees(&question));
     }
 
     #[test]
