@@ -1,5 +1,6 @@
 import WebSocket from "ws";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { readPackageVersion } from "@tt-a1i/hive/dist/src/server/package-version.js";
 import { createVersionService } from "@tt-a1i/hive/dist/src/server/version-service.js";
 import { runHiveCommand } from "@tt-a1i/hive/dist/src/cli/hive.js";
@@ -36,6 +37,7 @@ export interface HiveUploadLocation {
 
 export interface HiveUserInputRow { type: 'user_input' | 'user_input_cancelled'; text: string }
 interface InboxQuestion { workspaceId: string; dispatchId: string; messageId: string }
+interface InboxDispatchInput { dispatchId: string; sequence: number | null; createdAt: number | null }
 type ActionableMessageSource = {listActionableDispatchMessages(workspaceId: string): DispatchMessageRecord[]};
 type OpenDispatchSource = {listOpenDispatches(workspaceId: string):
     Pick<DispatchRecord, 'id' | 'workspaceId' | 'status' | 'submittedAt' | 'toAgentId'>[]};
@@ -123,6 +125,7 @@ export function withInboxDispatchBackends(
 export interface SavedScriptContext {scriptRunId: string; cwd: string; command: string; sessionId?: string}
 export interface SavedScriptObserver {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}
 export interface HiveHost {
+    inboxDispatchInput(workspaceId: string, dispatchIds: unknown, timestampDispatchIds?: unknown): {workspaceId: string; inputs: InboxDispatchInput[]};
     inboxQuestions(workspaceIds: readonly string[]): InboxQuestion[];
     readonly projectScriptState: import('./project-script-settings.js').ProjectScriptStatePort;
     desktopConversationSwitchState(workspaceId:string,agentId?:string): import('./hive-runtime-contract.js').DesktopConversationSwitchState;
@@ -220,8 +223,46 @@ export async function createHiveHost({
 	}
 
 	let closing: Promise<void> | undefined;
+	let inboxStore: DatabaseSync | undefined;
 	return {
 		port: runtime.port,
+        inboxDispatchInput(workspaceId, dispatchIds, timestampDispatchIds) {
+            if (closing) throw new Error('Hive host is closed');
+            if (!Array.isArray(dispatchIds) || dispatchIds.length > 64 || dispatchIds.some(id =>
+                typeof id !== 'string' || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id))) {
+                throw new Error('Expected up to 64 dispatch IDs');
+            }
+            const ids = new Set<string>(dispatchIds);
+            if (timestampDispatchIds !== undefined && (!Array.isArray(timestampDispatchIds)
+                || timestampDispatchIds.length > 64
+                || timestampDispatchIds.some(id => typeof id !== 'string' || !ids.has(id)))) {
+                throw new Error('Timestamp dispatch IDs must be among the requested dispatches');
+            }
+            const timestamps = new Set<string>(timestampDispatchIds as string[] | undefined);
+            if (!ids.size) return {workspaceId, inputs: []};
+            inboxStore ??= new DatabaseSync(join(dataDir, 'runtime.sqlite'), {readOnly: true});
+            // Use the dispatch/sequence index for the usual cursor. Only an
+            // older timestamp-only anchor needs the exact dispatch's max time.
+            const eligible = `
+                FROM dispatch_messages m
+                LEFT JOIN dispatch_message_outbox o ON o.message_id = m.id
+                WHERE m.dispatch_id = ? AND m.workspace_id = ?
+                  AND COALESCE(o.state, 'recorded') <> 'cancelled'
+            `;
+            const newest = inboxStore.prepare(`SELECT m.sequence ${eligible} ORDER BY m.sequence DESC LIMIT 1`);
+            const newestTime = timestamps.size ? inboxStore.prepare(`SELECT MAX(m.created_at) AS createdAt ${eligible}`) : undefined;
+            const inputs = [...ids].map(dispatchId => {
+                if (!runtime.store.getDispatch(workspaceId, dispatchId)) {
+                    return {dispatchId, sequence: null, createdAt: null};
+                }
+                const sequence = newest.get(dispatchId, workspaceId)?.sequence as number | undefined;
+                const createdAt = timestamps.has(dispatchId)
+                    ? newestTime?.get(dispatchId, workspaceId)?.createdAt as number | null | undefined
+                    : undefined;
+                return {dispatchId, sequence: sequence ?? null, createdAt: createdAt ?? null};
+            });
+            return {workspaceId, inputs};
+        },
         inboxQuestions(workspaceIds) {
             if (closing) throw new Error('Hive host is closed');
             const store = runtime.store as typeof runtime.store & ActionableMessageSource & {
@@ -375,7 +416,13 @@ export async function createHiveHost({
 			return runtime.store.withWorkspaceWorkflowIdle(workspaceId, operation);
 		},
 		close() {
-			closing ??= runtime.close().finally(release);
+			closing ??= runtime.close().finally(() => {
+                try {
+                    inboxStore?.close();
+                } finally {
+                    release();
+                }
+            });
 			return closing;
 		},
 	};

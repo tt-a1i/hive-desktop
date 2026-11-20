@@ -233,9 +233,13 @@ struct ProjectRead {
     members: Result<Vec<Member>, String>,
 }
 
-async fn read_project(runtime: &Runtime, workspace: &str) -> ProjectRead {
+async fn read_project(
+    runtime: &Runtime,
+    workspace: &str,
+    root: Option<&std::path::Path>,
+) -> ProjectRead {
     let (action_center, (sessions, members)) = smol::future::zip(
-        read_action_center(runtime, workspace),
+        read_action_center(runtime, workspace, root),
         smol::future::zip(
             read_list(runtime, "chat.list", workspace),
             read_list(runtime, "team.members", workspace),
@@ -1344,34 +1348,37 @@ impl GlobalInbox {
         .detach();
         cx.spawn(async move |this, cx| {
             loop {
-                let Ok(Some((connection, runtime, workspaces))) = this.update(cx, |this, cx| {
-                    let parent = this.app.upgrade()?;
-                    let app = parent.read(cx);
-                    if this.dismissed || app.closing {
-                        return None;
-                    }
-                    if this.connection != app.connection_generation {
-                        this.connection = app.connection_generation;
-                        this.projects.clear();
-                        this.placement.clear();
-                        this.new_items.clear();
-                        this.undo.clear();
-                        this.undo_review_item = None;
-                        this.archive_undo = None;
-                    }
-                    this.projects
-                        .retain(|id, _| app.workspaces.iter().any(|project| project.id == *id));
-                    Some((
-                        this.connection,
-                        app.runtime
-                            .clone()
-                            .filter(|_| app.connected && !app.restarting),
-                        app.workspaces
-                            .iter()
-                            .map(|project| project.id.clone())
-                            .collect::<Vec<_>>(),
-                    ))
-                }) else {
+                let Ok(Some((connection, runtime, workspaces, root))) =
+                    this.update(cx, |this, cx| {
+                        let parent = this.app.upgrade()?;
+                        let app = parent.read(cx);
+                        if this.dismissed || app.closing {
+                            return None;
+                        }
+                        if this.connection != app.connection_generation {
+                            this.connection = app.connection_generation;
+                            this.projects.clear();
+                            this.placement.clear();
+                            this.new_items.clear();
+                            this.undo.clear();
+                            this.undo_review_item = None;
+                            this.archive_undo = None;
+                        }
+                        this.projects
+                            .retain(|id, _| app.workspaces.iter().any(|project| project.id == *id));
+                        Some((
+                            this.connection,
+                            app.runtime
+                                .clone()
+                                .filter(|_| app.connected && !app.restarting),
+                            app.workspaces
+                                .iter()
+                                .map(|project| project.id.clone())
+                                .collect::<Vec<_>>(),
+                            app.data_dir.clone(),
+                        ))
+                    })
+                else {
                     break;
                 };
                 if let Some(runtime) = runtime {
@@ -1384,7 +1391,7 @@ impl GlobalInbox {
                         }) else {
                             break;
                         };
-                        let result = read_project(&runtime, &workspace).await;
+                        let result = read_project(&runtime, &workspace, root.as_deref()).await;
                         if this
                             .update(cx, |this, cx| {
                                 this.apply(&workspace, connection, archive_revision, result, cx)

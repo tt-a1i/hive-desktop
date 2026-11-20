@@ -1,5 +1,6 @@
 use super::{FileError, Target};
 mod content_results;
+mod image_preview;
 mod search_snippet;
 use crate::{
     app::HiveApp,
@@ -30,6 +31,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+use image_preview::PreviewImage;
 use search_snippet::SearchSnippet;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -240,6 +242,7 @@ struct Preview {
     selection: Match,
     loading: bool,
     text: Option<TextPages>,
+    image: Option<Entity<PreviewImage>>,
     sha256: Option<String>,
     markdown: Option<MarkdownPreview>,
     error: Option<FileError>,
@@ -248,6 +251,17 @@ struct Preview {
     editor_error: Option<String>,
     path_request: Option<FilePathRequest>,
     path_status: Option<FilePathStatus>,
+}
+
+impl Preview {
+    fn loaded(&self) -> bool {
+        self.text.is_some() || self.image.is_some()
+    }
+}
+
+enum PreparedPreview {
+    Text(TextPages),
+    Image(Arc<RenderImage>),
 }
 
 struct FilePathRequest {
@@ -328,7 +342,8 @@ struct ExpandedFilePreview {
     scope_generation: u64,
     preview_generation: u64,
     selection: Match,
-    text: TextPages,
+    text: Option<TextPages>,
+    image: Option<Entity<PreviewImage>>,
     markdown: Option<MarkdownPreview>,
     markdown_start_offset: Option<Point<Pixels>>,
     scroll: ScrollHandle,
@@ -2320,13 +2335,15 @@ impl FileBrowser {
         self.reveal = None;
         self.reveal_missing = None;
         let scope = self.scope.as_ref().expect("current file scope");
-        let params = scope.params(json!({"relativePath":selection.path}));
+        let allow_image = selection.line.is_none();
+        let params = scope.params(json!({"relativePath":selection.path,"allowImage":allow_image}));
         let runtime = self.runtime.clone().expect("current file runtime");
         self.preview_generation += 1;
         self.preview = Some(Preview {
             selection,
             loading: true,
             text: None,
+            image: None,
             sha256: None,
             markdown: None,
             error: None,
@@ -2339,24 +2356,38 @@ impl FileBrowser {
         let generation = self.scope_generation;
         let preview_generation = self.preview_generation;
         self.preview_task = Some(cx.spawn(async move |this, cx| {
-            let result = runtime
-                .request("project.files.preview", params)
-                .await
-                .and_then(|value| {
-                    let text = value["text"]
-                        .as_str()
-                        .ok_or_else(|| tr("读取失败").to_owned())?;
-                    let sha256 = value["sha256"].as_str().filter(|digest| {
+            let result: Result<_, FileError> = async {
+                let mut value = runtime
+                    .request("project.files.preview", params)
+                    .await
+                    .map_err(|error| match error.as_str() {
+                        "Project image exceeds preview limit" => FileError::Owned(
+                            "图片超过 4 MiB，暂不在窗口中预览；可在文件管理器中查看。",
+                        ),
+                        _ => FileError::preview(error),
+                    })?;
+                let sha256 = value["sha256"]
+                    .as_str()
+                    .filter(|digest| {
                         digest.len() == 64
                             && digest
                                 .bytes()
                                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                    });
-                    Ok((
-                        TextPages::new(text.to_owned().into()),
-                        sha256.map(str::to_owned),
-                    ))
-                });
+                    })
+                    .map(str::to_owned);
+                let preview = if allow_image
+                    && let Some(image) = value
+                        .as_object_mut()
+                        .and_then(|object| object.remove("image"))
+                {
+                    PreparedPreview::Image(image_preview::prepare(image).await?)
+                } else {
+                    let text = value["text"].as_str().ok_or(FileError::Owned("读取失败"))?;
+                    PreparedPreview::Text(TextPages::new(text.to_owned().into()))
+                };
+                Ok((preview, sha256))
+            }
+            .await;
             let _ = this.update(cx, |this, cx| {
                 if this.scope_generation != generation
                     || this.preview_generation != preview_generation
@@ -2381,7 +2412,7 @@ impl FileBrowser {
                 };
                 preview.loading = false;
                 match result {
-                    Ok((mut text, sha256)) => {
+                    Ok((PreparedPreview::Text(mut text), sha256)) => {
                         if let Some(line) = preview.selection.line {
                             text.show_line(line);
                         }
@@ -2397,7 +2428,10 @@ impl FileBrowser {
                         preview.text = Some(text);
                         preview.sha256 = sha256;
                     }
-                    Err(error) => preview.error = Some(FileError::preview(error)),
+                    Ok((PreparedPreview::Image(image), _)) => {
+                        preview.image = Some(PreviewImage::retain(image, cx));
+                    }
+                    Err(error) => preview.error = Some(error),
                 }
                 cx.notify();
             });
@@ -2465,7 +2499,7 @@ impl FileBrowser {
 
     fn preview_identity(&self) -> Option<PreviewIdentity> {
         let preview = self.preview.as_ref()?;
-        if preview.loading || preview.error.is_some() || preview.text.is_none() {
+        if preview.loading || preview.error.is_some() || !preview.loaded() {
             return None;
         }
         self.selected_file_identity()
@@ -2920,16 +2954,17 @@ impl FileBrowser {
         let Some(preview) = &self.preview else {
             return false;
         };
-        let Some(text) = &preview.text else {
+        if !preview.loaded() {
             return false;
-        };
+        }
         let Some(scope) = self.scope.clone() else {
             return false;
         };
         let browser = cx.entity();
         let app = self.app.clone();
         let selection = preview.selection.clone();
-        let text = text.clone();
+        let text = preview.text.clone();
+        let image = preview.image.clone();
         let scroll = ScrollHandle::new();
         scroll.set_offset(preview.scroll.offset());
         let scope_generation = self.scope_generation;
@@ -2942,7 +2977,8 @@ impl FileBrowser {
         let markdown = preview
             .markdown
             .as_ref()
-            .map(|preview| MarkdownPreview::new(preview.mode, &text, cx));
+            .zip(text.as_ref())
+            .map(|(preview, text)| MarkdownPreview::new(preview.mode, text, cx));
         let return_focus = window
             .focused(cx)
             .filter(|_| self.browser_focus.contains_focused(window, cx));
@@ -2959,6 +2995,7 @@ impl FileBrowser {
                 preview_generation,
                 selection,
                 text,
+                image,
                 markdown,
                 markdown_start_offset,
                 scroll,
@@ -3613,7 +3650,7 @@ impl FileBrowser {
                                     this.select(selection.clone(), cx)
                                 })),
                         )
-                        .when(preview.text.is_some(), |actions| {
+                        .when(preview.loaded(), |actions| {
                             actions.child(
                                 Button::new("browser-expand-preview")
                                     .custom(palette::quiet_icon_variant(cx))
@@ -3666,13 +3703,21 @@ impl FileBrowser {
             );
         }
         if let Some(error) = &preview.error {
+            let message = error.text();
             return panel.child(
                 div()
                     .id("browser-preview-error")
                     .text_sm()
                     .role(Role::Status)
+                    .aria_label(message.clone())
                     .text_color(Color::Error.get(cx))
-                    .child(error.text()),
+                    .child(message),
+            );
+        }
+        if let Some(image) = &preview.image {
+            return panel.child(
+                image_preview::region("browser-preview-image", image, &path, height, cx)
+                    .when(stretch, |region| region.flex_1()),
             );
         }
         let Some(text) = &preview.text else {
@@ -3766,7 +3811,7 @@ impl ExpandedFilePreview {
                     && browser.scope.as_ref() == Some(&self.scope)
                     && browser.current(cx)
                     && browser.preview.as_ref().is_some_and(|preview| {
-                        preview.selection == self.selection && preview.text.is_some()
+                        preview.selection == self.selection && preview.loaded()
                     })
             })
     }
@@ -3868,7 +3913,8 @@ impl ExpandedFilePreview {
     fn page(&mut self, step: isize, cx: &mut Context<Self>) {
         if self.current(cx)
             && !self.markdown.as_ref().is_some_and(MarkdownPreview::active)
-            && step_preview(&mut self.text, &mut self.scroll, step)
+            && let Some(text) = &mut self.text
+            && step_preview(text, &mut self.scroll, step)
         {
             cx.notify();
         }
@@ -3877,8 +3923,9 @@ impl ExpandedFilePreview {
     fn set_mode(&mut self, mode: FilePreviewMode, cx: &mut Context<Self>) {
         if self.current(cx)
             && let Some(markdown) = &mut self.markdown
+            && let Some(text) = &self.text
         {
-            markdown.switch(mode, &self.text, cx);
+            markdown.switch(mode, text, cx);
             cx.notify();
         }
     }
@@ -3912,7 +3959,7 @@ impl Render for ExpandedFilePreview {
         );
         let markdown_limited = self.markdown.is_none()
             && is_markdown_file(&self.selection.path)
-            && !self.text.full.is_empty();
+            && self.text.as_ref().is_some_and(|text| !text.full.is_empty());
         let header = if self.markdown.is_some() || markdown_limited {
             px(226.)
         } else {
@@ -3960,31 +4007,44 @@ impl Render for ExpandedFilePreview {
             .preview
             .as_ref()
             .and_then(|preview| preview.path_status);
-        view.child(
-            h_flex()
-                .items_center()
-                .justify_between()
-                .gap_2()
-                .child(text_reading::selectable_text("file-reader-source", path.clone()).text_sm())
-                .child(
-                    h_flex()
-                        .items_center()
-                        .gap_2()
-                        .children(diff)
-                        .children(attach)
-                        .children(reveal)
-                        .children(copy_path)
-                        .children(editor_menu)
-                        .child(back),
-                ),
-        )
-        .when_some(editor_error, |view, error| {
-            view.child(editor_open_error(error, cx))
-        })
-        .when_some(path_status, |view, status| {
-            view.child(file_path_status(status, cx))
-        })
-        .when_some(self.markdown.as_ref(), |view, markdown| {
+        let view = view
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        text_reading::selectable_text("file-reader-source", path.clone()).text_sm(),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .children(diff)
+                            .children(attach)
+                            .children(reveal)
+                            .children(copy_path)
+                            .children(editor_menu)
+                            .child(back),
+                    ),
+            )
+            .when_some(editor_error, |view, error| {
+                view.child(editor_open_error(error, cx))
+            })
+            .when_some(path_status, |view, status| {
+                view.child(file_path_status(status, cx))
+            });
+        if let Some(image) = &self.image {
+            return view.child(
+                image_preview::region("file-reader-image", image, &path, height, cx)
+                    .track_focus(&self.focus)
+                    .tab_stop(true),
+            );
+        }
+        let Some(text) = &self.text else {
+            return view;
+        };
+        view.when_some(self.markdown.as_ref(), |view, markdown| {
             view.child(markdown_mode_controls(markdown.mode, Self::set_mode, cx))
         })
         .when(markdown_limited, |view| {
@@ -3994,7 +4054,7 @@ impl Render for ExpandedFilePreview {
             text_reading::region("file-reader".into(), path, scroll, height, cx)
                 .track_focus(&self.focus)
                 .child(rendered.map_or_else(
-                    || preview_text("file-reader-text", &self.text, cx),
+                    || preview_text("file-reader-text", text, cx),
                     |markdown| markdown.render("file-reader-markdown", cx),
                 )),
         )
@@ -4011,38 +4071,40 @@ impl Render for ExpandedFilePreview {
                             .small()
                             .label(tr("跳到搜索命中行"))
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                if this.current(cx) {
+                                if this.current(cx)
+                                    && let Some(text) = &mut this.text
+                                {
                                     if let Some(markdown) = &mut this.markdown {
-                                        markdown.switch(FilePreviewMode::Source, &this.text, cx);
+                                        markdown.switch(FilePreviewMode::Source, text, cx);
                                     }
-                                    this.text.show_line(line);
+                                    text.show_line(line);
                                     this.scroll = ScrollHandle::new();
                                     cx.notify();
                                 }
                             })),
                     )
                 })
-                .when(rendered.is_none() && self.text.count() > 1, |actions| {
+                .when(rendered.is_none() && text.count() > 1, |actions| {
                     actions
                         .child(
                             Button::new("file-reader-previous-page")
                                 .ghost()
                                 .small()
                                 .label(tr("上一页"))
-                                .disabled(self.text.page == 0)
+                                .disabled(text.page == 0)
                                 .on_click(cx.listener(|this, _, _, cx| this.page(-1, cx))),
                         )
                         .child(div().text_xs().child(format!(
                             "{} / {}",
-                            self.text.page + 1,
-                            self.text.count()
+                            text.page + 1,
+                            text.count()
                         )))
                         .child(
                             Button::new("file-reader-next-page")
                                 .ghost()
                                 .small()
                                 .label(tr("下一页"))
-                                .disabled(self.text.page + 1 >= self.text.count())
+                                .disabled(text.page + 1 >= text.count())
                                 .on_click(cx.listener(|this, _, _, cx| this.page(1, cx))),
                         )
                 }),

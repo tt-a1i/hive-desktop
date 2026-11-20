@@ -3,6 +3,7 @@ use crate::{
     app::HiveApp,
     language::{english, tr},
     palette::Color,
+    protocol::PendingUserInput,
 };
 use gpui_kit::{
     assets::IconName as Glyph,
@@ -13,6 +14,8 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+
+gpui_kit::actions!(hive_desktop, [SteerPendingInput]);
 
 impl HiveApp {
     pub(crate) fn render_pending_user_inputs(&self, cx: &Context<Self>) -> Option<AnyElement> {
@@ -81,15 +84,20 @@ impl HiveApp {
                                 .child(count.to_string()),
                         ),
                 )
-                .child(v_flex().id("queued-user-inputs").gap_1p5().children(
+                .child(v_flex().id("queued-user-inputs").gap_1p5()
+                    .key_context("HiveQueuedInputs")
+                    .on_action(cx.listener(Self::steer_next_queued_input))
+                    .children(
                     undisplayed.into_iter().map(|input| {
                         let text = input.text.clone();
                         let edit_input = input.clone();
                         let cancel_input = input.clone();
+                        let steering = self.steering_queued_input(&input.delivery_id);
                         let status = match input.reason.as_deref() {
                             Some("completed") => tr("消息已处理，不能编辑或撤回"),
                             Some("attempted") => tr("消息已尝试发送，不能编辑或撤回"),
                             Some("legacy") => tr("旧版待发消息缺少原始记录，不能编辑或撤回"),
+                            _ if steering => tr("正在发送到当前回合…"),
                             _ if input.processing => tr("已接收，正在处理"),
                             _ if running => tr("已入队，等待当前回复结束"),
                             _ => tr("已入队，等待继续处理"),
@@ -157,6 +165,30 @@ impl HiveApp {
                                                 .child(detail),
                                         ),
                                 )
+                                .when(input.steerable && running, |row| {
+                                    let delivery = input.delivery_id.clone();
+                                    let expected = input.text.clone();
+                                    let shortcut = if cfg!(target_os = "macos") {
+                                        "⌘⇧↵"
+                                    } else {
+                                        "Ctrl+Shift+Enter"
+                                    };
+                                    row.child(
+                                        Button::new(SharedString::from(format!("steer-queued-{delivery}")))
+                                            .custom(crate::palette::subtle_icon_variant(cx))
+                                            .compact()
+                                            .h(px(24.))
+                                            .w(px(24.))
+                                            .rounded_md()
+                                            .icon(Glyph::ArrowUp)
+                                            .tooltip(format!("{} ({shortcut})", tr("发送到当前回合")))
+                                            .accessibility_label(tr("发送到当前回合"))
+                                            .disabled(!self.can_steer_queued_input(input))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.steer_queued_input_now(&delivery, &expected, cx);
+                                            })),
+                                    )
+                                })
                                 .when(input.editable && !input.processing, |row| {
                                     row.child(
                                         Button::new(SharedString::from(format!(
@@ -171,7 +203,7 @@ impl HiveApp {
                                         .icon(Glyph::Pencil)
                                         .tooltip(tr("编辑待发消息"))
                                         .accessibility_label(tr("编辑待发消息"))
-                                        .disabled(!self.connected || self.closing)
+                                        .disabled(!self.connected || self.closing || steering)
                                         .on_click(
                                             cx.listener(move |this, _, window, cx| {
                                                 this.open_queue_editor(
@@ -196,7 +228,7 @@ impl HiveApp {
                                         .icon(Glyph::X)
                                         .tooltip(tr("撤回待发消息"))
                                         .accessibility_label(tr("撤回待发消息"))
-                                        .disabled(!self.connected || self.closing)
+                                        .disabled(!self.connected || self.closing || steering)
                                         .on_click(
                                             cx.listener(move |this, _, window, cx| {
                                                 if crate::general::current(cx)
@@ -245,6 +277,111 @@ impl HiveApp {
                 ))
                 .into_any_element(),
         )
+    }
+
+    fn steering_queued_input(&self, delivery: &str) -> bool {
+        self.session.as_ref().is_some_and(|session| {
+            self.steering_queued_inputs
+                .iter()
+                .any(|(connection, session_id, delivery_id)| {
+                    *connection == self.connection_generation
+                        && *session_id == session.id
+                        && delivery_id == delivery
+                })
+        })
+    }
+
+    fn can_steer_queued_input(&self, input: &PendingUserInput) -> bool {
+        input.steerable
+            && input.editable
+            && !input.processing
+            && self.connected
+            && !self.closing
+            && !self.loading
+            && self.workspace_writes_allowed()
+            && !self.conversation_is_read_only()
+            && self.viewing_conversation()
+            && self
+                .session
+                .as_ref()
+                .is_some_and(|session| self.busy.contains(&session.id))
+            && !self.steering_queued_input(&input.delivery_id)
+            && !self.message_indices.contains_key(&input.delivery_id)
+    }
+
+    fn steer_next_queued_input(
+        &mut self,
+        _: &SteerPendingInput,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = self
+            .pending_user_inputs
+            .iter()
+            .find(|input| self.can_steer_queued_input(input));
+        if let Some(input) = target {
+            let (delivery, expected) = (input.delivery_id.clone(), input.text.clone());
+            self.steer_queued_input_now(&delivery, &expected, cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
+    fn steer_queued_input_now(&mut self, delivery: &str, expected: &str, cx: &mut Context<Self>) {
+        if !self.pending_user_inputs.iter().any(|input| {
+            input.delivery_id == delivery
+                && input.text == expected
+                && self.can_steer_queued_input(input)
+        }) {
+            return;
+        }
+        let (Some(runtime), Some(session)) = (self.runtime.clone(), self.session.as_ref()) else {
+            return;
+        };
+        let session_id = session.id.clone();
+        let delivery = delivery.to_owned();
+        let connection = self.connection_generation;
+        let view = self.open_request;
+        let operation = (connection, session_id.clone(), delivery.clone());
+        self.steering_queued_inputs.insert(operation.clone());
+        let params = serde_json::json!({
+            "sessionId": session_id,
+            "deliveryId": delivery,
+            "expectedText": expected,
+        });
+        cx.spawn(async move |this, cx| {
+            let result = runtime.request("chat.queue.steer", params).await;
+            let _ = this.update(cx, |this, cx| {
+                this.steering_queued_inputs.remove(&operation);
+                if this.connection_generation != connection || this.open_request != view {
+                    cx.notify();
+                    return;
+                }
+                match result {
+                    Ok(value) if value["deliveryId"].as_str() == Some(delivery.as_str()) => {
+                        if let Some(input) = this
+                            .pending_user_inputs
+                            .iter_mut()
+                            .find(|input| input.delivery_id == delivery)
+                        {
+                            input.steerable = false;
+                        }
+                    }
+                    Ok(_) => {
+                        this.error = Some("后台未确认待发消息操作。".into());
+                    }
+                    Err(error) => {
+                        this.error = Some(crate::app::ErrorNotice::Detail(
+                            "无法将待发消息发送到当前回合",
+                            error,
+                        ));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     pub(super) fn cancel_queued_input_now(

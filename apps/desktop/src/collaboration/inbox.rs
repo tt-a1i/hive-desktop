@@ -31,6 +31,7 @@ use snoozes::{Delay, Reminder, Snoozes, Wake, now_ms, unread_session_key};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     io,
+    path::Path,
 };
 use undo::{UNDO_CHANGED, UndoChange, UndoSlot, VerifiedUndo, expire_later};
 
@@ -247,10 +248,39 @@ struct ActionCenter {
     generated_at: u64,
     attention: Vec<Attention>,
     recent_dispatch_messages: Vec<RecentMessage>,
+    #[serde(skip)]
+    dispatch_inputs: BTreeMap<String, DispatchInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DispatchInput {
+    dispatch_id: String,
+    sequence: Option<u64>,
+    created_at: Option<u64>,
+}
+
+impl DispatchInput {
+    fn is_newer(&self, sequence: Option<u64>, observed_at: u64) -> bool {
+        match sequence {
+            Some(sequence) => self.sequence.is_some_and(|latest| latest > sequence),
+            None => self.created_at.is_some_and(|latest| latest > observed_at),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DispatchInputs {
+    workspace_id: String,
+    inputs: Vec<DispatchInput>,
 }
 
 impl ActionCenter {
     fn latest_input(&self, dispatch: &str) -> Option<u64> {
+        if let Some(input) = self.dispatch_inputs.get(dispatch) {
+            return input.sequence;
+        }
         self.recent_dispatch_messages
             .iter()
             .filter(|message| {
@@ -261,7 +291,9 @@ impl ActionCenter {
     }
 
     fn has_new_input(&self, dispatch: &str, sequence: Option<u64>, observed_at: u64) -> bool {
-        if let Some(sequence) = sequence {
+        if let Some(input) = self.dispatch_inputs.get(dispatch) {
+            input.is_newer(sequence, observed_at)
+        } else if let Some(sequence) = sequence {
             self.latest_input(dispatch)
                 .is_some_and(|latest| latest > sequence)
         } else {
@@ -318,7 +350,50 @@ impl ActionCenter {
     }
 }
 
-async fn read_action_center(runtime: &Runtime, workspace: &str) -> Result<ActionCenter, String> {
+async fn read_dispatch_inputs(
+    runtime: &Runtime,
+    workspace: &str,
+    dispatches: &BTreeMap<String, bool>,
+) -> BTreeMap<String, DispatchInput> {
+    let ids: Vec<_> = dispatches.keys().collect();
+    let mut inputs = BTreeMap::new();
+    for chunk in ids.chunks(64) {
+        let timestamps: Vec<_> = chunk.iter().copied().filter(|id| dispatches[*id]).collect();
+        let Ok(value) = runtime
+            .request(
+                "inbox.dispatchInput",
+                json!({"workspaceId":workspace,"dispatchIds":chunk,"timestampDispatchIds":timestamps}),
+            )
+            .await
+        else {
+            continue;
+        };
+        let Ok(response) = serde_json::from_value::<DispatchInputs>(value) else {
+            continue;
+        };
+        if response.workspace_id != workspace {
+            continue;
+        }
+        let mut verified = BTreeMap::new();
+        for input in response.inputs {
+            let id = input.dispatch_id.clone();
+            if chunk.binary_search(&&id).is_err() || verified.insert(id, input).is_some() {
+                verified.clear();
+                break;
+            }
+        }
+        if verified.len() == chunk.len() {
+            inputs.append(&mut verified);
+        }
+    }
+    inputs
+}
+
+async fn read_action_center(
+    runtime: &Runtime,
+    workspace: &str,
+    root: Option<&Path>,
+) -> Result<ActionCenter, String> {
     let encoded: String = url::form_urlencoded::byte_serialize(workspace.as_bytes()).collect();
     let value = runtime
         .request(
@@ -326,7 +401,7 @@ async fn read_action_center(runtime: &Runtime, workspace: &str) -> Result<Action
             json!({"method":"GET","path":format!("/api/ui/workspaces/{encoded}/action-center")}),
         )
         .await?;
-    let snapshot: ActionCenter =
+    let mut snapshot: ActionCenter =
         serde_json::from_value(value).map_err(|error| error.to_string())?;
     if snapshot.workspace_id != workspace
         || snapshot
@@ -335,6 +410,12 @@ async fn read_action_center(runtime: &Runtime, workspace: &str) -> Result<Action
             .any(|message| message.workspace_id != workspace)
     {
         return Err(tr("收件箱返回了其他工作区的数据。").into());
+    }
+    if let Some(root) = root
+        && let Ok(snoozes) = Snoozes::load(root, workspace)
+    {
+        let ids = snoozes.watched_dispatches(now_ms(), Some(&snapshot));
+        snapshot.dispatch_inputs = read_dispatch_inputs(runtime, workspace, &ids).await;
     }
     Ok(snapshot)
 }
@@ -744,6 +825,7 @@ impl HiveApp {
         else {
             return;
         };
+        let root = self.data_dir.clone();
         let inbox = &mut self.collaboration.inbox;
         let connection = self.connection_generation;
         if inbox.workspace.as_ref() != Some(&workspace) || inbox.connection != connection {
@@ -762,7 +844,7 @@ impl HiveApp {
         inbox.generation += 1;
         let generation = inbox.generation;
         cx.spawn(async move |this, cx| {
-            let result = read_action_center(&runtime, &workspace).await;
+            let result = read_action_center(&runtime, &workspace, root.as_deref()).await;
             let _ = this.update(cx, |this, cx| {
                 if this.workspace.as_ref() != Some(&workspace)
                     || this.connection_generation != connection

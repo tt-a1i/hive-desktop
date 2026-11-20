@@ -270,6 +270,8 @@ pub struct PendingUserInput {
     #[serde(default)]
     pub editable: bool,
     #[serde(default)]
+    pub steerable: bool,
+    #[serde(default)]
     pub reason: Option<String>,
 }
 #[derive(Clone, Deserialize)]

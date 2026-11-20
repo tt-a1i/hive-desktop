@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { crc32 } from 'node:zlib';
 import { listProjectDirectory, previewProjectFile, searchProjectContents, searchProjectFiles, resolveProjectFile, readProjectFile } from '../src/project-files.js';
 import { REGEX_INVALID, REGEX_TIMEOUT, startProjectRegexSearch } from '../src/project-search-regex.js';
 
@@ -45,6 +46,40 @@ try {
   await writeFile(join(nested, 'binary.bin'), Buffer.from([0, 1]));
   await assert.rejects(readProjectFile(nested, 'binary.bin'));
   await assert.rejects(previewProjectFile(nested, 'binary.bin'), /not text/);
+  const images = join(dir, 'images');
+  await mkdir(images);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC', 'base64');
+  const screenshot = '截图 preview.png';
+  await writeFile(join(images, screenshot), png);
+  // A valid PNG with a large ancillary comment exercises the encoded-byte
+  // threshold independently from decoded pixel count.
+  const comment = Buffer.concat([Buffer.from('tEXtComment\0'), Buffer.alloc(1024 * 1024, 'x')]);
+  const length = Buffer.alloc(4);
+  const checksum = Buffer.alloc(4);
+  length.writeUInt32BE(comment.length - 4);
+  checksum.writeUInt32BE(crc32(comment));
+  const largePng = Buffer.concat([png.subarray(0, -12), length, comment, checksum, png.subarray(-12)]);
+  await writeFile(join(images, 'large.png'), largePng);
+  await writeFile(join(images, 'oversize.png'), Buffer.concat([png, Buffer.alloc(4 * 1024 * 1024)]));
+  await writeFile(join(images, 'named.png'), 'text named like an image');
+  await writeFile(join(images, 'large-text.png'), Buffer.alloc(1024 * 1024 + 1, 'x'));
+  assert.deepEqual(await previewProjectFile(images, screenshot, true), {
+    image: {format: 'png', data: png.toString('base64')}, sha256: createHash('sha256').update(png).digest('hex'),
+  });
+  await assert.rejects(previewProjectFile(images, screenshot), /not text/);
+  await assert.rejects(previewProjectFile(images, screenshot, false), /not text/);
+  assert.deepEqual(await previewProjectFile(images, 'large.png', true), {
+    image: {format: 'png', data: largePng.toString('base64')}, sha256: createHash('sha256').update(largePng).digest('hex'),
+  });
+  await assert.rejects(previewProjectFile(images, 'large.png'), /Project file exceeds preview limit/);
+  await assert.rejects(previewProjectFile(images, 'large-text.png', true), /Project file exceeds preview limit/);
+  await assert.rejects(previewProjectFile(images, 'oversize.png', true), /Project image exceeds preview limit/);
+  await assert.rejects(previewProjectFile(images, '../images/' + screenshot, true));
+  assert.deepEqual(await previewProjectFile(images, 'named.png', true), await previewProjectFile(images, 'named.png'));
+  if (process.platform !== 'win32') {
+    await symlink(join(images, screenshot), join(images, 'local-link.png'));
+    await assert.rejects(previewProjectFile(images, 'local-link.png', true));
+  }
   await writeFile(join(nested, 'unicode.txt'), 'first line\nCafe\u0301 MATCH\n');
   await writeFile(join(nested, 'large.txt'), Buffer.alloc(1024 * 1024 + 1, 'a'));
   await assert.rejects(previewProjectFile(nested, 'large.txt'), /preview limit/);

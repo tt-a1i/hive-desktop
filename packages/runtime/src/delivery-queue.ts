@@ -26,7 +26,9 @@ interface DeliveryQueueOptions {
  /** Only Codex used the ambiguous legacy steerUser spool format. */
  holdLegacyCodexSteers?: boolean;
  execute(item: DeliveryItem): Promise<void>;
- steer?(item: DeliveryItem): Promise<boolean>;
+ steer?(item: DeliveryItem, expectedTurnId?: string): Promise<boolean>;
+ steeringTurn?(): string | undefined;
+ queuedSteeringUnavailable?(): boolean;
  completedIds(): readonly string[];
  /** Trusted local metadata, prepared before atomic spool persistence. Never a provider replay. */
  prepare?(item:DeliveryItem):DeliveryItem;
@@ -35,6 +37,8 @@ interface DeliveryQueueOptions {
  onError(error: Error): void;
  onState?(busy: boolean, completedReportId?: string): void;
 }
+
+export const queuedSteeringUnavailable = '这条排队消息已无法发送到当前回合。';
 
 function spoolPath(directory: string, sessionId: string): string {
  return join(directory, `${createHash("sha256").update(sessionId).digest("hex")}.json`);
@@ -147,17 +151,43 @@ export class DeliveryQueue {
   });
  }
  get pendingUserInputs() {
+  const steerable = this.steerableQueuedInput();
   return this.items.flatMap((item, index) => item.presentation?.origin === 'user' ? [{
    deliveryId: item.id, text: item.presentation.displayText,
    attachments: structuredClone(item.presentation.attachments ?? []),
    processing: (index === 0 || this.steering.has(item.id)) && this.busy && !this.paused,
    editable: this.mutationReason(item, index) === undefined,
    ...(this.mutationReason(item, index) && { reason: this.mutationReason(item, index) }),
+   ...(steerable?.item.id === item.id && {steerable: true as const}),
   }] : []);
  }
  get isPaused(): boolean { return this.paused; }
  get busy(): boolean { return this.running !== undefined; }
  get hasLiveSteering(): boolean { return this.pendingSteering.size !== 0; }
+
+ private steerableQueuedInput() {
+  const [active, item] = this.items;
+  if (this.paused || !this.busy || !active || this.attemptedId !== active.id || !this.options.steer
+   || !item || item.presentation?.origin !== 'user' || !item.triggerTurn || item.contextRef
+   || item.images?.length || this.mutationReason(item, 1) || this.options.queuedSteeringUnavailable?.()) return;
+  const turnId = this.options.steeringTurn?.();
+  if (turnId) return {item, turnId};
+ }
+
+ /** Persist promotion of the exact queue row before allowing the native request. */
+ steerPendingUserInput(id: string, expectedText: string): {deliveryId: string} {
+  const candidate = this.steerableQueuedInput();
+  if (!candidate || candidate.item.id !== id || candidate.item.presentation!.displayText !== expectedText) throw new Error(queuedSteeringUnavailable);
+  const item: StoredItem = {...candidate.item, queueState: 'started', steerAttemptVersion: 1, steerQueueVersion: 1};
+  this.replace([this.items[0]!, item, ...this.items.slice(2)]);
+  this.beginSteering(item, candidate.turnId);
+  this.emitState(undefined, true);
+  return {deliveryId: id};
+ }
+
+ notifySteeringAvailability(): void {
+  if (this.items[1]?.presentation?.origin === 'user') this.emitState(undefined, true);
+ }
 
  /** Resolves after atomic persistence, without waiting for model execution. */
  async enqueue(text: string, triggerTurn = true, presentation?: DeliveryPresentation, imageInput?: readonly PromptImage[], options?: { steerUser?: boolean }): Promise<void> {
@@ -179,9 +209,15 @@ export class DeliveryQueue {
   const item = this.items.at(-1)!;
   // Asynchronous system input and worker reports may join the current turn. Never overtake a
   // queued user/task input; persist first and retain until native completion.
-  if (canSteer) {
-   this.pendingSteering.add(item.id);
-   const attempt = this.options.steer!(item).then(handled => {
+  if (canSteer) this.beginSteering(item);
+  this.kick();
+  this.emitState();
+ }
+
+ private beginSteering(item: StoredItem, expectedTurnId?: string): void {
+  this.pendingSteering.add(item.id);
+  const native = (async () => this.options.steer!(item, expectedTurnId))();
+  const attempt = native.then(handled => {
     if (handled && !this.options.completedIds().includes(item.id)) throw new Error('Native steering completed without a durable delivery receipt');
     if (!handled) {
      // For explicit user attempts, false means definite non-delivery. Persist
@@ -196,13 +232,10 @@ export class DeliveryQueue {
       this.clearDeclinedSteering();
      }
     }
-   });
-   this.steering.set(item.id, attempt);
-   void attempt.then(()=>this.pendingSteering.delete(item.id),()=>this.pendingSteering.delete(item.id));
-   void attempt.catch(() => {});
-  }
-  this.kick();
-  this.emitState();
+  });
+  this.steering.set(item.id, attempt);
+  const settled = () => { this.pendingSteering.delete(item.id); };
+  void attempt.then(settled, settled);
  }
 
  private mutationReason(item: StoredItem, index: number): string | undefined {

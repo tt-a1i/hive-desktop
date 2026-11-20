@@ -191,7 +191,7 @@ try {
     kind: string; dispatch_id?: string; worker_id?: string; worker_name?: string;
     dispatch_backend?: string | null; severity?: string; submitted_at?: number; minutes_ago?: number;
   };
-  type Center = {summary: {waiting_reports: number}; attention: Attention[]};
+  type Center = {summary: {waiting_reports: number}; attention: Attention[]; recent_dispatch_messages: {dispatch_id: string}[]};
   const actionCenter = `/api/ui/workspaces/${workspace.id}/action-center`;
   const base = `http://127.0.0.1:${hivePort}`;
   const rawUnauthorized = await fetch(base + actionCenter);
@@ -215,6 +215,57 @@ try {
   assert.deepEqual(Object.keys(scoped[0]!).sort(),
     ['dispatch_backend', 'dispatch_id', 'kind', 'minutes_ago', 'severity', 'submitted_at', 'worker_id', 'worker_name']);
   console.log('INBOX_WAITING_REPORTS_OK: production wire includes the fourth exact member/backend while the authenticated HTTP preview remains capped');
+
+  const watched = waiting[3]!;
+  const unrelated = waiting[0]!;
+  const stamp = Date.now() - 1000;
+  function insertInputs(withNewInput: boolean) {
+    const db = new DatabaseSync(join(dataDir, 'hive', 'runtime.sqlite'));
+    try {
+      const add = db.prepare(`INSERT INTO dispatch_messages
+        (id, workspace_id, dispatch_id, sequence, from_agent_id, recipient_agent_id, kind, text, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'note', 'Private fixture message', ?)`);
+      const message = (dispatch: string, sequence: number, time: number) => {
+        const id = randomUUID();
+        add.run(id, workspace.id, dispatch, sequence, later.id, `${workspace.id}:orchestrator`, time);
+        return id;
+      };
+      if (withNewInput) {
+        // Clock rollback can make a newer sequence older by wall clock. The
+        // time-only anchor must still detect the next eligible input by time.
+        message(watched, 8, stamp + 50);
+        message(watched, 9, stamp + 25);
+      } else {
+        message(watched, 7, stamp);
+        const cancelled = message(watched, 10, stamp + 100);
+        db.prepare("INSERT INTO dispatch_message_outbox (message_id, state) VALUES (?, 'cancelled')").run(cancelled);
+      }
+      for (let i = 1; i <= 12; i++) message(unrelated, i + (withNewInput ? 12 : 0), stamp + 200 + i);
+    } finally {
+      db.close();
+    }
+  }
+  type DispatchInput = {dispatchId: string; sequence: number | null; createdAt: number | null};
+  type InputBatch = {workspaceId: string; inputs: DispatchInput[]};
+  const queryInput = (workspaceId: string, time = true) => wire!.request<InputBatch>('inbox.dispatchInput', {
+    workspaceId, dispatchIds: [watched], ...(time && { timestampDispatchIds: [watched] }),
+  });
+  insertInputs(false);
+  assert.deepEqual(await queryInput(workspace.id), {workspaceId: workspace.id, inputs: [{dispatchId: watched, sequence: 7, createdAt: stamp}]});
+  assert.deepEqual(await queryInput(foreign.id), {workspaceId: foreign.id, inputs: [{dispatchId: watched, sequence: null, createdAt: null}]});
+  insertInputs(true);
+  const buried = await wire.request<Center>('hive.request', {method: 'GET', path: actionCenter});
+  assert.equal(buried.recent_dispatch_messages.length, 12);
+  assert.ok(buried.recent_dispatch_messages.every(message => message.dispatch_id === unrelated));
+  assert.deepEqual(await queryInput(workspace.id), {workspaceId: workspace.id, inputs: [{dispatchId: watched, sequence: 9, createdAt: stamp + 50}]});
+  assert.deepEqual(await queryInput(workspace.id, false), {workspaceId: workspace.id, inputs: [{dispatchId: watched, sequence: 9, createdAt: null}]});
+  await assert.rejects(wire.request('inbox.dispatchInput', {workspaceId: workspace.id, dispatchIds: [watched], timestampDispatchIds: [unrelated]}));
+  await wire.close();
+  wire = undefined;
+  wire = launch();
+  await wire.request('initialize');
+  assert.deepEqual(await queryInput(workspace.id), {workspaceId: workspace.id, inputs: [{dispatchId: watched, sequence: 9, createdAt: stamp + 50}]});
+  console.log('INBOX_DISPATCH_INPUT_OK: exact eligible input behind workspace preview, ask scope isolation, and cold restart');
 } finally {
   await wire?.close();
   await rm(root, {recursive: true, force: true});

@@ -175,6 +175,11 @@ fn main() {
                 KeyBinding::new("down", NextSessionResult, Some("HiveProjectFileTree")),
                 KeyBinding::new("up", PreviousSessionResult, Some("HiveProjectFileTree")),
                 KeyBinding::new("enter", OpenProjectFileSelection, Some("HiveProjectFileTree")),
+                KeyBinding::new(
+                    if cfg!(target_os = "macos") { "cmd-shift-enter" } else { "ctrl-shift-enter" },
+                    queued_inputs::SteerPendingInput,
+                    Some("HiveQueuedInputs"),
+                ),
                 KeyBinding::new("escape", CancelSessionRename, Some("HiveSessionName")),
                 KeyBinding::new("escape", ClosePreferences, Some("HivePreferences")),
                 KeyBinding::new(

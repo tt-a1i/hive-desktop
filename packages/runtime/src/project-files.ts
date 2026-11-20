@@ -11,6 +11,8 @@ import type { RegexRange } from './project-search-regex-worker.js';
 const exec = promisify(execFile);
 const PAGE_SIZE = 100;
 const PREVIEW_LIMIT = 1024 * 1024;
+const IMAGE_PREVIEW_LIMIT = 4 * 1024 * 1024;
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const CONTENT_SEARCH_LIMIT = 64 * 1024 * 1024;
 const SNIPPET_BYTES = 192;
 const SNIPPET_CONTEXT_BYTES = 16;
@@ -360,7 +362,7 @@ async function searchProjectLines(
     if (!validRelative(path) || path.includes('\\')) continue;
     let bytes: Buffer;
     try {
-      bytes = await readProjectBytes(root, path, Math.min(PREVIEW_LIMIT, CONTENT_SEARCH_LIMIT - scanned), true);
+      bytes = await readProjectBytes(root, path, Math.min(PREVIEW_LIMIT, CONTENT_SEARCH_LIMIT - scanned), {direct: true});
     } catch (error) {
       // Unreadable or replaced files do not prevent searching other files.
       const code = (error as NodeJS.ErrnoException).code;
@@ -412,10 +414,28 @@ async function searchProjectLines(
   return {matches, total, limited};
 }
 
-export async function previewProjectFile(projectRoot: string, relativePath: string) {
+type TextProjectPreview = {text: string; sha256: string};
+type ImageProjectPreview = {image: {format: 'png' | 'jpeg'; data: string}; sha256: string};
+
+export function previewProjectFile(projectRoot: string, relativePath: string, allowImage?: false): Promise<TextProjectPreview>;
+export function previewProjectFile(projectRoot: string, relativePath: string, allowImage: boolean): Promise<TextProjectPreview | ImageProjectPreview>;
+export async function previewProjectFile(projectRoot: string, relativePath: string, allowImage = false): Promise<TextProjectPreview | ImageProjectPreview> {
+  if (typeof allowImage !== 'boolean') throw new TypeError('Invalid project file preview');
   const root = await rootDirectory(projectRoot);
-  const bytes = await readProjectBytes(root, relativePath, PREVIEW_LIMIT, true);
-  return {text: decodeProjectText(bytes), sha256: createHash('sha256').update(bytes).digest('hex')};
+  const bytes = await readProjectBytes(root, relativePath, PREVIEW_LIMIT, {direct: true, allowPreviewImage: allowImage});
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (allowImage) {
+    const format = previewImageFormat(bytes);
+    if (format) return {image: {format, data: bytes.toString('base64')}, sha256};
+  }
+  if (bytes.length > PREVIEW_LIMIT) throw new RangeError('Project file exceeds preview limit');
+  return {text: decodeProjectText(bytes), sha256};
+}
+
+function previewImageFormat(bytes: Buffer): ImageProjectPreview['image']['format'] | undefined {
+  if (bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) return 'png';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'jpeg';
+  return undefined;
 }
 
 function decodeProjectText(bytes: Buffer): string {
@@ -425,7 +445,10 @@ function decodeProjectText(bytes: Buffer): string {
 }
 
 /** Return bounded bytes, never a path for a later unverified read. */
-async function readProjectBytes(root: string, relativePath: string, limit: number, direct = false): Promise<Buffer> {
+async function readProjectBytes(
+  root: string, relativePath: string, limit: number,
+  {direct = false, allowPreviewImage = false}: {direct?: boolean; allowPreviewImage?: boolean} = {},
+): Promise<Buffer> {
   const canonical = await resolveFileInRoot(root, relativePath);
   const source = resolve(root, relativePath);
   if (direct && (source !== canonical || relativePath.includes('\\'))) throw new Error('File is outside project or not a regular file');
@@ -436,7 +459,13 @@ async function readProjectBytes(root: string, relativePath: string, limit: numbe
     const current = await stat(sourceNow);
     if (!inside(root, sourceNow) || sourceNow !== canonical || !before.isFile() || before.dev !== current.dev || before.ino !== current.ino)
       throw new Error('Project file changed while opening');
-    if (before.size > limit) throw new RangeError(direct ? 'Project file exceeds preview limit' : 'Project file exceeds upload limit');
+    if (before.size > limit) {
+      if (!allowPreviewImage) throw new RangeError(direct ? 'Project file exceeds preview limit' : 'Project file exceeds upload limit');
+      const header = Buffer.alloc(PNG_SIGNATURE.length);
+      const {bytesRead} = await handle.read(header, 0, header.length, 0);
+      if (!previewImageFormat(header.subarray(0, bytesRead))) throw new RangeError('Project file exceeds preview limit');
+      if (before.size > IMAGE_PREVIEW_LIMIT) throw new RangeError('Project image exceeds preview limit');
+    }
     const bytes = Buffer.alloc(before.size);
     let offset = 0;
     while (offset < bytes.length) {

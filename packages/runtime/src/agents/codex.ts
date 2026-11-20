@@ -40,6 +40,7 @@ export interface CodexSessionOptions {
   permissionMode?: string;
   customTools?: CodexTool[];
   onEvent: (event: PiEvent) => void;
+  onSteeringAvailabilityChanged?: () => void;
   /** Persist the durable backend reference before delivery completion is acknowledged. */
   onMaterialized?: (threadId: string) => void | Promise<void>;
   /** Lifecycle notification only; callback must schedule cleanup rather than await it here. */
@@ -203,6 +204,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
           const turn = params.turn as CodexTurn;
           if (!active.turnId || active.turnId === turn.id) {
             active.terminalComplete = true;
+            options.onSteeringAvailabilityChanged?.();
             interactions.endTurn(turn.id, turn.status === 'interrupted' ? 'aborted' : 'turn-ended');
             if (turn.status === 'interrupted' || turn.status === 'failed') {
               for (const item of events?.interruptedItems(turn.id) ?? []) {
@@ -370,6 +372,8 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     const model = models.find(model => model.model === (read.thread.model ?? response.model));
     return {level:level ?? 'native',levels:model?.supportedReasoningEfforts?.map(option=>option.reasoningEffort) ?? [],description:'从原生 Codex 线程读取；档位由当前模型提供。'};
   };
+  const steeringTurn = () => active && !disposed && !active.terminalComplete && !active.cancelled && !active.error
+    ? active.turnId : undefined;
   return {
     sessionId: threadId, threadId,
     get materialized() { return materialized; },
@@ -416,6 +420,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
               value: metadata.context.map(entry => entry.text).join('\n\n') } } }) });
           if (typeof started?.turn?.id !== 'string' || !started.turn.id) throw new Error('Codex did not confirm the turn identity');
           run.turnId = started.turn.id;
+          options.onSteeringAvailabilityChanged?.();
           modes.accepted();
           materialized = true;
           await notifyMaterialized();
@@ -456,9 +461,11 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       });
       return run.done;
     },
+    steeringTurn,
     async steer(text, input) {
       const run = active;
       if (disposed || !run?.turnId || run.terminalComplete || run.cancelled || run.error
+        || (input.expectedTurnId !== undefined && steeringTurn() !== input.expectedTurnId)
         || run.appended.some(entry => entry.text === text)) return false;
       const delivery: InFlightDelivery = { id: input.deliveryId, text, presentation: input.presentation };
       const nativeItemsBefore = new Set([...run.nativeUserItems.keys(),...projection!.current().filter(entry => entry.turnId === run.turnId).map(entry => entry.item.id)]);

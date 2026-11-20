@@ -358,8 +358,23 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 在停靠面板与 640×600 窄窗用 Esc 关闭紧凑预览，再按 Return 从原选中行打开 `docs/nested/note.txt`。展开阅读器按 Esc 回到紧凑预览，点击关闭按钮后列表获得空间。实窗发现会话查找提前接收了停靠面板的 Esc，修正按键范围后两种布局均通过。证据在 `.artifacts/batch26-preview-qa`。
 - 278 项 Rust 测试通过，1 项原有忽略。TypeScript、桌面构建、Hive 运行时、桌面视图、收件箱的生产通信入口和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第二十七批
+
+本轮从 Hive Desktop `1f46896` 开始。参考 T3 Code `ccabed0`、Cindy `90e373d`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **按派单账本唤回有新消息的暂缓事项。** 两个桌面收件箱检查同工作区、同派单的最新有效消息，打开时和关闭后的待办轮询都用这个查询。旧记录继续按暂缓时记下的时间判断。其他派单的消息以及已取消消息不会唤回该事项。 [Cindy 新输入唤回规则](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/docs/product-rules/task-inbox.md#L79-L87) · [Hive 最近消息限制](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/action-center-summary.ts#L190-L195)
+- **把队首待发消息送到当前 Codex 回合。** 活动回合可接收时，合适的第一条待发消息提供「发送到当前回合」。待发列表有焦点时也可按 `Cmd+Shift+Enter` 或 `Ctrl+Shift+Enter`。操作沿用原消息标识和普通文件附件，保留输入框草稿及后续排队顺序。结果不确定时保留待核查记录，避免重启后自动重发。 [T3 Code 当前回合追加排队消息](https://github.com/pingdotgg/t3code/blob/ccabed086ad47294173769c77d2d44e55bb8bd0d/docs/user/composer.md#L76-L80)
+- **文件面板可预览当前工作树的本地 PNG 和 JPEG。** 文件树和文件名搜索可在停靠面板、窄窗和展开阅读器打开图片。图片按 4 MiB 文件大小、8192 像素的单边尺寸和 900 万总像素限制读取及解码，文本预览沿用 1 MiB 限制。 [Beluga 文件读图](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/reader/FileReader.tsx#L89-L105)
+
+- macOS 将派单 A 无限期暂缓，再给同项目 B 写入 13 条消息。A 继续暂缓。关闭收件箱后给 A 写入一条消息，再给 B 写入 13 条。重开收件箱时 A 已唤回。生产运行时另验证旧时间记录、其他工作区隔离、已取消消息和冷启动。证据在 `.artifacts/batch27-inbox-qa`。
+- 受控 Codex 运行时验证精确的活动回合和队首消息标识、普通文件附件字节、并发只接受一次、后一条在下一回合发送，以及冷启动保留回执。全程使用本地协议对端，未调用模型推理。
+- macOS 保持受控 Codex 第一回合运行，排入 A、B，并在输入框留下未发送的 C。只有 A 显示「发送到当前回合」，点击后对端只收到一次 A，B 仍在队列中，C 完整保留。释放第一回合后，对端用下一回合收到 B。证据在 `.artifacts/batch27-steer-qa`。
+- 文件运行时和 Rust 测试验证了同名文件的工作树隔离、超过 1 MiB 的有效 PNG、PNG/JPEG 像素、格式错误和超限拒绝。旧文本读取入口仍返回原格式。
+- macOS 的两个工作树按各自会话读取同一路径的 PNG，源文件哈希不同，停靠面板和窄窗展开均显示图片的无障碍控件。JPEG 同样可预览。损坏 PNG 的错误原先没有无障碍名称，修正后复验可读取「项目文件图片无法显示」。屏幕红蓝像素的区别由解码测试核对，实窗核对了图片控件及准确的文件请求。证据在 `.artifacts/batch27-images-qa`。
+- 281 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、桌面视图、队列与 Codex、项目文件与工作树引用，以及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **用派单账本可靠唤回有新输入的暂缓事项。** 当前工作区预览只返回最近 12 条消息。用内存 SQLite 复现派单 A 新增消息后，派单 B 的 12 条更新挤掉了 A 的新消息。重开收件箱时应唤回已无限期暂缓的 A。仅 B 新增消息时，A 应继续暂缓。 [Cindy 新输入唤回规则](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/docs/product-rules/task-inbox.md#L79-L87) · [Hive 最近消息限制](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/action-center-summary.ts#L190-L195)
-- **把最早的排队用户消息送进当前回合。** Hive 目前只允许编辑或撤回排队行。用受控 Codex 保持主回合活动，排入 A 和 B，再在编辑器输入未发送的 C。触发后核对 A 使用原投递标识进入当前回合且只送一次，C 原样保留，B 在当前回合结束后继续。 [T3 Code 当前回合追加排队消息](https://github.com/pingdotgg/t3code/blob/6f5293fbdca476cddbc37466450983ba1dd2ada2/docs/user/composer.md#L76-L84)
-- **给文件面板加本地 PNG 和 JPEG 预览。** 当前运行时能搜索到有效 PNG，打开预览会报文件并非文本。在两个工作树各放一张路径相同、颜色不同的图片，覆盖停靠面板、窄窗和展开阅读，验证实际像素与工作树一致。另核对切换范围时迟到结果、损坏文件和尺寸限制。 [Beluga 文件读图](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/reader/FileReader.tsx#L89-L105)
+- **给同一成员的等待汇报派单显示各自标题。** 现有列表只显示成员名和相同状态。用相同项目、成员和提交时间的两条不同任务复现，并验收能按标题打开第一条、暂缓第二条，各自命中准确派单。相同标题也要能区分。 [Cindy 任务行显示标题](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/apps/desktop/src/renderer/features/cc-agent/sidebar/SessionItem.tsx#L1062-L1067)
+- **从输入框开头用 `Option+↑` 或 `Alt+↑` 编辑最近的待发消息。** Hive 目前需要点队列中的铅笔。验收排入 A、B 并保留单独的草稿 C，焦点在草稿开头时快捷键打开 B 的原编辑框，保存后只改动 B 的正文。覆盖光标在中间、输入法候选和焦点在输入框外的情况。 [T3 Code 编辑队尾快捷键](https://github.com/pingdotgg/t3code/blob/ccabed086ad47294173769c77d2d44e55bb8bd0d/docs/user/composer.md#L81-L84)
+- **文件图片预览可切换原尺寸和适合窗口。** 用右下角带小字的 3200×1800 截图复现，当前紧凑和展开预览始终缩放整图。验收原尺寸能横向和纵向查看细节，切回后显示全图，切换不重新读取文件。 [Beluga 图片缩放](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/reader/FileReader.tsx#L73-L107)

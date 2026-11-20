@@ -60,7 +60,7 @@ import { createManagedWorktree, GitWorktreeError, previewManagedWorktreeRemoval,
 import { lstat, readdir, realpath, stat } from 'node:fs/promises';
 import type { DesktopSettings } from './desktop-settings.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
-import { DeliveryQueue, type DeliveryItem } from './delivery-queue.js';
+import { DeliveryQueue, queuedSteeringUnavailable, type DeliveryItem } from './delivery-queue.js';
 import { replaceQueuedInput } from './queued-input-mutation.js';
 import type { HiveHost } from './hive-host.js';
 import type { HiveAgentRuntime, WorkspaceSummary } from './hive-runtime-contract.js';
@@ -1305,10 +1305,11 @@ export class Chats implements StructuredSessionPort {
     const directory = await this.executionDirectory(workspaceId, sessionId);
     return searchProjectContents(directory, query, offset, signal, caseSensitive, wholeWord, regex);
   }
-  async projectFilesPreview(workspaceId: string, relativePath: unknown, sessionId?: unknown) {
+  async projectFilesPreview(workspaceId: string, relativePath: unknown, sessionId?: unknown, allowImage: unknown = false) {
     if (typeof relativePath !== 'string') throw new TypeError('Invalid project file path');
+    if (typeof allowImage !== 'boolean') throw new TypeError('Invalid project file preview type');
     const root = await this.executionDirectory(workspaceId, sessionId);
-    const preview = await previewProjectFile(root, relativePath);
+    const preview = await previewProjectFile(root, relativePath, allowImage);
     if (await this.executionDirectory(workspaceId, sessionId) !== root) throw new Error('Session execution directory changed during preview');
     return preview;
   }
@@ -1820,6 +1821,7 @@ export class Chats implements StructuredSessionPort {
         signal: this.closeAbort.signal,
         ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(record.nativeImport && { expectedTranscriptPath: record.nativeImport.path }), ...((record.lineage||record.rewound||record.rewindOperationId||deferCodexBrowseGoals)&&{deferGoalContinuation:true}), ...(record.nativeMode?.permissionMode && {permissionMode: record.nativeMode.permissionMode}), ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent,
         onUnexpectedExit,
+        onSteeringAvailabilityChanged: () => chat?.queue.notifySteeringAvailability(),
         ...(inheritedModel && {verifyInitialModel: true}),
         ...(record.inheritedDraftWorkMode && {verifyInitialWorkMode: true}),
         onMaterialized: threadId => this.index.save({ ...this.index.get(record.id), codexThreadId: threadId }),
@@ -1943,20 +1945,25 @@ export class Chats implements StructuredSessionPort {
           return (!(current.agentId ?? current.originAgentId) || (current.agentId ?? current.originAgentId) === `${current.workspaceId}:orchestrator`)
             && item.presentation?.messageSequence === undefined ? 'legacy' : undefined;
         },
-        ...(handle.steer && {steer: async (item: DeliveryItem) => {
+        ...(handle.steeringTurn && {steeringTurn: () => handle.steeringTurn!(),
+          queuedSteeringUnavailable: (): boolean => !chat || this.cannotSteerQueuedInput(record.id, chat)}),
+        ...(handle.steer && {steer: async (item: DeliveryItem, expectedTurnId?: string) => {
           let release: (() => void) | undefined;
           try {
-            if (this.isSharedWorktree(record)) {
+            if (expectedTurnId !== undefined || this.isSharedWorktree(record)) {
               try {
                 release = this.executionMutations?.begin(record.workspaceId);
-                await this.executionDirectory(record.workspaceId, record.id);
+                if (expectedTurnId !== undefined) await this.assertHistoryReady(this.index.get(record.id));
+                if (record.scratch || this.isSharedWorktree(record) || (expectedTurnId !== undefined && record.execution))
+                  await this.executionDirectory(record.workspaceId, record.id);
               } catch {
                 // No native call was attempted. Leave it queued for the
                 // normal execution guard instead of marking it uncertain.
                 return false;
               }
             }
-            return await handle.steer!(item.text, {deliveryId: item.id, presentation: item.presentation!});
+            if (expectedTurnId !== undefined && (!chat || chat.queue.isPaused || this.cannotSteerQueuedInput(record.id, chat))) return false;
+            return await handle.steer!(item.text, {deliveryId: item.id, presentation: item.presentation!, ...(expectedTurnId !== undefined && {expectedTurnId})});
           } finally { release?.(); }
         }}),
         execute: async item => {const release=this.executionMutations?.begin(record.workspaceId);try{
@@ -3568,6 +3575,22 @@ export class Chats implements StructuredSessionPort {
       changed = true;
     }
     return changed;
+  }
+  private cannotSteerQueuedInput(id: string, chat: LiveChat): boolean {
+    return this.closing || this.live.get(id) !== chat || chat.aborted || !!(chat.failure || chat.cleanup || chat.reasoningFailure
+      || chat.modeChanging || this.deliveryFailure(id, chat.queue));
+  }
+  async steerQueuedInput(id: string, deliveryId: string, expectedText: string): Promise<{deliveryId: string}> {
+    const {workspaceId} = this.index.get(id);
+    this.assertWorkspaceAvailable(workspaceId);
+    return this.withWorkspace(workspaceId, async () => {
+      const chat = this.live.get(id);
+      if (!chat || this.cannotSteerQueuedInput(id, chat)) throw new Error(queuedSteeringUnavailable);
+      await this.runnableIdentity(this.index.get(id));
+      this.assertWorkspaceAvailable(workspaceId);
+      if (this.cannotSteerQueuedInput(id, chat)) throw new Error(queuedSteeringUnavailable);
+      return chat.queue.steerPendingUserInput(deliveryId, expectedText);
+    });
   }
   async mutateQueuedInput(id: string, deliveryId: string, expectedText: unknown, text?: unknown) {
     if (typeof expectedText !== 'string' || (text !== undefined && typeof text !== 'string')) throw new TypeError('Queue text must be a string');

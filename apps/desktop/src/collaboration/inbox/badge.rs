@@ -3,7 +3,8 @@ mod deadline;
 
 use self::deadline::DeadlineWake;
 use super::super::{
-    ActionCenter, Destination, Entry, Priority, SnoozeEdit, Wake, snoozes::Snoozes,
+    ActionCenter, Destination, Entry, Priority, SnoozeEdit, Wake, read_dispatch_inputs,
+    snoozes::Snoozes,
 };
 use super::{GlobalInbox, now_ms};
 use crate::app::HiveApp;
@@ -11,7 +12,7 @@ use gpui_kit::*;
 use serde::Deserialize;
 use serde_json::json;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     time::Duration,
 };
 
@@ -462,22 +463,38 @@ impl HiveApp {
                     }
                     let scope: Vec<_> = active.into_iter().skip(start).take(BATCH_SIZE).collect();
                     start += scope.len();
-                    Some((runtime, app.connection_generation, scope))
+                    Some((
+                        runtime,
+                        app.connection_generation,
+                        scope,
+                        app.data_dir.clone()?,
+                    ))
                 }) else {
                     break;
                 };
-                if let Some((runtime, connection, scope)) = plan {
+                if let Some((runtime, connection, scope, root)) = plan {
                     let result = runtime
                         .request("inbox.actionableQuestions", json!({"workspaceIds": scope}))
                         .await
                         .ok()
                         .and_then(|value| Vec::<Question>::deserialize(value).ok());
+                    let mut dispatch_inputs = BTreeMap::new();
+                    for workspace in &scope {
+                        if let Ok(saved) = Snoozes::load(&root, workspace) {
+                            let watched = saved.watched_dispatches(now_ms(), None);
+                            let inputs = read_dispatch_inputs(&runtime, workspace, &watched).await;
+                            if !inputs.is_empty() {
+                                dispatch_inputs.insert(workspace.clone(), inputs);
+                            }
+                        }
+                    }
                     if this
                         .update(cx, |app, cx| {
                             if !app.connected
                                 || app.restarting
                                 || app.closing
                                 || app.connection_generation != connection
+                                || app.data_dir.as_deref() != Some(root.as_path())
                                 || app.collaboration.inbox_badge.is_open(cx)
                             {
                                 return;
@@ -500,6 +517,14 @@ impl HiveApp {
                                 result.map(|questions| collect_questions(&scope, questions));
                             for workspace in &scope {
                                 if let Ok(saved) = Snoozes::load(root, workspace) {
+                                    let saved = if let Some(inputs) = dispatch_inputs.get(workspace)
+                                    {
+                                        saved
+                                            .reconcile_dispatch_inputs(root, inputs)
+                                            .unwrap_or_else(|(saved, _)| saved)
+                                    } else {
+                                        saved
+                                    };
                                     app.collaboration
                                         .inbox_badge
                                         .remember_reminders(workspace, &saved);

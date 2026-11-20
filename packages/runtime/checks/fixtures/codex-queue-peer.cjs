@@ -28,6 +28,15 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
    fs.writeFileSync('queue-peer-rejected-steer.json',JSON.stringify({turnId:turn.id,input:q.params.input,errorCode:code}));
    return;
   }
+  if(control.acceptSteer&&turn?.status==='inProgress'){
+   const appended={id:crypto.randomUUID(),type:'userMessage',content:q.params.input};
+   turn.items.push(appended);save();notify('item/completed',{turnId:turn.id,item:appended});answer({turnId:turn.id});
+   const release=setInterval(()=>{
+    if(turn.status!=='inProgress'){clearInterval(release);return;}
+    const control=fs.readFileSync('queue-peer-control.json','utf8');
+    if(control&&JSON.parse(control).complete){clearInterval(release);complete(turn);}
+   },15);release.unref();return;
+  }
   if(turn?.status==='inProgress')complete(turn);
   send({id:q.id,error:{code:-32600,message:'Synthetic turn ended before steer'}});
  }else if(q.method==='turn/interrupt'){const turn=thread.turns.find(t=>t.id===q.params.turnId);if(fs.existsSync('queue-peer-rejected-steer.json'))fs.appendFileSync('queue-peer-interrupts.jsonl',JSON.stringify({turnId:q.params.turnId,rejectionAlreadySent:true})+'\n');if(turn){turn.status='interrupted';save();}answer({});if(turn)notify('turn/completed',{turn});}

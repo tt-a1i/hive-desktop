@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp,mkdir,writeFile,readFile,rename,rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -26,11 +26,16 @@ try{
   const workspace=await runtime.hive.request('POST','/api/workspaces',{path:project,name:'Synthetic '+backend,autostart_orchestrator:false})as{id:string};
   const chat=await runtime.chats.create(workspace.id,backend);chatId=chat.id;
   const queryCount=async()=>backend==='codex'?(await rows(join(project,'queue-peer-queries.jsonl'))).length:(await rows(process.env.HIVE_CLAUDE_REASONING_WIRE!)).filter(r=>r.event==='query').length;
+  const unavailable=/这条排队消息已无法发送到当前回合/;
   await runtime.chats.prompt(chat.id,'Working input');await wait(async()=>await queryCount()===1&&(await runtime!.chats.open(chat.id)).busy);
   const path=join(project,'followup.txt');await writeFile(path,'Owned fixture content');const attachment=await runtime.chats.attachments.add(workspace.id,path);
   await runtime.chats.prompt(chat.id,'Queued followup',[attachment.attachment.id]);const queued=await runtime.chats.open(chat.id);
   assert.equal(await queryCount(),1);assert.equal(queued.pendingUserInputs.length,2);const followup=queued.pendingUserInputs[1]!;
   assert.equal(followup.text,'Queued followup');assert.equal(followup.processing,false);assert.equal(followup.attachments[0]!.id,attachment.attachment.id);
+  if(backend==='claude'){
+   assert.equal(followup.steerable,undefined);
+   await assert.rejects(runtime.chats.steerQueuedInput(chat.id,followup.deliveryId,followup.text),unavailable);
+  }
   await assert.rejects(runtime.chats.prompt(chat.id,'Rejected followup',['00000000-0000-4000-8000-000000000000']));assert.equal((await runtime.chats.open(chat.id)).busy,true);
   assert.ok(events.some(e=>e.type==='state'&&e.pendingUserInputs?.some((i:any)=>i.deliveryId===followup.deliveryId)));
   await runtime.chats.abort(chat.id);const paused=await runtime.chats.open(chat.id);assert.equal(paused.busy,false);assert.equal(paused.pendingUserInputs.length,1);assert.equal(paused.pendingUserInputs[0]!.deliveryId,followup.deliveryId);
@@ -99,10 +104,15 @@ try{
    await writeFile(control,JSON.stringify({complete:false,rejectSteerWhileActive:true,rejectSteerCode:-32603}));
    await runtime.chats.prompt(chat.id,'Primary before uncertain append');
    await wait(async()=>await queryCount()===7&&(await runtime!.chats.open(chat.id)).busy);
-   await runtime.chats.prompt(chat.id,'Uncertain original',[attachment.attachment.id],'steer');
+   await runtime.chats.prompt(chat.id,'Uncertain original',[attachment.attachment.id]);
+   const pendingUncertain=(await runtime.chats.open(chat.id)).pendingUserInputs.find(item=>item.text==='Uncertain original')!;
+   assert.equal(pendingUncertain.steerable,true);
+   await runtime.chats.steerQueuedInput(chat.id,pendingUncertain.deliveryId,pendingUncertain.text);
    await wait(async()=>!!await readFile(join(project,'queue-peer-rejected-steer.json'),'utf8').catch(error=>{if(error.code==='ENOENT')return '';throw error;}));
    await runtime.chats.prompt(chat.id,'Unattempted tail',[attachment.attachment.id]);
    await runtime.chats.abort(chat.id);
+   await runtime.close();runtime=await createDesktopRuntime(data,observe,options);
+   assert.equal(await queryCount(),7,'A cold runtime cannot resend the promotion or its tail automatically');
    const uncertain=await runtime.chats.open(chat.id),original=uncertain.pendingUserInputs.find(item=>item.text==='Uncertain original')!,tail=uncertain.pendingUserInputs.find(item=>item.text==='Unattempted tail')!;
    assert.equal(original.editable,false);assert.equal(tail.editable,true);
    const review=await runtime.chats.uncertainDeliveries(chat.id),row=review.deliveries[0]!;
@@ -156,6 +166,49 @@ try{
    await wait(async()=>{const state=await runtime!.chats.open(chat.id);return !state.busy&&state.pending===0;});
    assert.equal(await queryCount(),8);assert.equal((await runtime.chats.open(chat.id)).completedDeliveryIds.filter(id=>id===tail.deliveryId).length,1);
    console.log('CODEX_UNCERTAIN_LOCAL_DISCARD_OK: scoped text/version/identity checks, durable idempotent receipt, native/audit unchanged, cold tail order and no original resend.');
+
+   await writeFile(control,JSON.stringify({acceptSteer:true}));
+   await runtime.chats.prompt(chat.id,'Open native turn for queued steering');
+   await wait(async()=>await queryCount()===9);
+   await runtime.chats.prompt(chat.id,'Queued A',[attachment.attachment.id]);
+   await runtime.chats.prompt(chat.id,'Queued B');
+   const held=await runtime.chats.open(chat.id);
+   const first=held.pendingUserInputs.find(item=>item.text==='Queued A')!;
+   const second=held.pendingUserInputs.find(item=>item.text==='Queued B')!;
+   assert.equal(first.steerable,true);assert.equal(second.steerable,undefined);
+   const offered=()=>events.findLast(event=>event.type==='state'&&event.sessionId===chat.id)?.pendingUserInputs.filter((item:any)=>item.steerable).map((item:any)=>item.deliveryId);
+   assert.deepEqual(offered(),[first.deliveryId]);
+   await assert.rejects(runtime.chats.steerQueuedInput(chat.id,second.deliveryId,second.text),unavailable);
+   await assert.rejects(runtime.chats.steerQueuedInput(chat.id,first.deliveryId,'Stale A'),unavailable);
+   const promote=()=>runtime!.chats.steerQueuedInput(chat.id,first.deliveryId,first.text);
+   const [originalAttempt,duplicate]=await Promise.allSettled([promote(),promote()]);
+   assert.deepEqual(originalAttempt,{status:'fulfilled',value:{deliveryId:first.deliveryId}});
+   assert.equal(duplicate.status,'rejected');assert.match(duplicate.reason.message,unavailable);
+   assert.deepEqual(offered(),[]);
+   await assert.rejects(runtime.chats.steerQueuedInput(chat.id,second.deliveryId,second.text),unavailable);
+   await wait(async()=>(await rows(join(project,'queue-peer-steers.jsonl'))).some(r=>r.input[0].text.includes('Queued A')));
+   const attempts=(await rows(join(project,'queue-peer-steers.jsonl'))).filter(r=>r.input[0].text.includes('Queued A'));
+   assert.equal(attempts.length,1);
+   assert.equal(attempts[0].expectedTurnId,(await rows(join(project,'queue-peer-queries.jsonl')))[8].turnId);
+   const nativeAttachment=JSON.parse(attempts[0].input[0].text.split('\n').find((line:string)=>line.startsWith('{"name":"followup.txt"'))!);
+   assert.equal(first.attachments[0]!.id,attachment.attachment.id);
+   assert.equal(basename(nativeAttachment.path),`${attachment.attachment.id}.txt`);
+   assert.equal(await readFile(nativeAttachment.path,'utf8'),'Owned fixture content');
+   assert.equal(await queryCount(),9);
+   assert.equal((await runtime.chats.open(chat.id)).pendingUserInputs.find(item=>item.deliveryId===second.deliveryId)?.editable,true);
+   await writeFile(control,JSON.stringify({complete:true}));
+   await wait(async()=>{const s=await runtime!.chats.open(chat.id);return !s.busy&&s.pending===0;});
+   for(const reopen of [false,true]){
+    if(reopen){await runtime.close();runtime=await createDesktopRuntime(data,observe,options);}
+    const settled=await runtime.chats.open(chat.id);
+    for(const item of [first,second]){
+     assert.equal(settled.completedDeliveryIds.filter(id=>id===item.deliveryId).length,1);
+     assert.equal(settled.history.filter((message:any)=>message.presentation?.deliveryId===item.deliveryId).length,1);
+    }
+   }
+   const starts=await rows(join(project,'queue-peer-queries.jsonl'));
+   assert.equal(starts.length,10);assert.equal(starts[9].input[0].text.split('\n')[0],'Queued B');
+   console.log('CODEX_EXISTING_QUEUED_STEER_OK: exact row and turn, owned attachment, stale/concurrent rejection, tail order and cold receipts.');
   }
   await runtime.close();runtime=undefined;chatId=undefined;console.log('QUEUED_INPUT_PEER_OK',backend,': held native turn, serialized follow-up+file, rejection isolation, stop/cold pause and exact consumed delivery. Synthetic CLI only.');
  }

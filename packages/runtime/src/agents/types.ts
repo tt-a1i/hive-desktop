@@ -81,7 +81,8 @@ export interface PiSessionHandle {
   /** Native same-turn delivery. True only after native consumption and successful completion;
    * For explicit user input, false confirms non-delivery; pending/acknowledged/
    * uncertain attempts must not return false. System/report retry semantics remain separate. */
-  steer?(text: string, options: { deliveryId: string; presentation: DeliveryPresentation }): Promise<boolean>;
+  steer?(text: string, options: { deliveryId: string; presentation: DeliveryPresentation; expectedTurnId?: string }): Promise<boolean>;
+  steeringTurn?(): string | undefined;
   addContext(text: string, customType?: string): Promise<void>;
   completedDeliveryIds(): readonly string[];
   interactions?(): readonly AgentInteraction[];

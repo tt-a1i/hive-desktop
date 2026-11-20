@@ -225,6 +225,62 @@ impl Snoozes {
         }
     }
 
+    pub(super) fn watched_dispatches(
+        &self,
+        now: u64,
+        snapshot: Option<&ActionCenter>,
+    ) -> BTreeMap<String, bool> {
+        let snapshot = snapshot.filter(|snapshot| snapshot.workspace_id == self.workspace_id);
+        let wakes = self
+            .reminders
+            .iter()
+            .filter(|(_, reminder)| !reminder.expired(now))
+            .filter_map(|(key, reminder)| {
+                reminder
+                    .wake
+                    .clone()
+                    .or_else(|| snapshot.and_then(|snapshot| snapshot.legacy_wake(key)))
+            })
+            .chain(
+                self.keys
+                    .iter()
+                    .filter_map(|key| snapshot.and_then(|snapshot| snapshot.legacy_wake(key))),
+            );
+        let mut dispatches = BTreeMap::new();
+        for wake in wakes {
+            if let Wake::Dispatch { id, sequence, .. } = wake
+                && uuid::Uuid::try_parse(&id).is_ok()
+            {
+                *dispatches.entry(id).or_default() |= sequence.is_none();
+            }
+        }
+        dispatches
+    }
+
+    pub(super) fn reconcile_dispatch_inputs(
+        self,
+        root: &Path,
+        inputs: &BTreeMap<String, super::DispatchInput>,
+    ) -> Result<Self, (Self, io::Error)> {
+        let woke = |item: &Reminder| match &item.wake {
+            Some(Wake::Dispatch {
+                id,
+                sequence,
+                observed_at,
+            }) => inputs
+                .get(id)
+                .is_some_and(|input| input.is_newer(*sequence, *observed_at)),
+            _ => false,
+        };
+        if !self.reminders.values().any(woke) {
+            return Ok(self);
+        }
+        Self::update(root, &self.workspace_id, |latest| {
+            latest.reminders.retain(|_, item| !woke(item));
+        })
+        .map_err(|error| (self, error))
+    }
+
     pub(super) fn reconcile(
         self,
         root: &Path,
@@ -734,6 +790,75 @@ mod tests {
                     .unwrap_or_else(|(_, error)| panic!("{error}"))
                     .active(key, 500)
             );
+        }
+    }
+
+    #[test]
+    fn persisted_dispatch_watch_wakes_behind_the_preview_for_both_anchor_types() {
+        use super::super::DispatchInput;
+
+        for sequence in [Some(7), None] {
+            let root = tempfile::tempdir().unwrap();
+            let key = format!("report:{DISPATCH}");
+            Snoozes::set(
+                root.path(),
+                WORKSPACE,
+                &key,
+                Some(Reminder {
+                    expires_at: None,
+                    wake: Some(Wake::Dispatch {
+                        id: DISPATCH.into(),
+                        sequence,
+                        observed_at: 200,
+                    }),
+                }),
+            )
+            .unwrap();
+            let reopen = || Snoozes::load(root.path(), WORKSPACE).unwrap();
+            let mut center = snapshot(&[message(WORKSPACE, "other-dispatch", "newer", 99, 400)]);
+            assert_eq!(
+                reopen().watched_dispatches(500, None),
+                BTreeMap::from([(DISPATCH.into(), sequence.is_none())])
+            );
+
+            center.dispatch_inputs.insert(
+                DISPATCH.into(),
+                DispatchInput {
+                    dispatch_id: DISPATCH.into(),
+                    sequence: Some(7),
+                    created_at: Some(200),
+                },
+            );
+            assert!(
+                reopen()
+                    .reconcile_dispatch_inputs(root.path(), &center.dispatch_inputs)
+                    .unwrap_or_else(|(_, error)| panic!("{error}"))
+                    .active(&key, 500)
+            );
+            center.dispatch_inputs.insert(
+                DISPATCH.into(),
+                DispatchInput {
+                    dispatch_id: DISPATCH.into(),
+                    sequence: Some(8),
+                    created_at: Some(201),
+                },
+            );
+            if sequence.is_some() {
+                reopen()
+                    .reconcile_dispatch_inputs(root.path(), &center.dispatch_inputs)
+                    .unwrap_or_else(|(_, error)| panic!("{error}"));
+            } else {
+                reopen()
+                    .reconcile(
+                        root.path(),
+                        500,
+                        Some(&center),
+                        &BTreeMap::new(),
+                        &BTreeMap::new(),
+                    )
+                    .unwrap_or_else(|(_, error)| panic!("{error}"));
+            }
+            assert!(!reopen().active(&key, 500));
         }
     }
 

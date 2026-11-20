@@ -188,7 +188,7 @@ impl VerifiedUndo {
                 observed_at,
             }) => {
                 let (snapshot, history) = smol::future::zip(
-                    read_action_center(runtime, &edit.workspace),
+                    read_action_center(runtime, &edit.workspace, None),
                     has_new_dispatch_input(runtime, &edit.workspace, id, *sequence, *observed_at),
                 )
                 .await;

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -100,6 +101,20 @@ try {
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, a.id)).paths, ['only-one.txt']);
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, b.id)).paths, ['only-two.txt']);
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-')).paths, []);
+  const imagePath = 'same image.png';
+  const red = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+  const blue = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYPgPAAEDAQAIicLsAAAAAElFTkSuQmCC';
+  for (const [directory, sessionId, data] of [[aDir, a.id, red], [bDir, b.id, blue]] as const) {
+    const bytes = Buffer.from(data, 'base64');
+    await writeFile(join(directory, imagePath), bytes);
+    assert.deepEqual(await runtime.chats.projectFilesPreview(ws.id, imagePath, sessionId, true), {
+      image: {format: 'png', data}, sha256: createHash('sha256').update(bytes).digest('hex'),
+    });
+    await assert.rejects(runtime.chats.projectFilesPreview(ws.id, imagePath, sessionId), /not text/);
+    await assert.rejects(runtime.chats.projectFilesPreview(otherWs.id, imagePath, sessionId, true));
+  }
+  await assert.rejects(runtime.chats.projectFilesPreview(ws.id, imagePath, undefined, true));
+  await assert.rejects(runtime.chats.projectFilesPreview(ws.id, imagePath, a.id, 'true'), /Invalid project file preview/);
   const nameExpression = '^only-(?:one|two)\\.txt$';
   for (const [sessionId, paths] of [[undefined, []], [a.id, ['only-one.txt']], [b.id, ['only-two.txt']]] as const) {
     assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, nameExpression, 0, sessionId, undefined, false, true)).paths, paths);
