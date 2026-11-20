@@ -46,7 +46,15 @@ impl HiveApp {
             })
             .count();
 
-        let topbar_back = if state.selected.is_some() {
+        let topbar_back = if state.inbox_origin {
+            Button::new("workflow-return-to-inbox")
+                .ghost()
+                .compact()
+                .rounded_lg()
+                .icon(Glyph::ArrowLeft)
+                .label(tr("返回项目收件箱"))
+                .on_click(cx.listener(|this, _, _, cx| this.open_collaboration(cx)))
+        } else if state.selected.is_some() {
             Button::new("workflow-back")
                 .ghost()
                 .compact()
@@ -183,7 +191,7 @@ impl HiveApp {
                         .when(state.selected.is_none(), |view| {
                             view.child(self.render_workflow_settings(cx))
                         })
-                        .when(state.enabled == Some(false), |view| {
+                        .when(!state.inbox_origin && state.enabled == Some(false), |view| {
                             view.child(
                                 div()
                                     .px_3()

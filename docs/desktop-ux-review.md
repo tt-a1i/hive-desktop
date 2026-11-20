@@ -462,8 +462,22 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - 专项测试覆盖同名成员与筛选、旧快捷键配置迁移和冲突、Unicode 匹配范围及跨页定位。受控 Codex 运行时核对两端循环、每次有效调整只写一次、另一会话设置保持、保存后端实际档位，以及忙碌、模型变化、失效视图和未连接时不写入。内置 Pi 的运行时测试核对原生会话记录只追加一次，且全局默认设置字节一致。
 - 310 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、Hive HTTP 与 SQLite、桌面视图、推理强度专项与 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
 
+## 2026-11-21 第三十四批
+
+本轮从 Hive Desktop `3ccf86a` 开始。参考 T3 Code `8d37736`、Cindy `6b05493`、Beluga `eed1b7e`。Hive 上游 `main` 为 `18861b8`。
+
+- **项目收件箱可打开失败的工作流和原日志。** 当前项目的已结束顶层失败运行进入待关注区，按运行名称和 ID 区分。收件箱按结束时间读取最近 20 条失败，更多记录从工作流页面查看。打开一项只读取对应运行、派单与日志，可返回原收件箱。 [Cindy 失败回到待处理](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/docs/product-rules/task-inbox.md#L30-L50) · [Hive 运行和日志接口](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/routes-workflows.ts#L12-L82)
+- **聚焦当前 Git 差异后可以查找。** `Cmd/Ctrl+F` 搜索当前文件已加载补丁的增删和上下文行，显示原文件或新文件的命中行号。`Enter` 和 `Shift+Enter` 前后切换，可揭开已加载的折叠上下文。切换文件或比较范围后清除旧结果。 [T3 Code 差异内查找](https://github.com/pingdotgg/t3code/blob/8d37736cddce74e7cc7ff965b26b1d3ea1fbcd7d/docs/user/keybindings.md#L66-L73)
+- **展开阅读器可复制已加载的完整原文。** 源码和 Markdown 渲染视图的工具栏都提供入口。复制取自当前项目或工作树的预览快照，无需再次读取文件。保留当前页、查找位置和换行选项。 [Beluga 复制文件文本](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/views/reader/FileFocus.tsx#L195-L200)
+
+- macOS 项目收件箱用不同的运行 ID 后缀区分当前项目的两次同名失败。打开 B 只请求 B 的运行详情、派单和日志，窗口显示 B 的原始日志。返回时两行恢复原坐标。证据在 `.artifacts/batch34-inbox-qa`。
+- macOS 聚焦合并差异后用 `Cmd+F` 找到三行。`Enter` 从原文件第 2 行到新文件第 2 行，`Shift+Enter` 返回。并排视图跳到新文件第 3 行的上下文，命中时自动展开已折叠的文件。保持查找打开时切换比较范围或文件，旧查询均清除。`Esc` 关闭差异查找，回到聊天后 `Cmd+F` 仍打开会话查找。证据在 `.artifacts/batch34-diff-qa`。
+- macOS 从两个工作树各自同名文件的第 620 行打开阅读器并复制。剪贴板分别得到 27,374 和 28,114 字节，与对应完整文件逐字节一致，包含 UTF-8 BOM、CRLF 和 emoji。阅读器保持在原页。Markdown 渲染视图复制出的 63 字节也与原文件完全一致。证据在 `.artifacts/batch34-copy-qa`。
+- 生产运行时验证了 20 条上限、按结束时间排序、项目范围、排除未结束和子运行、区分两次同名失败、准确读取错误与日志，以及从原工作流列表查到更早运行。Rust 专项核对运行 ID 与项目匹配，并核对补丁增删两侧和上下文的行号，排除补丁元数据。
+- 314 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、桌面视图、Hive HTTP 与 SQLite、文件和 Git 工作区专项及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **在项目收件箱发现失败的工作流运行。** 目前要打开工作流页面并手动找运行记录。用同项目两次同名失败、一次成功和另一项目的同名失败验收。收件箱只显示当前项目的失败，点击后打开所选运行及原日志，返回保留阅读位置。 [Cindy 失败回到待处理](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/docs/product-rules/task-inbox.md#L30-L50) · [Hive 工作流运行接口](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/routes-workflows.ts#L12-L34)
-- **在当前 Git 差异内查找。** 目前查找快捷键只进入聊天。验收差异聚焦时查找已加载补丁的增删和上下文行，可按键前后跳转并揭开已加载的折叠行。切换文件或比较范围后清除旧结果，回到聊天后查找仍搜索会话。 [T3 Code 差异内查找](https://github.com/pingdotgg/t3code/blob/a1b9e1cc8709d50190bf8e1f50e94257ce206525/docs/user/keybindings.md#L66-L73)
-- **在展开阅读器复制整份已加载文本。** 当前工具栏只提供路径复制。用两个工作树中的同名文件验收，定位到第 350 行并翻页后复制。剪贴板应包含当前工作树的原始全文，保留 CRLF、Unicode、首尾行与当前阅读位置。 [Beluga 复制文件文本](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/views/reader/FileFocus.tsx#L193-L201)
+- **从跨项目收件箱收到工作流失败提醒。** 目前失败只在项目收件箱里显示。验收保留 Atlas 的草稿并关闭收件箱，在 Beacon 制造同名失败，确认新事项提示与原日志都指向 Beacon，返回保留之前的筛选和阅读位置。后台读取范围需要有上限。 [Cindy 失败分类与范围](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/docs/product-rules/task-inbox.md#L29-L50)
+- **按工作树记录的分支查找会话。** 现有搜索会匹配会话名、项目和正文，也已能从结果打开准确工作树。验收两个同名且正文相同的会话，只输入某个工作树的记录分支，结果显示分支并打开对应工作树的会话。历史会话仍可按这一记录查找。 [T3 Code 按分支查找](https://github.com/pingdotgg/t3code/blob/8d37736cddce74e7cc7ff965b26b1d3ea1fbcd7d/docs/user/thread-sidebar.md#L224-L232)
+- **在展开图片中逐档放大。** 当前只有适应窗口和原尺寸。验收大图的中间档、原尺寸及放大档，显示倍率并保留正在看的区域，能回到适应窗口。返回紧凑预览后保持原位置，整个流程沿用原图片读取。 [Beluga 图片缩放](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/views/reader/FileReader.tsx#L67-L107)

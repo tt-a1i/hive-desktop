@@ -587,7 +587,7 @@ impl HiveApp {
             Destination::Session(session) if session.workspace_id == workspace => {
                 self.navigate_to_session(session.clone(), window, cx);
             }
-            Destination::Session(_) | Destination::Member(_) => {}
+            Destination::Session(_) | Destination::Member(_) | Destination::WorkflowRun(_) => {}
             Destination::Dispatch(_) | Destination::DispatchMessage { .. } => {
                 // Open the actual workspace first. The dispatch detail then
                 // resolves its original execution session through Hive's existing route.

@@ -45,6 +45,8 @@ pub(super) struct Inbox {
     loading: bool,
     action_center: Option<ActionCenter>,
     error: Option<String>,
+    workflow_failures: Option<WorkflowFailures>,
+    workflow_failures_error: bool,
     reminders: Reminders,
     show_snoozed: bool,
     section_depth: SectionDepth,
@@ -89,6 +91,73 @@ struct ProjectInboxPosition {
     row: RowId,
     viewport_offset: Option<Pixels>,
     previous_offset: Pixels,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowFailure {
+    id: String,
+    name: Option<String>,
+    finished_at: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowFailures {
+    workspace_id: String,
+    runs: Vec<WorkflowFailure>,
+    limited: bool,
+}
+
+impl WorkflowFailures {
+    fn verified(&self, workspace: &str) -> bool {
+        let mut ids = HashSet::new();
+        self.workspace_id == workspace
+            && self.runs.len() <= 20
+            && self.runs.iter().all(|run| {
+                uuid::Uuid::try_parse(&run.id).is_ok() && run.finished_at > 0 && ids.insert(&run.id)
+            })
+    }
+
+    fn entries(&self) -> impl Iterator<Item = Entry> + '_ {
+        self.runs.iter().map(|run| {
+            let short = short_uuid(&run.id);
+            let duplicate_suffix = self.runs.iter().any(|other| {
+                other.id != run.id && short_uuid(&other.id) == short
+            });
+            run.entry(if duplicate_suffix { &run.id } else { short })
+        })
+    }
+}
+
+impl WorkflowFailure {
+    fn entry(&self, id_label: &str) -> Entry {
+        let subject = self.name.as_ref().map_or_else(
+            || self.id.clone(),
+            |name| format!("{name} · {id_label}"),
+        );
+        Entry {
+            label: "工作流运行失败",
+            subject,
+            target: Destination::WorkflowRun(self.id.clone()),
+            dispatch_backend: None,
+            related_members: [None, None],
+            snooze_key: None,
+            wake: None,
+            priority: Priority::NeedsUser,
+            updated_at: self.finished_at,
+            activity_at: self.finished_at,
+        }
+    }
+}
+
+async fn read_workflow_failures(runtime: &Runtime, workspace: &str) -> Option<WorkflowFailures> {
+    let value = runtime
+        .request("inbox.workflowFailures", json!({"workspaceId": workspace}))
+        .await
+        .ok()?;
+    let snapshot: WorkflowFailures = serde_json::from_value(value).ok()?;
+    snapshot.verified(workspace).then_some(snapshot)
 }
 
 enum ProjectInboxItem<'a> {
@@ -488,14 +557,14 @@ impl ActionCenter {
         for (attention, _) in &rows {
             if let Some(id) = attention.waiting_report_id() {
                 *titles.entry(attention.task_title()).or_insert(0) += 1;
-                *references.entry(short_dispatch_id(id)).or_insert(0) += 1;
+                *references.entry(short_uuid(id)).or_insert(0) += 1;
             }
         }
         for (attention, entry) in &mut rows {
             if let Some(id) = attention.waiting_report_id()
                 && (attention.task_title().is_none() || titles[&attention.task_title()] > 1)
             {
-                let short = short_dispatch_id(id);
+                let short = short_uuid(id);
                 let reference = if references[short] == 1 { short } else { id };
                 // Keep the exact reference visible when a narrow row clips the title.
                 entry.subject = format!("{reference} · {}", entry.subject);
@@ -630,7 +699,7 @@ struct Attention {
     task_title: Option<String>,
 }
 
-fn short_dispatch_id(id: &str) -> &str {
+fn short_uuid(id: &str) -> &str {
     // Callers have already verified that the ID is a UUID.
     &id[id.len() - 8..]
 }
@@ -641,6 +710,7 @@ enum Destination {
     Dispatch(String),
     DispatchMessage { dispatch: String, message: String },
     Member(String),
+    WorkflowRun(String),
 }
 
 impl Destination {
@@ -649,6 +719,7 @@ impl Destination {
             Self::Session(_) => "打开会话",
             Self::Dispatch(_) | Self::DispatchMessage { .. } => "派单详情",
             Self::Member(_) => "团队成员",
+            Self::WorkflowRun(_) => "工作流",
         }
     }
 
@@ -658,6 +729,7 @@ impl Destination {
             Self::Dispatch(id) => format!("dispatch:{id}"),
             Self::DispatchMessage { message, .. } => format!("message:{message}"),
             Self::Member(id) => format!("member:{id}"),
+            Self::WorkflowRun(id) => format!("workflow-run:{id}"),
         }
     }
 }
@@ -759,7 +831,7 @@ impl Entry {
             Destination::Dispatch(_) | Destination::DispatchMessage { .. } => {
                 self.dispatch_backend == Some(backend)
             }
-            Destination::Member(_) => false,
+            Destination::Member(_) | Destination::WorkflowRun(_) => false,
         })
     }
 
@@ -1198,7 +1270,10 @@ impl HiveApp {
         inbox.generation += 1;
         let generation = inbox.generation;
         cx.spawn(async move |this, cx| {
-            let result = read_action_center(&runtime, &workspace, root.as_deref()).await;
+            let (result, workflow_failures) = smol::future::zip(
+                read_action_center(&runtime, &workspace, root.as_deref()),
+                read_workflow_failures(&runtime, &workspace),
+            ).await;
             let _ = this.update(cx, |this, cx| {
                 if this.workspace.as_ref() != Some(&workspace)
                     || this.connection_generation != connection
@@ -1210,6 +1285,10 @@ impl HiveApp {
                 let interactions = this.inbox_interactions(&this.sessions, &this.members);
                 let inbox = &mut this.collaboration.inbox;
                 inbox.loading = false;
+                inbox.workflow_failures_error = workflow_failures.is_none();
+                if let Some(workflow_failures) = workflow_failures {
+                    inbox.workflow_failures = Some(workflow_failures);
+                }
                 let snapshot = match result {
                     Ok(snapshot) => {
                         inbox.error = None;
@@ -1440,6 +1519,11 @@ impl HiveApp {
         {
             entries.extend(snapshot.entries(|id| self.agent_name(id)));
         }
+        if let Some(failures) = self.collaboration.inbox.workflow_failures.as_ref()
+            && failures.workspace_id == workspace
+        {
+            entries.extend(failures.entries());
+        }
         entries
     }
 
@@ -1502,7 +1586,7 @@ impl HiveApp {
         let restore = inbox
             .return_position
             .clone()
-            .filter(|_| current && !inbox.loading && inbox.action_center.is_some());
+            .filter(|_| current && !inbox.loading);
         if let Some(position) = &restore
             && let Some((section, index)) = sections.position(&position.row, true, show_snoozed)
         {
@@ -1642,6 +1726,32 @@ impl HiveApp {
             .when(current && inbox.member_open_error, |panel| {
                 panel.child(inbox_status(tr(OPEN_INBOX_MEMBER_FAILED), cx))
             })
+            .when(current && inbox.workflow_failures_error, |panel| {
+                panel.child(inbox_status(tr("无法读取失败的工作流"), cx))
+            })
+            .when(
+                current && inbox.workflow_failures.as_ref().is_some_and(|runs| runs.limited),
+                |panel| {
+                    panel.child(
+                        h_flex()
+                            .gap_2()
+                            .flex_wrap()
+                            .items_center()
+                            .child(inbox_status(tr("仅显示最近 20 条工作流失败"), cx))
+                            .child(
+                                inbox_open_button(
+                                    "inbox-all-workflows",
+                                    !self.connected || self.closing,
+                                    cx.listener(|this, _, window, cx| {
+                                        this.select_workflow(None, cx);
+                                        this.show_workflows(window, cx);
+                                    }),
+                                )
+                                .label(tr("工作流")),
+                            ),
+                    )
+                },
+            )
             .when_some(
                 current.then(|| inbox.reminders.notice()).flatten(),
                 |panel, (label, error)| {
@@ -1799,6 +1909,19 @@ impl HiveApp {
                                     window,
                                     cx,
                                 ),
+                                Destination::WorkflowRun(id) => {
+                                    let inbox = &this.collaboration.inbox;
+                                    if this.workspace_removing.as_deref() == Some(&workspace)
+                                        || !inbox.workflow_failures.as_ref().is_some_and(|runs| {
+                                            runs.workspace_id == workspace
+                                                && runs.runs.iter().any(|run| run.id == *id)
+                                        })
+                                    {
+                                        return;
+                                    }
+                                    this.collaboration.inbox.return_position = Some(position);
+                                    this.open_inbox_workflow(id.clone(), window, cx);
+                                }
                             }
                         }),
                     );
@@ -2257,12 +2380,43 @@ mod tests {
     use super::{
         ActionCenter, ActionableCursor, ActionablePage, ArchiveInboxSession, Attention, Delay,
         Destination, Entry, MarkInboxRead, Priority, Reminders, SnoozeEdit, Snoozes,
-        UNREAD_CONVERSATION, Wake, exact_inbox_member, exact_message, now_ms, sort_entries,
-        validate_actionable_rows,
+        UNREAD_CONVERSATION, Wake, WorkflowFailures, exact_inbox_member, exact_message, now_ms,
+        sort_entries, validate_actionable_rows,
     };
     use crate::protocol::{Member, MemberDesktopActivity};
     use serde_json::json;
     use std::collections::HashSet;
+
+    #[test]
+    fn project_inbox_workflow_failures_keep_exact_same_name_runs() {
+        let earlier = "12345678-1234-1234-1234-123456789001";
+        let later = "12345678-1234-1234-1234-123456789002";
+        let mut snapshot: WorkflowFailures = serde_json::from_value(json!({
+            "workspaceId": "atlas", "limited": false, "runs": [
+                {"id": earlier, "name": "Daily audit", "finishedAt": 10},
+                {"id": later, "name": "Daily audit", "finishedAt": 20},
+            ],
+        }))
+        .unwrap();
+        assert!(snapshot.verified("atlas"));
+        assert!(!snapshot.verified("beacon"));
+        let mut rows: Vec<_> = snapshot.entries().map(|entry| ("atlas", entry)).collect();
+        sort_entries(&mut rows);
+        assert_eq!(
+            rows.iter().map(|(_, row)| row.target.key()).collect::<Vec<_>>(),
+            [format!("workflow-run:{later}"), format!("workflow-run:{earlier}")],
+        );
+        assert_ne!(rows[0].1.subject, rows[1].1.subject);
+        assert!(rows.iter().all(|(_, row)| {
+            row.priority == Priority::NeedsUser && row.snooze_key.is_none()
+        }));
+        snapshot.runs[1].id = format!("87654321{}", &earlier[8..]);
+        let collision_labels: Vec<_> = snapshot.entries().map(|entry| entry.subject).collect();
+        assert!(collision_labels[0].ends_with(earlier));
+        assert!(collision_labels[1].ends_with(&snapshot.runs[1].id));
+        snapshot.runs[1].id = earlier.to_owned();
+        assert!(!snapshot.verified("atlas"));
+    }
 
     #[test]
     fn selecting_an_inbox_member_uses_unique_exact_id_and_the_same_team_filter_predicates() {

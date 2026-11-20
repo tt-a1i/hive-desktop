@@ -2,6 +2,7 @@ pub(crate) mod patch_reader;
 pub(crate) mod file_tree;
 mod change_list;
 mod current_file;
+mod diff_find;
 mod remotes;
 mod review;
 use patch_reader::PatchReader;
@@ -508,6 +509,7 @@ pub(crate) struct GitWorkspace {
     changes_grouped: bool,
     grouping_save_failed: bool,
     file_patch_reader: Option<PatchReader>,
+    diff_find: Option<diff_find::DiffFind>,
     diff_state: Entity<DiffState>,
     diff_raw: bool,
     ignore_whitespace: bool,
@@ -652,6 +654,7 @@ impl HiveApp {
                 changes_grouped: diffs_settings::group_changes_by_folder(cx),
                 grouping_save_failed: false,
                 file_patch_reader: None,
+                diff_find: None,
                 diff_state: cx.new(|cx| {
                     let prefs = crate::diffs_settings::current(cx);
                     DiffState::new([], cx)
@@ -1340,6 +1343,7 @@ impl GitWorkspace {
     }
     fn clear_file_diff(&mut self, cx: &mut Context<Self>) {
         self.diff_generation += 1;
+        self.diff_find = None;
         self.diff = None;
         self.review_open = false;
         self.diff_review = None;
@@ -1409,6 +1413,7 @@ impl GitWorkspace {
     }
     fn sync_diff_state(&mut self, collapse_multi: bool, cx: &mut App) {
         self.file_patch_reader = None;
+        self.diff_find = None;
         let Some(patch) = self.diff.as_ref().and_then(|diff| diff.patch.as_deref()) else {
             self.diff_has_structured = false;
             self.diff_state.update(cx, |s, cx| s.set_files([], cx));
@@ -2804,6 +2809,8 @@ impl Render for GitWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let busy = self.busy(cx);
         let current = self.current(cx);
+        let diff_find_bar = self.render_diff_find(cx);
+        let diff_find_decoration = self.diff_find_decoration(cx);
         let segment_variant = |active: bool, cx: &App| {
             ButtonCustomVariant::new(cx)
                 .color(if active {
@@ -3976,6 +3983,7 @@ impl Render for GitWorkspace {
                                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                                     if !this.diff_raw {
                                                                         this.file_patch_reader = None;
+                                                                        this.diff_find = None;
                                                                         this.diff_raw = true;
                                                                     }
                                                                     cx.notify();
@@ -4040,28 +4048,37 @@ impl Render for GitWorkspace {
                                     .child(if show_structured {
                                         let workspace = cx.weak_entity();
                                         let generation = self.diff_generation;
-                                        div()
-                                            .h(diff_height)
+                                        v_flex()
                                             .min_w_0()
-                                            .bg(Color::Card.get(cx))
-                                            .overflow_hidden()
+                                            .key_context("HiveGitDiff")
+                                            .capture_action(cx.listener(Self::open_diff_find))
+                                            .capture_action(cx.listener(Self::close_diff_find_shortcut))
+                                            .when_some(diff_find_bar, |diff, find| diff.child(find))
                                             .child(
-                                                Diff::new(&self.diff_state)
-                                                    .soft_wrap(code_wrap)
-                                                    .hover_highlight(DiffHoverHighlight::Both)
-                                                    .change_indicator(DiffChangeIndicator::Signs)
-                                                    .hunk_separator(DiffHunkSeparator::Metadata)
-                                                    .when(current && !self.preview_mock, |diff| {
-                                                        diff.on_add_annotation(move |range, window, cx| {
-                                                            let _ = workspace.update(cx, |this, cx| {
-                                                                if this.diff_generation == generation {
-                                                                    this.open_diff_review(Some(range.clone()), window, cx);
-                                                                }
-                                                            });
-                                                        })
-                                                    })
+                                                div()
+                                                    .h(diff_height)
+                                                    .min_w_0()
+                                                    .bg(Color::Card.get(cx))
                                                     .overflow_hidden()
-                                                    .border_color(gpui::rgba(0)),
+                                                    .child(
+                                                        Diff::new(&self.diff_state)
+                                                            .decorations(diff_find_decoration)
+                                                            .soft_wrap(code_wrap)
+                                                            .hover_highlight(DiffHoverHighlight::Both)
+                                                            .change_indicator(DiffChangeIndicator::Signs)
+                                                            .hunk_separator(DiffHunkSeparator::Metadata)
+                                                            .when(current && !self.preview_mock, |diff| {
+                                                                diff.on_add_annotation(move |range, window, cx| {
+                                                                    let _ = workspace.update(cx, |this, cx| {
+                                                                        if this.diff_generation == generation {
+                                                                            this.open_diff_review(Some(range.clone()), window, cx);
+                                                                        }
+                                                                    });
+                                                                })
+                                                            })
+                                                            .overflow_hidden()
+                                                            .border_color(gpui::rgba(0)),
+                                                    ),
                                             )
                                             .into_any_element()
                                     } else {

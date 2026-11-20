@@ -1552,6 +1552,12 @@
   "构建类型": "Build type",
   "查找会话内容": "Find in conversation",
   "在此文件中查找": "Find in this file",
+  "查找当前差异": "Find in current diff",
+  "关闭差异查找": "Close diff find",
+  "上一个差异匹配": "Previous diff match",
+  "下一个差异匹配": "Next diff match",
+  "原文件第 {line} 行": "Original file, line {line}",
+  "新文件第 {line} 行": "Modified file, line {line}",
   "上一处匹配": "Previous match",
   "下一处匹配": "Next match",
   "关闭文件查找": "Close file find",
@@ -2831,5 +2837,12 @@
   "请从当前项目的普通独立工作树会话开始新草稿。": "Start a new draft from a regular conversation in its own worktree in this project.",
   "这个新工作树草稿请求已用于其他会话。": "This new worktree draft request already belongs to a different conversation.",
   "请从侧边栏手动打开新会话": "Start a new conversation from the sidebar.",
-  "无法打开团队成员": "Could not open the team member"
+  "无法打开团队成员": "Could not open the team member",
+  "工作流运行失败": "Workflow run failed",
+  "无法读取失败的工作流": "Could not load failed workflow runs",
+  "返回项目收件箱": "Return to project inbox",
+  "仅显示最近 20 条工作流失败": "Showing the 20 most recent workflow failures",
+  "无法打开工作流运行": "Could not open the workflow run",
+  "复制文件文本": "Copy file text",
+  "已复制文件文本": "File text copied"
 }

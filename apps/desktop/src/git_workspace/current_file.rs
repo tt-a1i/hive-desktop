@@ -51,6 +51,7 @@ impl GitWorkspace {
         }
         self.show_current_file = show;
         if show {
+            self.diff_find = None;
             self.load_current_file(cx);
         } else if !show && self.diff.is_none() && !self.diff_loading && self.diff_error.is_none() {
             self.load_diff(cx);

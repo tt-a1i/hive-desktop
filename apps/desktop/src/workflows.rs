@@ -24,6 +24,7 @@ pub struct Workflows {
     pub runs: Vec<Run>,
     pub schedules: Vec<Schedule>,
     pub selected: Option<String>,
+    pub inbox_origin: bool,
     pub detail: Option<Run>,
     pub dispatches: Vec<Dispatch>,
     pub logs: Vec<Log>,
@@ -61,6 +62,7 @@ impl Default for Workflows {
             runs: vec![],
             schedules: vec![],
             selected: None,
+            inbox_origin: false,
             detail: None,
             dispatches: vec![],
             logs: vec![],
@@ -86,11 +88,42 @@ struct Snapshot {
     schedules: Vec<Schedule>,
     enabled: bool,
     policy: Policy,
-    detail: Option<(Run, Vec<Dispatch>, Vec<Log>)>,
 }
+
+type RunDetails = (Run, Vec<Dispatch>, Vec<Log>);
+
+fn run_matches(run: &Run, workspace: &str, id: &str, inbox: bool) -> bool {
+    run.id == id
+        && run.workspace_id == workspace
+        && (!inbox
+            || run.status == "failed"
+                && run.parent_run_id.is_none()
+                && run.finished_at.is_some_and(|time| time > 0))
+}
+
+async fn read_run_details(
+    runtime: &crate::transport::Runtime,
+    workspace: &str,
+    id: &str,
+    inbox: bool,
+) -> Result<RunDetails, String> {
+    let path = format!("/api/workflows/runs/{id}");
+    let RunDetail { run } = read(runtime, path.clone()).await?;
+    if !run_matches(&run, workspace, id, inbox) {
+        return Err(tr("无法打开工作流运行").into());
+    }
+    let (dispatches, logs) = smol::future::zip(
+        read::<Dispatches>(runtime, format!("{path}/dispatches")),
+        read::<Logs>(runtime, format!("{path}/logs")),
+    )
+    .await;
+    Ok((run, dispatches?.dispatches, logs?.logs))
+}
+
 impl HiveApp {
     pub(crate) fn close_workflows(&mut self) {
         self.workflows.visible = false;
+        self.workflows.inbox_origin = false;
         self.invalidate_workflows();
     }
     pub(crate) fn invalidate_workflows(&mut self) {
@@ -108,6 +141,7 @@ impl HiveApp {
         state.runs.clear();
         state.loaded = false;
         state.schedules.clear();
+        state.inbox_origin = false;
         state.selected = None;
         state.detail = None;
         state.dispatches.clear();
@@ -120,6 +154,24 @@ impl HiveApp {
         state.action_error = None;
     }
     pub(crate) fn show_workflows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.workflows.inbox_origin) {
+            self.invalidate_workflows();
+            self.clear_workflow_detail(None);
+        }
+        self.activate_workflows(window, cx);
+    }
+    pub(crate) fn open_inbox_workflow(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invalidate_workflows();
+        self.clear_workflow_detail(Some(id));
+        self.workflows.inbox_origin = true;
+        self.activate_workflows(window, cx);
+    }
+    fn activate_workflows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_terminal(cx);
         self.close_memory();
         self.close_roles();
@@ -136,6 +188,11 @@ impl HiveApp {
     }
     pub(crate) fn select_workflow(&mut self, id: Option<String>, cx: &mut Context<Self>) {
         self.invalidate_workflows();
+        self.clear_workflow_detail(id);
+        self.refresh_workflows(cx);
+        cx.notify();
+    }
+    fn clear_workflow_detail(&mut self, id: Option<String>) {
         let state = &mut self.workflows;
         state.selected = id;
         state.focus_navigation = true;
@@ -144,8 +201,6 @@ impl HiveApp {
         state.dispatches.clear();
         state.logs.clear();
         state.error = None;
-        self.refresh_workflows(cx);
-        cx.notify();
     }
     pub(crate) fn refresh_workflows(&mut self, cx: &mut Context<Self>) {
         if !self.workflows.visible
@@ -164,9 +219,17 @@ impl HiveApp {
         state.generation += 1;
         let generation = state.generation;
         let selected = state.selected.clone();
+        let inbox = state.inbox_origin;
         let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
-            let result: Result<Snapshot, String> = async {
+            let result: Result<(Option<Snapshot>, Option<RunDetails>), String> = async {
+                if inbox {
+                    let id = selected.as_deref().ok_or(tr("无法打开工作流运行"))?;
+                    return Ok((
+                        None,
+                        Some(read_run_details(&runtime, &workspace, id, true).await?),
+                    ));
+                }
                 let runs: Runs = read(
                     &runtime,
                     format!("/api/workspaces/{workspace}/workflows/runs"),
@@ -182,23 +245,19 @@ impl HiveApp {
                 let policy: Policy =
                     read(&runtime, "/api/settings/workflow-cli-policy".into()).await?;
                 let detail = if let Some(id) = selected {
-                    let run: RunDetail =
-                        read(&runtime, format!("/api/workflows/runs/{id}")).await?;
-                    let dispatches: Dispatches =
-                        read(&runtime, format!("/api/workflows/runs/{id}/dispatches")).await?;
-                    let logs: Logs =
-                        read(&runtime, format!("/api/workflows/runs/{id}/logs")).await?;
-                    Some((run.run, dispatches.dispatches, logs.logs))
+                    Some(read_run_details(&runtime, &workspace, &id, false).await?)
                 } else {
                     None
                 };
-                Ok(Snapshot {
-                    runs: runs.runs,
-                    schedules: schedules.schedules,
-                    enabled: feature.enabled,
-                    policy,
+                Ok((
+                    Some(Snapshot {
+                        runs: runs.runs,
+                        schedules: schedules.schedules,
+                        enabled: feature.enabled,
+                        policy,
+                    }),
                     detail,
-                })
+                ))
             }
             .await;
             let _ = this.update(cx, |this, cx| {
@@ -212,15 +271,17 @@ impl HiveApp {
                 let state = &mut this.workflows;
                 state.loading = false;
                 match result {
-                    Ok(next) => {
-                        state.loaded = true;
-                        state.runs = next.runs;
-                        state.schedules = next.schedules;
-                        state.enabled = Some(next.enabled);
-                        if !state.policy_dirty {
-                            state.policy = Some(next.policy);
+                    Ok((next, detail)) => {
+                        if let Some(next) = next {
+                            state.loaded = true;
+                            state.runs = next.runs;
+                            state.schedules = next.schedules;
+                            state.enabled = Some(next.enabled);
+                            if !state.policy_dirty {
+                                state.policy = Some(next.policy);
+                            }
                         }
-                        if let Some((run, dispatches, logs)) = next.detail {
+                        if let Some((run, dispatches, logs)) = detail {
                             state.detail = Some(run);
                             state.dispatches = dispatches;
                             state.logs = logs;
@@ -291,5 +352,33 @@ impl HiveApp {
             });
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Run, run_matches};
+    use serde_json::json;
+
+    #[test]
+    fn inbox_workflow_detail_requires_the_exact_settled_root_failure() {
+        let mut run: Run = serde_json::from_value(json!({
+            "id": "selected", "workspace_id": "atlas", "name": "Daily audit",
+            "script_path": "check.ts", "status": "failed", "started_at": 10,
+            "finished_at": 20, "agent_count": 0, "args": null, "result": null,
+        }))
+        .unwrap();
+        assert!(run_matches(&run, "atlas", "selected", true));
+        assert!(!run_matches(&run, "beacon", "selected", true));
+        assert!(!run_matches(&run, "atlas", "different", true));
+        run.parent_run_id = Some("outer".into());
+        assert!(!run_matches(&run, "atlas", "selected", true));
+        assert!(run_matches(&run, "atlas", "selected", false));
+        run.parent_run_id = None;
+        run.finished_at = None;
+        assert!(!run_matches(&run, "atlas", "selected", true));
+        run.finished_at = Some(20);
+        run.status = "completed".into();
+        assert!(!run_matches(&run, "atlas", "selected", true));
     }
 }

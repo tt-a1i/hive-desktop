@@ -42,6 +42,7 @@ export interface HiveUserInputRow { type: 'user_input' | 'user_input_cancelled';
 interface InboxQuestion { workspaceId: string; dispatchId: string; messageId: string }
 type ActionableMessageSource = {listActionableDispatchMessages(workspaceId: string): DispatchMessageRecord[]};
 interface InboxDispatchInput { dispatchId: string; sequence: number | null; createdAt: number | null }
+interface InboxWorkflowFailure { id: string; name: string | null; finishedAt: number }
 interface InboxActionableRow {
     kind: 'question_waiting_answer' | 'message_delivery_pending';
     dispatch_id: string;
@@ -71,6 +72,7 @@ const WAITING_REPORT_MS = 10 * 60 * 1_000;
 const INBOX_ACTIONABLE_LIMIT = 100;
 const INBOX_PREVIEW_LIMIT = 96;
 const INBOX_MESSAGE_SAMPLE = 384;
+const INBOX_WORKFLOW_FAILURE_LIMIT = 20;
 
 function inboxLinePreview(text: string | null | undefined): string | null {
     const line = text?.trimStart().split(/[\r\n\u2028\u2029]/u, 1)[0]?.replace(/\s+/gu, ' ').trim();
@@ -219,6 +221,7 @@ export function withInboxDispatchBackends(
 export interface SavedScriptContext {scriptRunId: string; cwd: string; command: string; sessionId?: string}
 export interface SavedScriptObserver {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}
 export interface HiveHost {
+    inboxWorkflowFailures(workspaceId: string): {workspaceId: string; runs: InboxWorkflowFailure[]; limited: boolean};
     inboxDispatchMessage(workspaceId: string, dispatchId: string, messageId: string): ReturnType<typeof serializeDispatchMessage> | null;
     inboxDispatchInput(workspaceId: string, dispatchIds: unknown, timestampDispatchIds?: unknown): {workspaceId: string; inputs: InboxDispatchInput[]};
     inboxQuestions(workspaceIds: readonly string[]): InboxQuestion[];
@@ -332,6 +335,20 @@ export async function createHiveHost({
         (db.prepare('SELECT COALESCE(MAX(rowid), 0) AS cursor FROM dispatch_messages').get() as {cursor: number}).cursor;
 	return {
 		port: runtime.port,
+        inboxWorkflowFailures(workspaceId) {
+            if (closing) throw new Error('Hive host is closed');
+            if (!workspaceScope().has(workspaceId)) throw new Error('Unknown Inbox workspace');
+            // Order by when the failure occurred. A long-running workflow can
+            // finish after newer runs. Nested runs stay in Workflows.
+            const records = readInboxStore().prepare(`
+                SELECT id, substr(name, 1, ${INBOX_MESSAGE_SAMPLE}) AS name, finished_at AS finishedAt
+                FROM workflow_runs
+                WHERE workspace_id = ? AND parent_run_id IS NULL AND status = 'failed' AND finished_at > 0
+                ORDER BY finished_at DESC, rowid DESC LIMIT ?
+            `).all(workspaceId, INBOX_WORKFLOW_FAILURE_LIMIT + 1) as InboxWorkflowFailure[];
+            return {workspaceId, runs: records.slice(0, INBOX_WORKFLOW_FAILURE_LIMIT)
+                .map(run => ({...run, name: inboxLinePreview(run.name)})), limited: records.length > INBOX_WORKFLOW_FAILURE_LIMIT};
+        },
         inboxDispatchMessage(workspaceId, dispatchId, messageId) {
             if (closing) throw new Error('Hive host is closed');
             if (!runtime.store.getDispatch(workspaceId, dispatchId)) return null;

@@ -448,6 +448,10 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       exact(params, ['workspaceId', 'dispatchIds', 'timestampDispatchIds']);
       return runtime.hive.inboxDispatchInput(text(params, 'workspaceId'), params.dispatchIds, params.timestampDispatchIds);
     }
+    case 'inbox.workflowFailures': {
+      exact(params, ['workspaceId']);
+      return hive.inboxWorkflowFailures(text(params, 'workspaceId'));
+    }
     case 'inbox.dispatchMessage': {
       exact(params, ['workspaceId', 'dispatchId', 'messageId']);
       return runtime.hive.inboxDispatchMessage(text(params, 'workspaceId'), text(params, 'dispatchId'), text(params, 'messageId'));

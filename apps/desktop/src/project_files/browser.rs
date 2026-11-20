@@ -373,6 +373,7 @@ struct ExpandedFilePreview {
     markdown_start_offset: Option<Point<Pixels>>,
     scroll: ScrollHandle,
     find: Option<ReaderFind>,
+    copied_text: Option<Task<()>>,
     focus: FocusHandle,
     return_focus: Option<FocusHandle>,
     dialog_focus: Option<FocusHandle>,
@@ -3038,6 +3039,7 @@ impl FileBrowser {
                 markdown_start_offset,
                 scroll,
                 find: None,
+                copied_text: None,
                 focus: cx.focus_handle(),
                 return_focus,
                 dialog_focus: None,
@@ -3897,6 +3899,24 @@ impl ExpandedFilePreview {
             })
     }
 
+    fn copy_file_text(&mut self, cx: &mut Context<Self>) {
+        if !self.current(cx) {
+            return;
+        }
+        let Some(text) = &self.text else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text.full.to_string()));
+        self.copied_text = Some(cx.spawn(async move |this, cx| {
+            smol::Timer::after(Duration::from_secs(2)).await;
+            let _ = this.update(cx, |this, cx| {
+                this.copied_text = None;
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
     fn attach_button(&self, browser: &FileBrowser, cx: &Context<Self>) -> Option<Button> {
         let attachment = browser.attach_target(cx)?;
         Some(
@@ -4165,6 +4185,28 @@ impl Render for ExpandedFilePreview {
                             .children(attach)
                             .children(reveal)
                             .children(copy_path)
+                            .when(self.text.is_some(), |actions| {
+                                let copied = self.copied_text.is_some();
+                                let label = tr(if copied {
+                                    "已复制文件文本"
+                                } else {
+                                    "复制文件文本"
+                                });
+                                let icon = if copied { Glyph::Check } else { Glyph::ClipboardCopy };
+                                actions.child(
+                                    Button::new("file-reader-copy-text")
+                                        .custom(palette::quiet_icon_variant(cx))
+                                        .compact()
+                                        .xsmall()
+                                        .size(px(24.))
+                                        .icon(icon)
+                                        .accessibility_label(label)
+                                        .tooltip(label)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.copy_file_text(cx)
+                                        })),
+                                )
+                            })
                             .children(editor_menu)
                             .child(back),
                     ),

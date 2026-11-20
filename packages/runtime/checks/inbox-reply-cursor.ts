@@ -416,6 +416,69 @@ try {
   assert.ok(upstreamBacklog.attention.every(row => !('message_preview' in row)));
   console.log('INBOX_ACTIONABLE_PAGES_OK: initial and next workspace pages, badge isolation, queued classification, stable boundary and 101st question');
   console.log('INBOX_ACTIONABLE_PREVIEWS_OK: exact old question snippets and sender outside the 12-message preview, including bounded Unicode on page two');
+
+  const workflowDb = new DatabaseSync(join(dataDir, 'hive', 'runtime.sqlite'));
+  const workflowTime = Date.now() - 500;
+  const runName = 'Nightly audit';
+  const seededFailures: string[] = [];
+  try {
+    const insert = workflowDb.prepare(`INSERT INTO workflow_runs
+      (id, workspace_id, script_path, name, status, started_at, created_at, finished_at, error, parent_run_id)
+      VALUES (?, ?, 'fixture-workflow', ?, ?, ?, ?, ?, ?, ?)`);
+    const seedWorkflow = (workspaceId: string, step: number, {name = runName, status = 'failed', settled = true, parent = null, startedStep = step}: {
+      name?: string; status?: string; settled?: boolean; parent?: string | null; startedStep?: number;
+    } = {}) => {
+      const runId = randomUUID();
+      const time = workflowTime + step;
+      const startedAt = workflowTime + startedStep;
+      insert.run(runId, workspaceId, name, status, startedAt, startedAt, settled ? time + 1 : null, `Run error ${step}`, parent);
+      return runId;
+    };
+    for (let step = 0; step < 21; step++) {
+      seededFailures.push(seedWorkflow(workspace.id, step, step === 17 ? {name: `${'🐝'.repeat(120)}\nother line`}
+        : step === 20 ? {startedStep: -500} : {}));
+    }
+    seedWorkflow(workspace.id, 21, {parent: seededFailures[20]!});
+    seedWorkflow(workspace.id, 22, {status: 'completed'});
+    seedWorkflow(workspace.id, 23, {status: 'interrupted'});
+    seedWorkflow(workspace.id, 24, {settled: false});
+    seedWorkflow(foreign.id, 25);
+    const log = workflowDb.prepare('INSERT INTO workflow_run_logs (run_id, ts, message) VALUES (?, ?, ?)');
+    log.run(seededFailures[18]!, workflowTime + 18, 'Exact older failure log');
+    log.run(seededFailures[20]!, workflowTime + 20, 'Newest same-name failure log');
+  } finally { workflowDb.close(); }
+
+  const readFailures = (workspaceId: string) => wire!.request<{
+    workspaceId: string; runs: {id: string; name: string | null; finishedAt: number}[]; limited: boolean;
+  }>('inbox.workflowFailures', {workspaceId});
+  const failures = await readFailures(workspace.id);
+  assert.equal(failures.workspaceId, workspace.id);
+  assert.equal(failures.limited, true);
+  assert.deepEqual(failures.runs.map(run => run.id), seededFailures.slice(1).reverse());
+  assert.deepEqual(failures.runs.find(run => run.id === seededFailures[17]), {
+    id: seededFailures[17], name: `${'🐝'.repeat(96)}…`, finishedAt: workflowTime + 18,
+  });
+  assert.deepEqual(failures.runs.filter(run => run.name === runName).slice(0, 2).map(run => run.id),
+    [seededFailures[20], seededFailures[19]]);
+  const foreignFailures = await readFailures(foreign.id);
+  assert.equal(foreignFailures.runs.length, 1);
+  assert.equal(foreignFailures.limited, false);
+  await assert.rejects(readFailures(randomUUID()), /Unknown Inbox workspace/);
+  const exactRun = failures.runs.find(run => run.id === seededFailures[18])!;
+  const details = await wire.request<{run: {id: string; workspace_id: string; error: string}}>('hive.request', {
+    method: 'GET', path: `/api/workflows/runs/${exactRun.id}`,
+  });
+  assert.deepEqual([details.run.id, details.run.workspace_id, details.run.error], [exactRun.id, workspace.id, 'Run error 18']);
+  const exactLogs = await wire.request<{logs: {message: string}[]}>('hive.request', {
+    method: 'GET', path: `/api/workflows/runs/${exactRun.id}/logs`,
+  });
+  assert.deepEqual(exactLogs.logs.map(log => log.message), ['Exact older failure log']);
+  const full = await wire.request<{runs: {id: string}[]}>('hive.request', {
+    method: 'GET', path: `/api/workspaces/${workspace.id}/workflows/runs`,
+  });
+  assert.ok(full.runs.some(run => run.id === seededFailures[0]), 'Older runs remain in Workflows');
+  assert.deepEqual(await readFailures(workspace.id), failures, 'Read-only inspection keeps failures intact');
+  console.log('INBOX_WORKFLOW_FAILURES_OK: bounded current workspace settled root failures, exact same-name run error and logs, older history preserved');
 } finally {
   await wire?.close();
   await rm(root, {recursive: true, force: true});

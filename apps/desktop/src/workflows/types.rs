@@ -5,6 +5,7 @@ use serde_json::Value;
 #[derive(Clone, Deserialize)]
 pub struct Run {
     pub id: String,
+    pub workspace_id: String,
     pub name: String,
     pub script_path: String,
     pub script_hash: Option<String>,
