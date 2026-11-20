@@ -146,12 +146,13 @@ impl HiveApp {
 
         v_flex()
             .w_full()
-            .gap_2p5()
-            .p_3p5()
+            .gap_3()
+            .p_4()
             .rounded_xl()
             .bg(Color::Card.get(cx))
             .border_1()
             .border_color(Color::Divider.get(cx))
+            .shadow(palette::card_shadow(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -238,15 +239,17 @@ impl HiveApp {
             .any(|d| d.to_agent_id == member.id && d.state == "submitted");
         let highlight_report = pending_reports > 0 || has_submitted;
 
+        let monogram = palette::project_monogram(&member.name);
+        let is_lead = member.is_lead();
         h_flex()
             .id(("cockpit-member", index))
             .w_full()
             .min_w_0()
             .items_center()
             .justify_between()
-            .gap_2p5()
+            .gap_3()
             .px_3()
-            .py_2()
+            .py_2p5()
             .rounded_lg()
             .bg(Color::Inset.get(cx))
             .border_1()
@@ -257,6 +260,34 @@ impl HiveApp {
             } else {
                 Color::Divider.get(cx)
             })
+            .hover(|style| style.bg(Color::Card.get(cx)))
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .size(px(26.))
+                    .rounded_md()
+                    .bg(if is_lead {
+                        Color::AccentSoft.get(cx)
+                    } else {
+                        Color::Card.get(cx)
+                    })
+                    .border_1()
+                    .border_color(if is_lead {
+                        Color::Accent.get(cx).opacity(0.28)
+                    } else {
+                        Color::Divider.get(cx)
+                    })
+                    .text_size(px(10.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(if is_lead {
+                        Color::Accent.get(cx)
+                    } else {
+                        Color::Secondary.get(cx)
+                    })
+                    .child(monogram),
+            )
             .child(
                 v_flex()
                     .flex_1()

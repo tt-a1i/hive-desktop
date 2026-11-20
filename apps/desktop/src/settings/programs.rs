@@ -556,12 +556,13 @@ impl HiveApp {
         let report = self.readiness.as_ref();
         v_flex()
             .w_full()
-            .gap_2p5()
-            .p_3p5()
+            .gap_3()
+            .p_4()
             .rounded_xl()
             .bg(Color::Card.get(cx))
             .border_1()
             .border_color(Color::Divider.get(cx))
+            .shadow(crate::palette::card_shadow(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -664,13 +665,24 @@ impl HiveApp {
                                                         .child(name.to_owned()),
                                                 )
                                                 .child(
-                                                    div()
-                                                        .px_1p5()
+                                                    h_flex()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .px_2()
                                                         .py(px(1.))
-                                                        .rounded_sm()
+                                                        .rounded_full()
                                                         .bg(Color::Card.get(cx))
+                                                        .border_1()
+                                                        .border_color(Color::Divider.get(cx))
                                                         .text_size(px(10.5))
+                                                        .font_weight(FontWeight::MEDIUM)
                                                         .text_color(badge_color)
+                                                        .child(
+                                                            div()
+                                                                .size(px(5.5))
+                                                                .rounded_full()
+                                                                .bg(badge_color),
+                                                        )
                                                         .child(badge_text.to_owned()),
                                                 )
                                                 .when_some(b.executable.as_ref(), |row, exec_path| {

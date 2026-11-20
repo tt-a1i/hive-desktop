@@ -315,6 +315,7 @@ impl HiveApp {
                                     .h(px(28.))
                                     .px_3()
                                     .rounded_full()
+                                    .icon(gpui_kit::assets::IconName::ChevronUp)
                                     .label(label)
                                     .disabled(loading || !this.connected)
                                     .on_click(cx.listener(|this, _, _, cx| {

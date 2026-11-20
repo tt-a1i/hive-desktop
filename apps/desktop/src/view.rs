@@ -714,14 +714,10 @@ impl HiveApp {
     ) -> impl IntoElement + use<> {
         let composer_focused = self.input.read(cx).focus_handle(cx).is_focused(window);
         let is_dark = Theme::global(cx).is_dark();
-        let composer_border = if is_dark {
-            if composer_focused {
-                hsla(0., 0., 1., 0.13)
-            } else {
-                hsla(0., 0., 1., 0.08)
-            }
-        } else if composer_focused {
-            hsla(0., 0., 0., 0.11)
+        let composer_border = if composer_focused {
+            Color::Accent.get(cx).opacity(if is_dark { 0.45 } else { 0.35 }).into()
+        } else if is_dark {
+            hsla(0., 0., 1., 0.08)
         } else {
             hsla(0., 0., 0., 0.08)
         };
@@ -745,7 +741,7 @@ impl HiveApp {
             .border_1()
             .border_color(composer_border)
             .bg(Color::Card.get(cx))
-            .shadow_xs()
+            .shadow(crate::palette::composer_shadow(composer_focused, cx))
             .child(crate::focus_scroll::Viewport::new(
                 "composer-body-viewport",
                 &self.composer_scroll,

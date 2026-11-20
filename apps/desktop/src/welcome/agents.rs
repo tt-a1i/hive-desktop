@@ -195,6 +195,7 @@ impl HiveApp {
                     .border_1()
                     .border_color(Color::Divider.get(cx))
                     .bg(Color::Card.get(cx))
+                    .shadow(crate::palette::card_shadow(cx))
                     .child(
                         h_flex()
                             .px_3p5()
@@ -281,13 +282,22 @@ impl HiveApp {
                                                         .child(name),
                                                 )
                                                 .child(
-                                                    div()
-                                                        .px_1p5()
-                                                        .py_0p5()
-                                                        .rounded_sm()
-                                                        .bg(Color::Surface.get(cx))
-                                                        .text_xs()
+                                                    h_flex()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .px_2()
+                                                        .py(px(2.))
+                                                        .rounded_full()
+                                                        .bg(Color::Inset.get(cx))
+                                                        .text_size(px(11.))
+                                                        .font_weight(FontWeight::MEDIUM)
                                                         .text_color(badge_color)
+                                                        .child(
+                                                            div()
+                                                                .size(px(6.))
+                                                                .rounded_full()
+                                                                .bg(badge_color),
+                                                        )
                                                         .child(badge_text),
                                                 )
                                                 .when(mcp_count > 0, |row| {

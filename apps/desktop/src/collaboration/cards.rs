@@ -76,6 +76,14 @@ impl HiveApp {
                 } else {
                     Color::Divider.get(cx)
                 })
+                .shadow(crate::palette::card_shadow(cx))
+                .hover(|style| {
+                    if is_selected {
+                        style
+                    } else {
+                        style.border_color(Color::Secondary.get(cx).opacity(0.32))
+                    }
+                })
                 .child(
                     Button::new(("dispatch", index))
                         .ghost()

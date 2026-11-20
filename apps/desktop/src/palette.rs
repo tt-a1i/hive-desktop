@@ -2,9 +2,9 @@
 //! Tuned to T3 Code's cool-zinc light & obsidian-graphite dark hierarchy,
 //! paired with Beluga's crisp local-readiness surfaces.
 use gpui_kit::{
-    App, Div, FontWeight, ParentElement as _, Rgba, Styled as _,
+    App, BoxShadow, Div, FontWeight, ParentElement as _, Rgba, Styled as _,
     component::{Theme, button::ButtonCustomVariant},
-    div, px, rgb, rgba,
+    div, hsla, point, px, rgb, rgba,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -47,6 +47,105 @@ impl Color {
             Self::Error => rgb(if dark { 0xf87171 } else { 0xdc2626 }),
             Self::ErrorSurface => rgb(if dark { 0x2d191c } else { 0xfef2f2 }),
         }
+    }
+}
+
+/// Subtle T3 Code card elevation: soft layered ambient shadow in light mode,
+/// crisp low-glare depth in dark mode.
+pub fn card_shadow(cx: &App) -> Vec<BoxShadow> {
+    if Theme::global(cx).is_dark() {
+        vec![BoxShadow {
+            color: hsla(0., 0., 0., 0.28),
+            offset: point(px(0.), px(2.)),
+            blur_radius: px(8.),
+            spread_radius: px(0.),
+            inset: false,
+        }]
+    } else {
+        vec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.04),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(2.),
+                spread_radius: px(0.),
+                inset: false,
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.03),
+                offset: point(px(0.), px(4.)),
+                blur_radius: px(12.),
+                spread_radius: px(0.),
+                inset: false,
+            },
+        ]
+    }
+}
+
+/// Signature T3 Code floating composer elevation: gentle resting lift,
+/// transitioning to a crisp subtle focus halo + elevation when active.
+pub fn composer_shadow(focused: bool, cx: &App) -> Vec<BoxShadow> {
+    let dark = Theme::global(cx).is_dark();
+    if focused {
+        if dark {
+            vec![
+                BoxShadow {
+                    color: hsla(224. / 360., 0.85, 0.65, 0.16),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(2.),
+                    inset: false,
+                },
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.42),
+                    offset: point(px(0.), px(6.)),
+                    blur_radius: px(20.),
+                    spread_radius: px(-2.),
+                    inset: false,
+                },
+            ]
+        } else {
+            vec![
+                BoxShadow {
+                    color: hsla(224. / 360., 0.78, 0.50, 0.12),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(2.),
+                    inset: false,
+                },
+                BoxShadow {
+                    color: hsla(0., 0., 0., 0.06),
+                    offset: point(px(0.), px(6.)),
+                    blur_radius: px(18.),
+                    spread_radius: px(-2.),
+                    inset: false,
+                },
+            ]
+        }
+    } else if dark {
+        vec![BoxShadow {
+            color: hsla(0., 0., 0., 0.30),
+            offset: point(px(0.), px(3.)),
+            blur_radius: px(12.),
+            spread_radius: px(-1.),
+            inset: false,
+        }]
+    } else {
+        vec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.04),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(3.),
+                spread_radius: px(0.),
+                inset: false,
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.03),
+                offset: point(px(0.), px(4.)),
+                blur_radius: px(14.),
+                spread_radius: px(-2.),
+                inset: false,
+            },
+        ]
     }
 }
 
