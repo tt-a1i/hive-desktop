@@ -1,5 +1,22 @@
 # 完整目标的当前验收状态
 
+## 2026-11-20 收官交付：全链路断层清零、79 项离线门禁全绿与本机候选包安装
+
+- **全链路接线收口与快捷键冲突修复（`dfcfa51`）**：
+  - `OpenCommandPalette` 正式纳入 `keybindings.rs` 自定义快捷键体系（默认 `cmd-shift-p` / `ctrl-shift-p`，保留 `Search` 默认 `cmd-k` / `ctrl-k` 无冲突），支持录制改绑、冲突检测、恢复默认、双语设置搜索及侧栏/顶栏快捷入口提示。
+  - `chat.toolOutputSlice` 完整接入桌面端 `tool_message.rs` 与 `conversation.rs`：超大工具输出展示已加载字节区间、有界窗口内存上限（256 KiB）、「加载更多输出 (+32 KB)」、复制已加载内容及错误反馈。
+  - `mcp.upsertProjectServer` 完整接入「设置 → 外部程序」项目级 `.mcp.json` 新增/编辑表单（支持 `stdio` / `HTTP/SSE`、脱敏环境变量输入、保存后自动刷新就绪度并可直接握手探活，以及一键打开 `.mcp.json`）。
+  - 补齐 `ui_preview.rs` 新增界面预览路由（`command-palette`、`settings:programs-mcp-form`、`settings:keybindings`、`chat:history-and-tool-window`），完成窄窗与大字号响应式折行与无障碍标签补全，默认构建与 `--features ui-preview` 均零编译警告，144 项 Rust 单元测试与 14 项 `check:team` 回归全绿。
+- **macOS arm64 `--release` 候选包（`previewFeature: false`）全部 9 项离线打包门禁 0 失败并已原子安装**：
+  - 产物基线：`dfcfa51`（Windows CRLF 测试夹具修正随 `d32fb67` 合入）；
+  - 二进制 SHA-256：`2573ede6e48f8a898536f12074a5a415dfe13b323e28304ccbb968c0b9f2be01`；
+  - 候选 ZIP：`.artifacts/hive-desktop-macos-arm64-candidate.zip`（`174,526,919` 字节，SHA-256 `5e2a5a528b4b912866fd5e4a9c6594b2011e34e61107255f90b0d33314a9b558`）；
+  - 全部 9 项离线门禁通过（`check-build-identity`、`check-pi-shell-owner`、`check-package`、`check-desktop-startup`、`check-packaged-codex`、`check-packaged-dispatches`、`check-packaged-queue`、`check-packaged-remote`、**79/79 项 `check-packaged-functional`**，收据位于 `.artifacts/current-package/receipt.json` 与 `.artifacts/release-dfcfa51/functional-receipt.json`）；
+  - 已优雅退出旧进程并原子替换 `/Applications/Hive Desktop.app`，已安装二进制 SHA-256 与候选包逐字节一致，测试子进程零残留，`.artifacts/` 保持精简（176 MB）。
+- **Windows CI 状态跟踪**：
+  - `a0620ca`（阶段 B 四大能力 + 顶栏团队状态胶囊 + 项目级 MCP 扫描 + 有界历史缓存）完整 Windows CI 作业 [44662695729](https://github.com/tt-a1i/hive-desktop/actions/runs/44662695729) `success`；
+  - `869f146` / `dfcfa51` 中 `history-cursor-and-idle-sleep`、`readiness-and-mcp`、`mcp-manager-and-probe` 在 Windows 均已通过，仅 `git-branches-and-stash.ts` 因 Windows `core.autocrlf=true` 导致 `\r\n` 断言差异，已在 `d32fb67` 修复并推送触发新一轮 Windows CI 复验。
+
 ## 2026-11-20 Windows 实窗尾项全量清零与阶段 B 进展
 
 - **Windows 完整构建与 6 项 UIA 原生回放全部绿灯（基线 `2771662`）**：

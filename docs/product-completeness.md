@@ -1,5 +1,9 @@
 # 完整产品实施与验收
 
+2026-11-20 收官交付（`dfcfa51` / `d32fb67`）：
+- **全链路前后端接线清零**：`OpenCommandPalette` 正式纳入 `keybindings.rs` 自定义快捷键（默认 `cmd-shift-p`/`ctrl-shift-p`，保留 `Search` 默认 `cmd-k`/`ctrl-k`）；前端 `tool_message.rs` 接通 `chat.toolOutputSlice` 有界字节窗口增量加载与复制；设置页接通 `mcp.upsertProjectServer` 项目级 `.mcp.json` 新增/编辑表单（含 `stdio`/`HTTP/SSE`、脱敏环境变量、一键探活与定位配置文件）；Git 抽屉接通分支切换/新建、Fetch/Pull 与 Stash 完整交互；补齐 `ui_preview.rs` 预览路由与双语翻译。
+- **macOS arm64 `--release` 候选包正式交付**：全部 9 项离线打包门禁（含 **79/79 项 `check-packaged-functional`**）0 失败通过，已更新 `.artifacts/hive-desktop-macos-arm64-candidate.zip` 与 `.artifacts/current-package/receipt.json` 并原子安装至 `/Applications/Hive Desktop.app`（二进制 SHA-256 `2573ede6e48f8a898536f12074a5a415dfe13b323e28304ccbb968c0b9f2be01` 一致核验通过）。
+
 2026-11-20 阶段 A 收口与阶段 B 演进：
 - **Windows 实窗尾项全量清零**：`2771662` 的完整 Windows 作业（[44650058197](https://github.com/tt-a1i/hive-desktop/actions/runs/44650058197)）及六项独立 UIA 原生窗口回放全部绿灯通过，包括：全部 75+ 包内功能检查、Windows WebView2 隔离 HTML 预览（含子框架导航拦截、显式快照重开与源文件移走后的冷开恢复）、原生更新与回退；[Git 提交预览取消后焦点回落与冷开草稿保留](https://github.com/tt-a1i/hive-desktop/actions/runs/44653738858)；[历史回退遇外来索引锁的 UIA 完整错误读取与冷开](https://github.com/tt-a1i/hive-desktop/actions/runs/44653745654)；[旧格式待发队列显式重发与冷开核验](https://github.com/tt-a1i/hive-desktop/actions/runs/44654750841)；[Codex/ACP/Pi 会话模式窗口检查与冷恢复](https://github.com/tt-a1i/hive-desktop/actions/runs/44654757246)；[工作树初始化失败冷开、重试与发送屏障](https://github.com/tt-a1i/hive-desktop/actions/runs/44654772190)；[结构化提问附件系统选择器与私有副本冷开](https://github.com/tt-a1i/hive-desktop/actions/runs/44657666736)。
 - **仓库与工作树卫生收口**：已安全清理 10 个已合入 `main` 的临时 git worktree 与 4 个过时本地分支，并将 `.artifacts/` 从 3.7 GB 清理至 154 MB（保留 `current-package/` 验收收据与 `hive-desktop-macos-arm64-candidate.zip`）。
