@@ -548,6 +548,11 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       return {cancelled: search !== undefined};
     }
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
+    case 'chat.reference.resolve': {
+      exact(params, ['workspaceId', 'sessionId']);
+      const session = chats.conversationReference(text(params, 'workspaceId'), text(params, 'sessionId'));
+      return session ? navigationSearchSession(session) : null;
+    }
     case 'chat.execution': return chats.sessionExecution(text(params, 'sessionId'));
     case 'chat.worktrees.pending': return chats.pendingWorktrees(text(params, 'workspaceId'));
     case 'chat.worktrees.removal.preview':

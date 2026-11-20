@@ -103,6 +103,14 @@ try {
       return {...hit, session};
     }),
   });
+  const reference = {workspaceId, sessionId: ids[1]};
+  const resolvedArchive = await rpc('chat.reference.resolve', reference);
+  assert.equal(resolvedArchive.error, undefined);
+  assert.deepEqual(resolvedArchive.result, navigation.result.matches.find((hit: any) => hit.session.id === ids[1]).session);
+  assert.ok(!Object.hasOwn(resolvedArchive.result, 'sessionFile'));
+  assert.equal((await rpc('chat.reference.resolve', {...reference, workspaceId: 'other'})).result, null);
+  assert.equal((await rpc('chat.reference.resolve', {...reference, sessionId: 'missing'})).result, null);
+  assert.ok((await rpc('chat.reference.resolve', {...reference, prompt: 'unexpected'})).error);
   assert.ok((await rpc('chat.search', {query: '', navigationOnly: 'true'})).error);
   assert.equal((await rpc('chat.search', { query: '', archived: true, workspaceId })).result.total, 4);
   assert.equal((await rpc('chat.search', { query: '', archived: true, workspaceId: 'unknown-workspace' })).result.total, 0);
@@ -168,12 +176,25 @@ try {
   const pageIds = [...first.result.matches, ...second.result.matches].map((hit: any) => hit.session.id);
   assert.equal(new Set(pageIds).size, 101);
   assert.deepEqual(new Set(pageIds), selectedIds);
+  const sameTitle = await rpc('chat.search', {query: 'Wire pagination 100', navigationOnly: true});
+  const similarTitles = sameTitle.result.matches.filter((hit: any) => hit.session.title === 'Wire pagination 100');
+  assert.equal(similarTitles.length, 2);
+  const selected = similarTitles.find((hit: any) => hit.session.workspaceId === other.result.id).session;
+  const selectedReference = {workspaceId: selected.workspaceId, sessionId: selected.id};
+  const indexBeforeReference = await readFile(indexFile, 'utf8');
+  const exactSession = await rpc('chat.reference.resolve', selectedReference);
+  assert.equal(exactSession.result.id, selected.id);
+  assert.equal(exactSession.result.workspaceId, other.result.id);
+  assert.equal((await rpc('chat.reference.resolve', {...selectedReference, workspaceId})).result, null);
+  assert.equal(await readFile(indexFile, 'utf8'), indexBeforeReference);
+  assert.equal((await rpc('chat.rename', {sessionId: selected.id, title: 'Exact reference renamed'})).error, undefined);
+  assert.equal((await rpc('chat.reference.resolve', selectedReference)).result.title, 'Exact reference renamed');
   assert.ok(notifications.every((event) => event.type === 'session_navigation'));
   assert.equal((await rpc('shutdown')).result.ok, true);
   await exited;
   assert.equal(child.exitCode, 0);
   console.log(
-    'SESSION_ARCHIVES_WIRE_OK: production JSONL four-backend archive/restore, scoped cross-project pagination, persisted identity, ordered metadata notifications and clean shutdown. No Agent/model initialization.',
+    'SESSION_ARCHIVES_WIRE_OK: production JSONL four-backend archive/restore, exact conversation references, scoped cross-project pagination, persisted identity, ordered metadata notifications and clean shutdown. No Agent/model initialization.',
   );
 } finally {
   if (child.exitCode === null && child.signalCode === null) {

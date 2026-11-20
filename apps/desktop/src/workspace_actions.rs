@@ -238,6 +238,7 @@ impl HiveApp {
                     };
                     if let Ok(workspaces) = refreshed {
                         this.workspaces = workspaces;
+                        this.mark_global_inbox_workspaces_loaded();
                     }
                     if removed {
                         this.forget_removed_workspace(&id, &session_ids, window, cx);

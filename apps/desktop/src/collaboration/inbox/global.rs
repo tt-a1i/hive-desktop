@@ -2,10 +2,13 @@
 mod badge;
 #[path = "intro.rs"]
 mod intro;
+#[path = "view_prefs.rs"]
+mod view_prefs;
 
 use self::badge::BadgeItem;
 pub(in crate::collaboration) use self::badge::InboxBadge;
 use self::intro::{IntroMode, IntroProgress};
+use self::view_prefs::ViewPreferences;
 use super::placement::{InboxSections, RowId, RowPlacement};
 use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
@@ -40,11 +43,10 @@ use std::{
 
 #[derive(Clone, Default)]
 pub(in crate::collaboration) struct GlobalInboxView {
-    project_filter: Option<String>,
-    show_waiting: bool,
-    show_snoozed: bool,
+    preferences: ViewPreferences,
     reading_position: Option<ReadingPosition>,
     intro_progress: IntroProgress,
+    workspaces_loaded: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -67,9 +69,7 @@ struct GlobalInbox {
     app: WeakEntity<HiveApp>,
     connection: u64,
     projects: HashMap<String, ProjectInbox>,
-    project_filter: Option<String>,
-    show_waiting: bool,
-    show_snoozed: bool,
+    preferences: ViewPreferences,
     placement: RowPlacement,
     row_focus: HashMap<RowId, (FocusHandle, [Subscription; 2])>,
     row_ids: Vec<Option<RowId>>,
@@ -139,6 +139,17 @@ pub(super) async fn read_list<T: DeserializeOwned>(
 }
 
 impl HiveApp {
+    pub(crate) fn mark_global_inbox_workspaces_loaded(&mut self) {
+        self.collaboration.inbox_view.workspaces_loaded = Some(self.connection_generation);
+    }
+
+    fn global_inbox_workspace_list(&self) -> Option<&[Workspace]> {
+        (self.connected
+            && !self.restarting
+            && self.collaboration.inbox_view.workspaces_loaded == Some(self.connection_generation))
+        .then_some(self.workspaces.as_slice())
+    }
+
     pub(crate) fn global_inbox_button(&self, id: &'static str, cx: &Context<Self>) -> Button {
         let attention = self.has_new_global_inbox_items(cx);
         let title = tr("跨项目收件箱");
@@ -175,6 +186,16 @@ impl HiveApp {
         let connection = self.connection_generation;
         let mut saved = self.collaboration.inbox_view.clone();
         let root = self.data_dir.as_deref();
+        let root_changed = saved.preferences.restore_root(root);
+        let project_removed = saved
+            .preferences
+            .forget_unavailable(self.global_inbox_workspace_list());
+        if !project_removed {
+            saved.preferences.retry_save();
+        }
+        if root_changed || project_removed {
+            saved.reading_position = None;
+        }
         let intro_save_failed = saved.intro_progress.save_pending(root).is_err();
         let intro = saved
             .intro_progress
@@ -183,12 +204,22 @@ impl HiveApp {
         let new_items = self.unseen_global_inbox_items().collect();
         let inbox = cx.new(move |cx: &mut Context<GlobalInbox>| {
             cx.observe(&parent, |this, parent, cx| {
+                let app = parent.read(cx);
                 if this
                     .intro_progress
-                    .save_pending(parent.read(cx).data_dir.as_deref())
+                    .save_pending(app.data_dir.as_deref())
                     .is_err()
                 {
                     this.intro_save_failed = true;
+                }
+                if !this.dismissed {
+                    let root_changed = this.preferences.restore_root(app.data_dir.as_deref());
+                    let project_removed = this
+                        .preferences
+                        .forget_unavailable(app.global_inbox_workspace_list());
+                    if root_changed || project_removed {
+                        this.clear_project_position();
+                    }
                 }
                 cx.notify();
             })
@@ -197,9 +228,7 @@ impl HiveApp {
                 app: parent.downgrade(),
                 connection,
                 projects: HashMap::new(),
-                project_filter: saved.project_filter,
-                show_waiting: saved.show_waiting,
-                show_snoozed: saved.show_snoozed,
+                preferences: saved.preferences,
                 placement: RowPlacement::default(),
                 row_focus: HashMap::new(),
                 row_ids: Vec::new(),
@@ -401,21 +430,19 @@ impl GlobalInbox {
         self.dismissed = true;
         self.undo.clear();
         self.undo_review_item = None;
-        let saved = GlobalInboxView {
-            project_filter: self.project_filter.clone(),
-            show_waiting: self.show_waiting,
-            show_snoozed: self.show_snoozed,
-            reading_position: if let Some(review) = &self.reviewing_new {
-                review.previous_position.clone()
-            } else {
-                self.reading_position()
-                    .or_else(|| self.restore_position.clone())
-            },
-            intro_progress: self.intro_progress.clone(),
-        };
         if let Some(app) = self.app.upgrade() {
             app.update(cx, |app, cx| {
-                app.collaboration.inbox_view = saved;
+                app.collaboration.inbox_view = GlobalInboxView {
+                    preferences: self.preferences.clone(),
+                    reading_position: if let Some(review) = &self.reviewing_new {
+                        review.previous_position.clone()
+                    } else {
+                        self.reading_position()
+                            .or_else(|| self.restore_position.clone())
+                    },
+                    intro_progress: self.intro_progress.clone(),
+                    workspaces_loaded: app.collaboration.inbox_view.workspaces_loaded,
+                };
                 app.collaboration.inbox_badge.dialog = None;
                 cx.notify();
             });
@@ -427,8 +454,9 @@ impl GlobalInbox {
             return;
         };
         let app = app.read(cx);
-        if self.dismissed
-            || self.project_filter == project
+        if !self.is_current(self.connection, cx)
+            || app.global_inbox_workspace_list().is_none()
+            || self.preferences.values.project_filter == project
             || (project.is_some()
                 && selected_project(
                     &app.workspaces,
@@ -439,11 +467,20 @@ impl GlobalInbox {
         {
             return;
         }
-        self.project_filter = project;
-        self.restore_position = None;
-        self.placement.clear();
-        self.scroll.set_offset(point(px(0.), px(0.)));
+        self.preferences.values.project_filter = project;
+        self.preferences.save_changed();
+        self.clear_project_position();
         cx.notify();
+    }
+
+    fn clear_project_position(&mut self) {
+        self.restore_position = None;
+        if let Some(review) = self.reviewing_new.as_mut() {
+            review.previous_position = None;
+        } else {
+            self.placement.clear();
+            self.scroll.set_offset(point(px(0.), px(0.)));
+        }
     }
 
     fn poll(&self, cx: &mut Context<Self>) {
@@ -762,35 +799,34 @@ impl Render for GlobalInbox {
             return body;
         };
         let app = parent.read(cx);
-        let ready = self.is_current(self.connection, cx);
+        let connected = self.is_current(self.connection, cx);
+        let ready = connected && app.global_inbox_workspace_list().is_some();
         let reviewing = self.reviewing_new.is_some();
         let removing = app.workspace_removing.as_deref();
-        let selected = selected_project(&app.workspaces, removing, self.project_filter.as_deref());
-        if ready && selected.is_none() && self.project_filter.take().is_some() {
-            self.restore_position = None;
-            if let Some(review) = self.reviewing_new.as_mut() {
-                review.previous_position = None;
-            } else {
-                self.placement.clear();
-                self.scroll.set_offset(point(px(0.), px(0.)));
-            }
-        }
-        let selected = selected.filter(|_| !reviewing);
-        let selected_title = selected.map(|project| display_project(project, &app.workspaces));
+        let selected = self
+            .preferences
+            .values
+            .project_filter
+            .as_deref()
+            .filter(|_| !reviewing);
+        let selected_title = selected_project(&app.workspaces, None, selected)
+            .map(|project| display_project(project, &app.workspaces));
         let available: Vec<_> = app
             .workspaces
             .iter()
             .filter(|workspace| removing != Some(workspace.id.as_str()))
             .cloned()
             .collect();
-        self.new_items.retain(|item| {
-            available
-                .iter()
-                .any(|project| project.id == item.workspace())
-        });
+        if ready {
+            self.new_items.retain(|item| {
+                app.workspaces
+                    .iter()
+                    .any(|project| project.id == item.workspace())
+            });
+        }
         let projects: Vec<_> = available
             .iter()
-            .filter(|project| selected.is_none_or(|selected| project.id == selected.id))
+            .filter(|project| selected.is_none_or(|selected| project.id == selected))
             .collect();
         let now = now_ms();
         let rows: Vec<_> = if ready {
@@ -824,13 +860,13 @@ impl Render for GlobalInbox {
         let loading = projects
             .iter()
             .any(|project| !self.projects.contains_key(&project.id));
-        let status = if !ready {
+        let status = if !connected {
             Some("后台连接后将显示跨项目收件箱。")
-        } else if loading {
+        } else if !ready || loading {
             Some("正在读取收件箱…")
         } else if fresh.attention.is_empty()
             && fresh.waiting.is_empty()
-            && !(has_snoozed && self.show_snoozed)
+            && !(has_snoozed && self.preferences.values.show_snoozed)
             && projects.iter().all(|workspace| {
                 self.projects
                     .get(&workspace.id)
@@ -857,9 +893,12 @@ impl Render for GlobalInbox {
                     .find_map(|(id, (focus, _))| focus.contains_focused(window, cx).then_some(id))
             })
             .flatten();
-        let sections = self
-            .placement
-            .arrange(fresh, focused, self.show_waiting, self.show_snoozed);
+        let sections = self.placement.arrange(
+            fresh,
+            focused,
+            self.preferences.values.show_waiting,
+            self.preferences.values.show_snoozed,
+        );
         self.row_focus.retain(|id, _| self.placement.shows(id));
         for id in self.placement.visible_rows() {
             self.row_focus.entry(id.clone()).or_insert_with(|| {
@@ -892,7 +931,7 @@ impl Render for GlobalInbox {
                 .justify_between()
                 .flex_wrap()
                 .gap_2();
-            if available.len() > 1 {
+            if ready {
                 let all = tr("全部项目");
                 let title = selected_title.unwrap_or_else(|| all.to_owned());
                 let tooltip = format!("{} · {title}", tr("按项目筛选收件箱"));
@@ -904,7 +943,7 @@ impl Render for GlobalInbox {
                         )
                     }))
                     .collect();
-                let current = self.project_filter.clone();
+                let current = self.preferences.values.project_filter.clone();
                 let inbox = cx.weak_entity();
                 controls = controls.child(
                     Button::new("global-inbox-project-filter")
@@ -940,14 +979,18 @@ impl Render for GlobalInbox {
                 );
             }
             if has_snoozed {
-                controls = controls.child(toggle_button(self.show_snoozed).on_click(cx.listener(
-                    |this, _, _, cx| {
-                        this.show_snoozed = !this.show_snoozed;
-                        this.restore_position = None;
-                        this.placement.clear();
-                        cx.notify();
-                    },
-                )));
+                controls = controls.child(
+                    toggle_button(self.preferences.values.show_snoozed).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.preferences.values.show_snoozed =
+                                !this.preferences.values.show_snoozed;
+                            this.preferences.save_changed();
+                            this.restore_position = None;
+                            this.placement.clear();
+                            cx.notify();
+                        },
+                    )),
+                );
             }
             if !self.new_items.is_empty() {
                 controls = controls.child(
@@ -966,6 +1009,18 @@ impl Render for GlobalInbox {
             body = body.child(
                 div()
                     .id("inbox-guide-persistence-error")
+                    .role(Role::Alert)
+                    .aria_label(message)
+                    .text_sm()
+                    .text_color(Color::Error.get(cx))
+                    .child(message),
+            );
+        }
+        if let Some(error) = self.preferences.error {
+            let message = tr(error);
+            body = body.child(
+                div()
+                    .id("inbox-view-preferences-error")
                     .role(Role::Alert)
                     .aria_label(message)
                     .text_sm()
@@ -1158,7 +1213,7 @@ impl Render for GlobalInbox {
         }
         if !sections.waiting.is_empty() {
             let count = sections.waiting.len();
-            let (icon, action) = if self.show_waiting {
+            let (icon, action) = if self.preferences.values.show_waiting {
                 (Glyph::ChevronDown, tr("收起等待 Agent 的事项"))
             } else {
                 (Glyph::ChevronRight, tr("展开等待 Agent 的事项"))
@@ -1176,7 +1231,9 @@ impl Render for GlobalInbox {
                         .label(format!("{} ({count})", tr("等待 Agent")))
                         .accessibility_label(format!("{action} ({count})"))
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.show_waiting = !this.show_waiting;
+                            this.preferences.values.show_waiting =
+                                !this.preferences.values.show_waiting;
+                            this.preferences.save_changed();
                             this.restore_position = None;
                             this.placement.clear();
                             cx.notify();
@@ -1184,11 +1241,11 @@ impl Render for GlobalInbox {
                 )
                 .into_any_element(),
             ));
-            if self.show_waiting {
+            if self.preferences.values.show_waiting {
                 items.extend(sections.waiting.into_iter().filter_map(&mut render_row));
             }
         }
-        if self.show_snoozed && has_snoozed {
+        if self.preferences.values.show_snoozed && has_snoozed {
             items.push((
                 None,
                 section_title(

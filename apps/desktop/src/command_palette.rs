@@ -20,6 +20,7 @@ use gpui_kit::{
 #[derive(Clone)]
 enum PaletteAction {
     NewSession,
+    OpenConversationReference,
     CreateConversation {
         project: Option<String>,
         backend: &'static str,
@@ -233,6 +234,14 @@ impl HiveApp {
         });
         items.push(PaletteItem {
             group: "操作",
+            title: tr("打开会话引用").to_owned(),
+            subtitle: None,
+            keywords: "open conversation thread link reference 打开 会话 引用".into(),
+            icon: Glyph::Link,
+            action: PaletteAction::OpenConversationReference,
+        });
+        items.push(PaletteItem {
+            group: "操作",
             title: tr("打开或收起侧栏").to_owned(),
             subtitle: None,
             keywords: "sidebar navigation toggle 侧栏 导航".into(),
@@ -377,6 +386,7 @@ impl CommandPalette {
         let _ = app.update(cx, |this, cx| {
             match action {
                 PaletteAction::NewSession => this.start_new_conversation(false, window, cx),
+                PaletteAction::OpenConversationReference => this.open_conversation_reference(window, cx),
                 PaletteAction::CreateConversation { project, backend, source_revision } => {
                     if this.open_request == source_revision && this.can_start_new_conversation() {
                         this.create_new_session(project, backend, None, Some(window), cx);
@@ -501,18 +511,18 @@ impl Render for CommandPalette {
             .when(self.kind == PaletteKind::Commands, |view| view.on_key_down(cx.listener(Self::on_key_down)))
             .child(
                 div()
-                    .when(self.kind != PaletteKind::Commands, |view| {
-                        view.capture_action(cx.listener(|this, action: &Enter, window, cx| {
-                            if !action.secondary && !action.shift && !this.has_marked_text(window, cx) {
-                                cx.stop_propagation();
-                                let action = this.filtered_items(cx).get(this.selected).map(|item| item.action.clone());
-                                if let Some(action) = action {
-                                    this.execute(action, window, cx);
-                                }
+                    .capture_action(cx.listener(|this, action: &Enter, window, cx| {
+                        if !action.secondary && !action.shift && !this.has_marked_text(window, cx) {
+                            cx.stop_propagation();
+                            let action = this.filtered_items(cx).get(this.selected).map(|item| item.action.clone());
+                            if let Some(action) = action {
+                                this.execute(action, window, cx);
                             }
-                        }))
-                        .capture_action(cx.listener(|this, _: &MoveDown, window, cx| this.select_project_row(true, window, cx)))
-                        .capture_action(cx.listener(|this, _: &MoveUp, window, cx| this.select_project_row(false, window, cx)))
+                        }
+                    }))
+                    .when(self.kind != PaletteKind::Commands, |view| {
+                        view.capture_action(cx.listener(|this, _: &MoveDown, window, cx| this.select_project_row(true, window, cx)))
+                            .capture_action(cx.listener(|this, _: &MoveUp, window, cx| this.select_project_row(false, window, cx)))
                     })
                     .child(Input::new(&self.query)
                         .aria_label(self.kind.labels().1)

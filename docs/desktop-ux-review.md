@@ -149,8 +149,21 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 在停靠面板打开工作树的同名文件，修改磁盘内容后添加会提示重新读取，且没有新附件。重新读取后成功添加，核对附件来自准确的工作树，字节与重新显示的内容一致。停靠面板保持打开。900 像素窄窗从展开预览添加后回到编辑区，原文字和已有附件都保留。证据在 `.artifacts/preview-attach-qa`。
 - 225 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 MSVC 交叉类型检查、TypeScript 检查、编译后的附件协议专项及项目文件和工作树回归通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第十二批
+
+本轮从 Hive Desktop `a7034d1` 开始。参考默认分支为 T3 Code `068332c`、Cindy `9602463`、Beluga `45a484b`，Hive 上游为 `18861b8`。
+
+- **复制会话引用，并用快捷命令打开。** 从标题栏或侧栏会话菜单复制，在快捷命令中选择「打开会话引用」。引用只含项目和会话标识，按标识查找；改名或归档后仍可使用。等待期间关闭输入面板或切走时，旧回包不会改变视图。 [T3 Code 查找和引用会话](https://github.com/pingdotgg/t3code/blob/068332c603ce5ca40ad5a96a09cffa34ebd05dff/docs/user/thread-sidebar.md#L235-L242)
+- **重启后保留收件箱筛选。** 跨项目收件箱保存所选项目，以及「等待 Agent」和「已暂缓」的展开状态。后台确认项目已移除后回到全部项目，保留所选区段。 [Cindy 保留收件箱筛选](https://github.com/makecindy/cindy/blob/96024635d21ad07772501610c933f4d34536d09f/docs/product-rules/task-inbox.md#L17-L24)
+- **在文件管理器中选中当前文件。** 停靠面板和展开阅读都提供入口。二进制文件和超过预览限制的文件可以从停靠面板定位。Hive 核对工作树与选中文件后交给系统文件管理器，切换工作树、文件或关闭阅读窗口会取消尚未完成的定位。 [Beluga 定位本地文件](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/FilesView.tsx#L95-L117)
+
+- macOS 从两个项目的同名会话中复制 Beta 的引用，再改名并冷启动。通过快捷命令打开，后台按两个标识定位到已改名的 Beta。返回 Alpha 后草稿文字和原附件字节完整。另用 Return 进入引用输入框，提交后在延迟回包前按 Esc 并返回 Alpha，旧结果没有触发再次打开。证据在 `.artifacts/reference-twelve-qa`。
+- macOS 选择 Atlas 并展开「等待 Agent」和「已暂缓」，重启后确认 Atlas 筛选和暂缓事项可见。移除测试项目后再次启动，收件箱回到全部项目。两次重启保留了两处展开设置，等待区段状态通过持久化记录核对。证据在 `.artifacts/inbox-layout-qa`。
+- macOS 从停靠面板定位项目与独立工作树里超过预览限制的同名二进制文件。Finder 实际选中各自的路径，两处文件名均含中文、空格和 `&`。从展开预览也定位了准确的工作树文本文件。延迟四秒解析二进制文件期间切到另一工作树，Finder 仍选中文本文件。证据在 `.artifacts/finder-reveal-qa`。
+- 232 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 MSVC 交叉类型检查、TypeScript 检查，编译后的精确会话引用、会话归档和项目文件协议回归通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **复制会话引用，并用快捷命令打开。** 给跨项目或常回看的会话保存引用。测试两个项目同名会话、改名和重启后仍打开准确的会话。贴入无效引用或等待期间改看别处时，不改变当前会话。 [T3 Code 查找和引用会话](https://github.com/pingdotgg/t3code/blob/068332c603ce5ca40ad5a96a09cffa34ebd05dff/docs/user/thread-sidebar.md#L235-L242)
-- **重启后保留收件箱筛选。** 关闭再打开 Hive，跨项目收件箱恢复上一次项目和展开区段。原项目移除后回到全部项目。验收筛选仍明确可见，也能直接切回全部。 [Cindy 保留收件箱筛选](https://github.com/makecindy/cindy/blob/55e3ad864ccaa5547adb28a3d16b71aa6bc30d7c/docs/product-rules/task-inbox.md#L17-L24)
-- **在文件管理器中选中当前文件。** 从文件面板定位当前工作树的同名文件，连不能预览的二进制文件和超大文件也有入口。解析路径期间切换范围时取消旧请求。 [Beluga 定位本地文件](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/FilesView.tsx#L95-L117)
+- **发送后继续撰写下一条草稿。** 给当前会话发送首条消息，确认后台接受后打开新的空编辑区。验收原会话照常接收回复、下一条文字单独保存，以及失败或回包中断时能够准确恢复。 [T3 Code 后台发送](https://github.com/pingdotgg/t3code/blob/068332c603ce5ca40ad5a96a09cffa34ebd05dff/docs/user/thread-sidebar.md#L49-L54)
+- **按成员筛选收件箱。** 组合项目与成员筛选，从多个同名成员中定位准确的派单和会话。用两项目和同名成员复验，再加入新事项，核对筛选与恢复。 [Cindy 组合筛选](https://github.com/makecindy/cindy/blob/96024635d21ad07772501610c933f4d34536d09f/docs/product-rules/task-inbox.md#L20-L23)
+- **复制正在预览文件的路径。** 从紧凑或展开预览复制准确的绝对路径或项目相对路径。在同名项目文件和工作树文件间切换，核对剪贴板内容以及旧定位回包的处理。 [Beluga 复制文件路径](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/FilesView.tsx#L95-L117)

@@ -126,6 +126,7 @@ impl HiveApp {
         let worktree_app = app.clone();
         let scratch_session = session.clone();
         let scratch_app = app.clone();
+        let reference = crate::conversation_reference::ConversationReference::for_session(&session);
         let linked = app
             .upgrade()
             .is_some_and(|app| app.read(cx).scratch_project_target(&session).is_some());
@@ -161,6 +162,11 @@ impl HiveApp {
                 });
             }),
         )
+        .when_some(reference, |menu, reference| {
+            menu.item(PopupMenuItem::new(tr("复制会话引用")).on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(reference.clipboard_text()));
+            }))
+        })
         .when(
             worktree_session.execution.as_ref().is_some_and(|execution| execution.kind == "worktree"),
             |menu| menu.item(

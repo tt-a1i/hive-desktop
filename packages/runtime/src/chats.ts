@@ -374,6 +374,11 @@ export class Chats implements StructuredSessionPort {
   }
   capabilities(id:string){const record=this.index.get(id),live=this.live.get(id);return record.backend==='acp'?{...acpCapabilities(live?.handle as AcpSessionHandle|undefined,!!record.sessionFile),...(!live&&record.capabilities&&{lastObserved:record.capabilities})}:agentCapabilities(record.backend);}
   list(workspaceId: string) { return this.index.list(workspaceId); }
+  conversationReference(workspaceId: string, sessionId: string): ChatRecord | null {
+    if (this.closing || this.removing.has(workspaceId)) return null;
+    const session = this.index.peek(sessionId);
+    return session?.workspaceId === workspaceId ? session : null;
+  }
   async importNativeSessions(workspace: WorkspaceSummary, sources: NativeImportSession[]) {
     return this.withWorkspace(workspace.id, async () => {
       this.assertWorkspaceAvailable(workspace.id);

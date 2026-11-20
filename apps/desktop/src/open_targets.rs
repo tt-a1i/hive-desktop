@@ -304,6 +304,15 @@ pub(crate) struct ResolvedEditorFile {
 }
 
 impl ResolvedEditorFile {
+    pub(crate) fn into_validated_path(
+        self,
+        scope_directory: Option<&Path>,
+        relative: &str,
+    ) -> Result<PathBuf, String> {
+        self.validate(scope_directory, relative)?;
+        Ok(self.path)
+    }
+
     fn validate(&self, scope_directory: Option<&Path>, relative: &str) -> Result<(), String> {
         let invalid = || tr("文件已更改、不可访问或不属于当前目录。").to_owned();
         if relative.contains('\\')
@@ -372,6 +381,30 @@ mod file_tests {
             assert!(resolved.validate(Some(&root), relative).is_err());
         }
     }
+
+    #[test]
+    fn resolved_file_manager_path_does_not_require_a_text_preview() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("worktree");
+        fs::create_dir(&root).unwrap();
+        let relative = "报告 & data.bin";
+        let path = root.join(relative);
+        fs::write(&path, [0]).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(1024 * 1024 + 1)
+            .unwrap();
+        assert_eq!(
+            ResolvedEditorFile {
+                root: root.clone(),
+                path: path.clone(),
+            }
+            .into_validated_path(Some(&root), relative),
+            Ok(path)
+        );
+    }
 }
 
 pub(crate) fn prepare_editor_file(
@@ -380,11 +413,11 @@ pub(crate) fn prepare_editor_file(
     scope_directory: Option<&Path>,
     relative: &str,
 ) -> Result<Command, String> {
-    file.validate(scope_directory, relative)?;
+    let path = file.into_validated_path(scope_directory, relative)?;
     if !app.is_absolute() || !app.exists() {
         return Err(tr("目标应用未安装").to_owned());
     }
-    platform::file_command(app, &file.path)
+    platform::file_command(app, &path)
 }
 
 pub(crate) fn start_editor_file(mut command: Command) -> Result<Option<Child>, String> {
