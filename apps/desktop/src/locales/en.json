@@ -2844,5 +2844,9 @@
   "仅显示最近 20 条工作流失败": "Showing the 20 most recent workflow failures",
   "无法打开工作流运行": "Could not open the workflow run",
   "复制文件文本": "Copy file text",
-  "已复制文件文本": "File text copied"
+  "已复制文件文本": "File text copied",
+  "记录的工作树分支": "Recorded worktree branch",
+  "放大图片": "Zoom in",
+  "缩小图片": "Zoom out",
+  "适应": "Fit"
 }

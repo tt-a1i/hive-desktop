@@ -452,6 +452,14 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       exact(params, ['workspaceId']);
       return hive.inboxWorkflowFailures(text(params, 'workspaceId'));
     }
+    case 'inbox.workflowFailureBadge': {
+      exact(params, ['workspaceIds']);
+      const ids = params.workspaceIds;
+      if (!Array.isArray(ids) || ids.length > 32 || !ids.every(id => typeof id === 'string' && id.length <= 64)) {
+        throw new Error('Expected up to 32 inbox workspace identities');
+      }
+      return hive.inboxWorkflowFailureBadge(ids);
+    }
     case 'inbox.dispatchMessage': {
       exact(params, ['workspaceId', 'dispatchId', 'messageId']);
       return runtime.hive.inboxDispatchMessage(text(params, 'workspaceId'), text(params, 'dispatchId'), text(params, 'messageId'));

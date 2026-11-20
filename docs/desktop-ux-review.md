@@ -476,8 +476,22 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - 生产运行时验证了 20 条上限、按结束时间排序、项目范围、排除未结束和子运行、区分两次同名失败、准确读取错误与日志，以及从原工作流列表查到更早运行。Rust 专项核对运行 ID 与项目匹配，并核对补丁增删两侧和上下文的行号，排除补丁元数据。
 - 314 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、桌面视图、Hive HTTP 与 SQLite、文件和 Git 工作区专项及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
 
+## 2026-11-21 第三十五批
+
+本轮从 Hive Desktop `01ea31a` 开始。参考 T3 Code `f2ec853`、Cindy `1db8327`、Beluga `eed1b7e`。Hive 上游 `main` 为 `18861b8`。
+
+- **跨项目收件箱和新事项提示可收到工作流失败。** 收件箱关闭时按批读取各项目的失败运行 ID。打开后显示所属项目及运行名称，可进入该项目的准确运行和原日志。返回收件箱时恢复原筛选与阅读位置。 [Cindy 失败分类与范围](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/docs/product-rules/task-inbox.md#L29-L50)
+- **按记录的工作树分支查找会话。** 全局搜索、项目侧栏和归档搜索会匹配已保存的工作树分支并在结果上显示它。结果使用原会话和工作树标识定位。这里的分支是创建工作树时保存的记录。 [T3 Code 按分支查找](https://github.com/pingdotgg/t3code/blob/f2ec853fbbb6ed84f6c08aa156d3b7d9e9f7385f/docs/user/thread-sidebar.md#L224-L232)
+- **展开图片支持逐档缩放。** 图片可在适应窗口、100% 与更大或更小的倍率间切换。100% 对应设备原像素。缩放以当前视野中心为锚点，靠近边缘时按可滚动范围调整。关闭展开阅读器后回到原紧凑预览。 [Beluga 图片缩放](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/views/reader/FileReader.tsx#L67-L107)
+
+- macOS 关闭收件箱后，在 Beacon 写入同名失败运行，侧栏出现新事项提示。点击后只读取 Beacon 的指定运行、派单和原日志。返回保留「新事项」，离开后恢复 Atlas 筛选、原行坐标和原草稿。证据在 `.artifacts/batch35-inbox-qa`。
+- macOS 在两个同名会话中，用 `Cmd+K` 搜索 `review/beta-481` 只显示 Beta，并标明分支。按 `Return` 发出准确的 Beta 会话打开请求。离线归档夹具中的会话后，归档页面仍可按同一分支找到它。另用侧栏的全局搜索从 Alpha 跳到 Beta，Beta 的输入框为空，点「后退」回到 Alpha 后原草稿仍在。证据在 `.artifacts/batch35-branch-qa`。
+- macOS Retina 实窗将 3,200 × 1,800 像素的图片按适应窗口、75%、100%、150% 再回到适应窗口，返回后紧凑预览仍为适应窗口，期间只请求一次图片。临时布局记录确认 100% 是 1,600 × 900 逻辑像素。方向键平移再放大到 150% 时，视野中心对应图片上的同一点。证据在 `.artifacts/batch35-zoom-qa`。
+- 运行时验收关闭后的提示每批最多查询 32 个项目，每个最多返回最近 20 个失败运行 ID。Rust 验证查询遗漏或无效只保留对应项目的上次结果，确认空结果只清除该项目。分支检索专项覆盖同名会话、两个真实工作树、项目过滤、归档及原工作树标识。缩放专项核对 100% 设备像素、从适应窗口进入档位、滚动后保持中心及两轴边缘裁限。
+- 318 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、桌面视图、Hive HTTP 与 SQLite、会话搜索和归档及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **从跨项目收件箱收到工作流失败提醒。** 目前失败只在项目收件箱里显示。验收保留 Atlas 的草稿并关闭收件箱，在 Beacon 制造同名失败，确认新事项提示与原日志都指向 Beacon，返回保留之前的筛选和阅读位置。后台读取范围需要有上限。 [Cindy 失败分类与范围](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/docs/product-rules/task-inbox.md#L29-L50)
-- **按工作树记录的分支查找会话。** 现有搜索会匹配会话名、项目和正文，也已能从结果打开准确工作树。验收两个同名且正文相同的会话，只输入某个工作树的记录分支，结果显示分支并打开对应工作树的会话。历史会话仍可按这一记录查找。 [T3 Code 按分支查找](https://github.com/pingdotgg/t3code/blob/8d37736cddce74e7cc7ff965b26b1d3ea1fbcd7d/docs/user/thread-sidebar.md#L224-L232)
-- **在展开图片中逐档放大。** 当前只有适应窗口和原尺寸。验收大图的中间档、原尺寸及放大档，显示倍率并保留正在看的区域，能回到适应窗口。返回紧凑预览后保持原位置，整个流程沿用原图片读取。 [Beluga 图片缩放](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/views/reader/FileReader.tsx#L67-L107)
+- **把运行时重启中断的工作流放进两个收件箱。** Hive 会在启动时把尚未结束的运行标为中断，当前收件箱只读取失败。验收隔离运行时冷启动后，原运行 ID、所属项目和原日志均保留。列表明确显示中断，排除手动停止、已完成和子运行。 [Cindy 保留中止轮次](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/docs/product-rules/archive-pauses-automations.md#L4-L15) · [Hive 冷启动恢复](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/workflow-run-store.ts#L209-L215)
+- **在模型搜索框用方向键和 Enter 选模型。** 目前快捷键只能打开选择器并聚焦搜索。验收用两个匹配模型，方向键定位第二项，Enter 按提供商和模型 ID 提交一次，保留原草稿和光标，重启后选择仍有效。 [T3 Code 模型键盘选择](https://github.com/pingdotgg/t3code/blob/f2ec853fbbb6ed84f6c08aa156d3b7d9e9f7385f/docs/user/keybindings.md#L46-L50)
+- **从 Markdown 预览打开当前工作树里的相对链接。** 现在 `./guides/setup%20guide.md` 无法打开。验收两个工作树里的同名目标，通过链接只打开当前工作树的准确内容，保留文件面板查询，并拦截越出当前目录范围的路径。 [Beluga 相对链接解析](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/md-paths.ts#L77-L92)

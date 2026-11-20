@@ -4,6 +4,9 @@ use crate::{
     language::{english, tr},
     palette::{format_session_time, Color},
     protocol::SessionHit,
+    sessions::search::{
+        recorded_worktree_branch, recorded_worktree_branch_label, recorded_worktree_branch_row,
+    },
 };
 use gpui_kit::{
     assets::IconName as Glyph,
@@ -338,6 +341,11 @@ impl HiveApp {
                                 "{title} · {} · {}",
                                 hit.workspace_name, hit.workspace_path
                             );
+                            let branch = recorded_worktree_branch(&hit.session);
+                            if let Some(branch) = branch {
+                                accessible_result.push('\n');
+                                accessible_result.push_str(&recorded_worktree_branch_label(branch));
+                            }
                             if let Some(snippet) = &snippet {
                                 accessible_result.push('\n');
                                 accessible_result.push_str(snippet);
@@ -393,6 +401,9 @@ impl HiveApp {
                                                         )
                                                     }),
                                             )
+                                            .when_some(branch, |col, branch| {
+                                                col.child(recorded_worktree_branch_row(branch, cx))
+                                            })
                                             .when_some(snippet, |col, snippet| {
                                                 col.child(
                                                     div()

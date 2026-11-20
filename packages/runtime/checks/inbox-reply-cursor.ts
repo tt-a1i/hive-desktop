@@ -479,6 +479,22 @@ try {
   assert.ok(full.runs.some(run => run.id === seededFailures[0]), 'Older runs remain in Workflows');
   assert.deepEqual(await readFailures(workspace.id), failures, 'Read-only inspection keeps failures intact');
   console.log('INBOX_WORKFLOW_FAILURES_OK: bounded current workspace settled root failures, exact same-name run error and logs, older history preserved');
+  const compactWorkflowFailures = (workspaceIds: string[]) => wire!.request<{
+    workspaceId: string; runIds: string[];
+  }[]>('inbox.workflowFailureBadge', {workspaceIds});
+  assert.deepEqual(await compactWorkflowFailures([workspace.id, foreign.id, workspace.id, randomUUID()]), [
+    {workspaceId: workspace.id, runIds: seededFailures.slice(1).reverse()},
+    {workspaceId: foreign.id, runIds: foreignFailures.runs.map(run => run.id)},
+  ]);
+  await assert.rejects(compactWorkflowFailures(Array.from({length:33}, () => randomUUID())));
+  const thirdPath = join(root, 'without-workflow-failures');
+  await mkdir(thirdPath);
+  const without = await wire.request<{id: string}>('hive.request', {
+    method: 'POST', path: '/api/workspaces', body: {path: thirdPath, name: 'No failures', autostart_orchestrator: false},
+  });
+  assert.deepEqual(await compactWorkflowFailures([without.id, randomUUID()]), [{workspaceId: without.id, runIds: []}]);
+  assert.deepEqual(await readFailures(foreign.id), foreignFailures);
+  console.log('INBOX_WORKFLOW_BADGE_OK: compact capped identities for both workspaces, verified empty versus omitted, no writes');
 } finally {
   await wire?.close();
   await rm(root, {recursive: true, force: true});

@@ -28,12 +28,18 @@ pub(super) enum BadgeItem {
         workspace: String,
         session: String,
     },
+    WorkflowFailure {
+        workspace: String,
+        run: String,
+    },
 }
 
 impl BadgeItem {
     pub(super) fn workspace(&self) -> &str {
         match self {
-            Self::Question { workspace, .. } | Self::UnreadSession { workspace, .. } => workspace,
+            Self::Question { workspace, .. }
+            | Self::UnreadSession { workspace, .. }
+            | Self::WorkflowFailure { workspace, .. } => workspace,
         }
     }
 
@@ -54,9 +60,64 @@ impl BadgeItem {
                     session: session.id.clone(),
                 })
             }
+            Destination::WorkflowRun(run) if entry.priority == Priority::NeedsUser => {
+                Some(Self::WorkflowFailure {
+                    workspace: workspace.into(),
+                    run: run.clone(),
+                })
+            }
             _ => None,
         }
     }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkflowFailureBadge {
+    workspace_id: String,
+    run_ids: Vec<String>,
+}
+
+fn checked_workflow_badges(
+    scope: &[String],
+    response: Vec<WorkflowFailureBadge>,
+) -> BTreeMap<String, Vec<String>> {
+    let mut checked = BTreeMap::new();
+    for snapshot in response {
+        if !scope.contains(&snapshot.workspace_id) {
+            continue;
+        }
+        let unique: HashSet<_> = snapshot.run_ids.iter().collect();
+        let valid = unique.len() == snapshot.run_ids.len()
+            && unique.len() <= 20
+            && unique
+                .into_iter()
+                .all(|id| uuid::Uuid::try_parse(id).is_ok());
+        checked
+            .entry(snapshot.workspace_id)
+            .and_modify(|duplicate| *duplicate = None)
+            .or_insert_with(|| valid.then_some(snapshot.run_ids));
+    }
+    checked
+        .into_iter()
+        .filter_map(|(workspace, runs)| Some((workspace, runs?)))
+        .collect()
+}
+
+async fn read_badge_workflows(
+    runtime: &Runtime,
+    scope: &[String],
+) -> BTreeMap<String, Vec<String>> {
+    let result = runtime
+        .request("inbox.workflowFailureBadge", json!({"workspaceIds":scope}))
+        .await;
+    let Some(response) = result
+        .ok()
+        .and_then(|value| serde_json::from_value(value).ok())
+    else {
+        return BTreeMap::new();
+    };
+    checked_workflow_badges(scope, response)
 }
 
 struct Question {
@@ -163,10 +224,25 @@ impl InboxBadge {
 
     fn replace(&mut self, scope: &[String], fresh: Option<HashSet<BadgeItem>>) {
         if let Some(fresh) = fresh {
-            self.pending
-                .retain(|item| !scope.iter().any(|id| id == item.workspace()));
+            self.pending.retain(|item| {
+                !matches!(item, BadgeItem::Question { workspace, .. }
+                if scope.contains(workspace))
+            });
             self.pending.extend(fresh);
         }
+    }
+
+    pub(super) fn remember_workflow_failures<'a>(
+        &mut self,
+        workspace: &str,
+        runs: impl IntoIterator<Item = &'a String>,
+    ) {
+        self.pending.retain(|item| !matches!(item, BadgeItem::WorkflowFailure { workspace: id, .. } if id == workspace));
+        self.pending
+            .extend(runs.into_iter().map(|id| BadgeItem::WorkflowFailure {
+                workspace: workspace.to_owned(),
+                run: id.clone(),
+            }));
     }
 
     pub(super) fn sees(&self, item: &BadgeItem) -> bool {
@@ -282,7 +358,10 @@ impl InboxBadge {
 
 #[cfg(test)]
 mod tests {
-    use super::{BadgeItem, InboxBadge, Question, collect_questions};
+    use super::{
+        BadgeItem, InboxBadge, Question, WorkflowFailureBadge, checked_workflow_badges,
+        collect_questions,
+    };
     use crate::collaboration::inbox::snoozes::{Reminder, Snoozes};
     use std::collections::HashSet;
 
@@ -292,6 +371,51 @@ mod tests {
             dispatch: "dispatch".into(),
             message: message.into(),
         }
+    }
+
+    #[test]
+    fn workflow_sweeps_keep_omitted_projects_and_do_not_replace_questions() {
+        let run = "11111111-0000-4000-8000-000012345678".to_owned();
+        let other = "22222222-0000-4000-8000-000012345678".to_owned();
+        let scope = ["atlas".into(), "beacon".into()];
+        let workflow = |workspace: &str, run: &str| BadgeItem::WorkflowFailure {
+            workspace: workspace.into(),
+            run: run.into(),
+        };
+        let mut badge = InboxBadge::default();
+        let question = item("atlas", "question");
+        badge.replace(&scope, Some(HashSet::from([question.clone()])));
+        badge.remember_workflow_failures("atlas", [&run]);
+        badge.remember_workflow_failures("beacon", [&other]);
+        let snapshot = |workspace: &str, run_ids| WorkflowFailureBadge {
+            workspace_id: workspace.into(),
+            run_ids,
+        };
+        let checked = checked_workflow_badges(
+            &scope,
+            vec![
+                snapshot("atlas", vec![]),
+                snapshot("beacon", vec![other.clone(), other.clone()]),
+                snapshot("outside", vec![run.clone()]),
+            ],
+        );
+        assert_eq!(checked.len(), 1);
+        for (workspace, runs) in checked {
+            badge.remember_workflow_failures(&workspace, &runs);
+        }
+        assert_eq!(
+            badge.pending,
+            HashSet::from([question, workflow("beacon", &other)])
+        );
+        badge.replace(&scope, Some(HashSet::new()));
+        assert_eq!(badge.pending, HashSet::from([workflow("beacon", &other)]));
+        assert!(
+            checked_workflow_badges(
+                &scope,
+                vec![snapshot("beacon", vec![other]), snapshot("beacon", vec![]),]
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -417,7 +541,8 @@ impl HiveApp {
             .iter()
             .filter(move |item| {
                 badge.connection == self.connection_generation
-                    && badge.question_visible(item, now_ms())
+                    && (matches!(item, BadgeItem::WorkflowFailure { .. })
+                        || badge.question_visible(item, now_ms()))
             })
             .cloned()
             .chain(
@@ -525,7 +650,11 @@ impl HiveApp {
                     break;
                 };
                 if let Some((runtime, connection, scope, root)) = plan {
-                    let mut fresh = read_badge_questions(&runtime, &scope).await;
+                    let (mut fresh, mut workflows) = smol::future::zip(
+                        read_badge_questions(&runtime, &scope),
+                        read_badge_workflows(&runtime, &scope),
+                    )
+                    .await;
                     let mut dispatch_inputs = BTreeMap::new();
                     for workspace in &scope {
                         if let Ok(saved) = Snoozes::load(&root, workspace) {
@@ -566,6 +695,11 @@ impl HiveApp {
                                     std::slice::from_ref(workspace),
                                     fresh.remove(workspace),
                                 );
+                                if let Some(runs) = workflows.remove(workspace) {
+                                    app.collaboration
+                                        .inbox_badge
+                                        .remember_workflow_failures(workspace, &runs);
+                                }
                                 if let Ok(saved) = Snoozes::load(root, workspace) {
                                     let saved = if let Some(inputs) = dispatch_inputs.get(workspace)
                                     {

@@ -1,6 +1,9 @@
 use super::*;
 use crate::{
-    sessions::search::{Page, search_page},
+    sessions::search::{
+        Page, recorded_worktree_branch, recorded_worktree_branch_label, recorded_worktree_branch_row,
+        search_page,
+    },
     transport::Runtime,
 };
 use gpui_kit::component::input::{InputEvent, InputState};
@@ -320,6 +323,11 @@ impl Render for SidebarSearch {
                             tr(hit.session.backend.label())
                         );
                         let mut label = format!("{title} · {identity}");
+                        let branch = recorded_worktree_branch(&hit.session);
+                        if let Some(branch) = branch {
+                            label.push('\n');
+                            label.push_str(&recorded_worktree_branch_label(branch));
+                        }
                         if let Some(body) = &hit.body_match {
                             label.push('\n');
                             label.push_str(&body.snippet);
@@ -363,6 +371,9 @@ impl Render for SidebarSearch {
                                                 .text_color(Color::Muted.get(cx))
                                                 .child(identity),
                                         )
+                                        .when_some(branch, |row, branch| {
+                                            row.child(recorded_worktree_branch_row(branch, cx))
+                                        })
                                         .when_some(hit.body_match.as_ref(), |row, body| {
                                             row.child(div().min_w_0().w_full().truncate().text_xs().text_color(Color::Muted.get(cx)).child(body.snippet.clone()))
                                         }),

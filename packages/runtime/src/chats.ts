@@ -1412,7 +1412,11 @@ export class Chats implements StructuredSessionPort {
         : hit.session.agentId.endsWith(':orchestrator') ? '主控 Orchestrator'
         : hit.session.agentId.endsWith(':__workflow__') ? '工作流 Workflow'
         : '成员 Worker';
-      const searchable = foldSearchText([hit.title, hit.session.title, defaultTitleAlias, roleAlias, hit.workspaceName, hit.workspacePath, hit.session.backend, backendName].join(' '));
+      const worktreeBranch = hit.session.execution?.kind === 'worktree' ? hit.session.execution.branch : '';
+      const searchable = foldSearchText([
+        hit.title, hit.session.title, defaultTitleAlias, roleAlias, hit.workspaceName,
+        hit.workspacePath, hit.session.backend, backendName, worktreeBranch,
+      ].join(' '));
       return terms.every(term => searchable.includes(term)) || bodyMatches.has(hit.session.id);
     }).sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));
     const warnings = incompleteHistory.filter(hit => this.index.peek(hit.sessionId))

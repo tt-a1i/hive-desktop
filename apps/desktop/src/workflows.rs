@@ -24,7 +24,7 @@ pub struct Workflows {
     pub runs: Vec<Run>,
     pub schedules: Vec<Schedule>,
     pub selected: Option<String>,
-    pub inbox_origin: bool,
+    inbox_origin: Option<InboxWorkflowOrigin>,
     pub detail: Option<Run>,
     pub dispatches: Vec<Dispatch>,
     pub logs: Vec<Log>,
@@ -33,6 +33,11 @@ pub struct Workflows {
     pub detail_scroll: ScrollHandle,
     pub deleting: Option<String>,
     pub delete_cancel_focus: Option<FocusHandle>,
+}
+
+enum InboxWorkflowOrigin {
+    Project,
+    Global { workspace: String, sidebar_open: bool },
 }
 pub enum WorkflowError { Refresh(String), Action(String), Unconfirmed }
 impl WorkflowError {
@@ -62,7 +67,7 @@ impl Default for Workflows {
             runs: vec![],
             schedules: vec![],
             selected: None,
-            inbox_origin: false,
+            inbox_origin: None,
             detail: None,
             dispatches: vec![],
             logs: vec![],
@@ -123,8 +128,11 @@ async fn read_run_details(
 impl HiveApp {
     pub(crate) fn close_workflows(&mut self) {
         self.workflows.visible = false;
-        self.workflows.inbox_origin = false;
+        let inbox = self.workflows.inbox_origin.take().is_some();
         self.invalidate_workflows();
+        if inbox {
+            self.clear_workflow_detail(None);
+        }
     }
     pub(crate) fn invalidate_workflows(&mut self) {
         let state = &mut self.workflows;
@@ -141,7 +149,7 @@ impl HiveApp {
         state.runs.clear();
         state.loaded = false;
         state.schedules.clear();
-        state.inbox_origin = false;
+        state.inbox_origin = None;
         state.selected = None;
         state.detail = None;
         state.dispatches.clear();
@@ -154,7 +162,7 @@ impl HiveApp {
         state.action_error = None;
     }
     pub(crate) fn show_workflows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if std::mem::take(&mut self.workflows.inbox_origin) {
+        if self.workflows.inbox_origin.take().is_some() {
             self.invalidate_workflows();
             self.clear_workflow_detail(None);
         }
@@ -166,9 +174,30 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_workflow_inbox_detail(id, InboxWorkflowOrigin::Project, window, cx);
+    }
+
+    pub(crate) fn open_global_inbox_workflow(
+        &mut self,
+        workspace: String,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let origin = InboxWorkflowOrigin::Global { workspace, sidebar_open: self.sidebar_open };
+        self.open_workflow_inbox_detail(id, origin, window, cx);
+    }
+
+    fn open_workflow_inbox_detail(
+        &mut self,
+        id: String,
+        origin: InboxWorkflowOrigin,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.invalidate_workflows();
         self.clear_workflow_detail(Some(id));
-        self.workflows.inbox_origin = true;
+        self.workflows.inbox_origin = Some(origin);
         self.activate_workflows(window, cx);
     }
     fn activate_workflows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -210,8 +239,12 @@ impl HiveApp {
         {
             return;
         }
-        let (Some(workspace), Some(runtime)) = (self.workspace.clone(), self.runtime.clone())
-        else {
+        let ambient_workspace = self.workspace.clone();
+        let workspace = match &self.workflows.inbox_origin {
+            Some(InboxWorkflowOrigin::Global { workspace, .. }) => Some(workspace.clone()),
+            _ => ambient_workspace.clone(),
+        };
+        let (Some(workspace), Some(runtime)) = (workspace, self.runtime.clone()) else {
             return;
         };
         let state = &mut self.workflows;
@@ -219,7 +252,7 @@ impl HiveApp {
         state.generation += 1;
         let generation = state.generation;
         let selected = state.selected.clone();
-        let inbox = state.inbox_origin;
+        let inbox = state.inbox_origin.is_some();
         let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result: Result<(Option<Snapshot>, Option<RunDetails>), String> = async {
@@ -262,7 +295,7 @@ impl HiveApp {
             .await;
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection
-                    || this.workspace.as_ref() != Some(&workspace)
+                    || this.workspace != ambient_workspace
                     || this.workflows.generation != generation
                     || !this.workflows.visible
                 {

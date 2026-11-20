@@ -1,6 +1,6 @@
 /** Production desktop JSONL, real Hive and isolated Pi configuration; no vendor requests. */
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -287,12 +287,53 @@ try {
   const movedBoundary = (await rpc('chat.search', remaining)).result;
   assert.equal(movedBoundary.archiveSnapshotChanged, true);
   assert.deepEqual(movedBoundary.matches, []);
+
+  // Branch metadata survives worktree ownership, workspace scoping and archive
+  // filtering without opening either conversation or inferring the project HEAD.
+  const worktreeChats: {id: string; workspaceId: string; execution: {path: string; branch: string}}[] = [];
+  for (const [projectId, projectPath, branch] of [
+    [workspaceId, directory, 'review/alpha-217'],
+    [other.result.id, otherPath, 'review/beta-481'],
+  ] as const) {
+    const git = (...args: string[]) => execFileSync('git', ['-C', projectPath, ...args], {stdio: 'pipe'});
+    git('init', '--template=', '-b', 'fixture-unrecorded-head');
+    git('-c', 'user.name=Fixture', '-c', 'user.email=qa@example.invalid', '-c', 'commit.gpgSign=false',
+      'commit', '--allow-empty', '-m', 'Search fixture');
+    const created = await rpc('chat.createRecord', {
+      workspaceId: projectId, backend: 'pi', isolation: 'worktree', branch, skipSetup: true,
+    });
+    assert.equal(created.error, undefined);
+    assert.equal(created.result.execution.branch, branch);
+    assert.equal((await rpc('chat.rename', {sessionId: created.result.id, title: 'Worktree review'})).error, undefined);
+    worktreeChats.push(created.result);
+  }
+  const [alpha, beta] = worktreeChats;
+  const branchSearch = {query: 'Other REVIEW/BETA-481', navigationOnly: true};
+  const scopedBetaSearch = {...branchSearch, workspaceId: beta.workspaceId};
+  const branchSearchIndex = await readFile(indexFile, 'utf8');
+  for (const params of [branchSearch, scopedBetaSearch]) {
+    const result = await rpc('chat.search', params);
+    assert.equal(result.error, undefined);
+    assert.deepEqual(result.result.matches.map(({session, bodyMatch}: any) =>
+      [session.id, session.workspaceId, session.execution.branch, bodyMatch]),
+    [[beta.id, beta.workspaceId, beta.execution.branch, undefined]]);
+  }
+  assert.equal((await rpc('chat.search', {...branchSearch, workspaceId: alpha.workspaceId})).result.total, 0);
+  assert.equal((await rpc('chat.search', {...branchSearch, query: 'fixture-unrecorded-head'})).result.total, 0);
+  assert.equal((await rpc('chat.search', {...branchSearch, query: alpha.execution.branch})).result.matches[0].session.id, alpha.id);
+  assert.equal(await readFile(indexFile, 'utf8'), branchSearchIndex);
+  assert.equal((await rpc('chat.archive', {sessionId: beta.id, archived: true})).error, undefined);
+  assert.equal((await rpc('chat.search', branchSearch)).result.total, 0);
+  const archivedBranch = await rpc('chat.search', {...scopedBetaSearch, archived: true});
+  assert.equal(archivedBranch.error, undefined);
+  assert.deepEqual(archivedBranch.result.matches.map(({session}: any) => session.id), [beta.id]);
+  assert.equal((await rpc('chat.execution', {sessionId: beta.id})).result.path, beta.execution.path);
   assert.ok(notifications.every((event) => event.type === 'session_navigation'));
   assert.equal((await rpc('shutdown')).result.ok, true);
   await exited;
   assert.equal(child.exitCode, 0);
   console.log(
-    'SESSION_ARCHIVES_WIRE_OK: four-backend archive/restore, guarded undo with precise pinned order, exact references, scoped pagination, ordered metadata notifications and clean shutdown. No Agent/model initialization.',
+    'SESSION_ARCHIVES_WIRE_OK: four-backend archive/restore, guarded undo with precise pinned order, exact references, recorded worktree branch search, scoped pagination, ordered metadata notifications and clean shutdown. No Agent/model initialization.',
   );
 } finally {
   if (child.exitCode === null && child.signalCode === null) {

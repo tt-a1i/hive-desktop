@@ -32,7 +32,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
-use image_preview::ImageViewport;
+use image_preview::{ExpandedImageViewport, ImageViewport, ZoomAction};
 use reader_find::ReaderFind;
 use search_snippet::{SearchSnippet, path_highlights};
 use serde::Deserialize;
@@ -368,7 +368,7 @@ struct ExpandedFilePreview {
     preview_generation: u64,
     selection: Match,
     text: Option<TextPages>,
-    image: Option<ImageViewport>,
+    image: Option<ExpandedImageViewport>,
     markdown: Option<MarkdownPreview>,
     markdown_start_offset: Option<Point<Pixels>>,
     scroll: ScrollHandle,
@@ -4023,11 +4023,11 @@ impl ExpandedFilePreview {
         }
     }
 
-    fn toggle_image_size(&mut self, cx: &mut Context<Self>) {
+    fn zoom_image(&mut self, action: ZoomAction, window: &Window, cx: &mut Context<Self>) {
         if self.current(cx)
             && let Some(image) = &mut self.image
+            && image.zoom(action, window, cx)
         {
-            image.toggle_size();
             cx.notify();
         }
     }
@@ -4175,11 +4175,16 @@ impl Render for ExpandedFilePreview {
                             .items_center()
                             .gap_2()
                             .when_some(self.image.as_ref(), |actions, image| {
-                                actions.child(
-                                    image.size_button("file-reader-image-size", cx).on_click(
-                                        cx.listener(|this, _, _, cx| this.toggle_image_size(cx)),
-                                    ),
-                                )
+                                let reader = cx.weak_entity();
+                                actions.child(image.zoom_controls(
+                                    move |action, window, cx| {
+                                        let _ = reader.update(cx, |this, cx| {
+                                            this.zoom_image(action, window, cx)
+                                        });
+                                    },
+                                    window,
+                                    cx,
+                                ))
                             })
                             .children(diff)
                             .children(attach)
@@ -4192,7 +4197,11 @@ impl Render for ExpandedFilePreview {
                                 } else {
                                     "复制文件文本"
                                 });
-                                let icon = if copied { Glyph::Check } else { Glyph::ClipboardCopy };
+                                let icon = if copied {
+                                    Glyph::Check
+                                } else {
+                                    Glyph::ClipboardCopy
+                                };
                                 actions.child(
                                     Button::new("file-reader-copy-text")
                                         .custom(palette::quiet_icon_variant(cx))
@@ -4202,9 +4211,9 @@ impl Render for ExpandedFilePreview {
                                         .icon(icon)
                                         .accessibility_label(label)
                                         .tooltip(label)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.copy_file_text(cx)
-                                        })),
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.copy_file_text(cx)),
+                                        ),
                                 )
                             })
                             .children(editor_menu)
@@ -4222,7 +4231,9 @@ impl Render for ExpandedFilePreview {
                 image
                     .region("file-reader-image", &path, height, window, cx)
                     .track_focus(&self.focus)
-                    .on_double_click(cx.listener(|this, _, _, cx| this.toggle_image_size(cx))),
+                    .on_double_click(cx.listener(|this, _, window, cx| {
+                        this.zoom_image(ZoomAction::ToggleFit, window, cx)
+                    })),
             );
         }
         let Some(text) = &self.text else {

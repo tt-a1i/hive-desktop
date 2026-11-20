@@ -22,9 +22,10 @@ use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
 use super::{
     ActionCenter, ArchiveInboxSession, Destination, Entry, InboxRowInteraction, MarkInboxRead,
-    OPEN_INBOX_MEMBER_FAILED, Reminders, SNOOZE_CHANGED, activity_matches, inbox_open_button,
-    inbox_row, inbox_status, is_snoozed, read_action_center, session_inbox_activity,
-    show_more_button, toggle_button, verify_inbox_member,
+    OPEN_INBOX_MEMBER_FAILED, Reminders, SNOOZE_CHANGED, WorkflowFailures, activity_matches,
+    inbox_open_button, inbox_row, inbox_status, is_snoozed, read_action_center,
+    read_workflow_failures, session_inbox_activity, show_more_button, toggle_button,
+    verify_inbox_member,
 };
 use crate::{
     app::HiveApp,
@@ -60,6 +61,7 @@ pub(in crate::collaboration) struct GlobalInboxView {
     reading_position: Option<ReadingPosition>,
     intro_progress: IntroProgress,
     workspaces_loaded: Option<u64>,
+    workflow_review: Option<WorkflowReviewResume>,
 }
 
 #[derive(Clone)]
@@ -87,9 +89,19 @@ impl ReadingPosition {
     }
 }
 
+#[derive(Clone)]
 struct NewItemsReview {
     previous_position: Option<ReadingPosition>,
     previous_depth: SectionDepth,
+}
+
+#[derive(Clone)]
+struct WorkflowReviewResume {
+    review: NewItemsReview,
+    position: Option<ReadingPosition>,
+    depth: SectionDepth,
+    items: HashSet<BadgeItem>,
+    connection: u64,
 }
 
 struct GlobalInboxRowFocus {
@@ -234,6 +246,8 @@ struct ArchiveUndoOffer {
 #[derive(Default)]
 struct ProjectInbox {
     action_center: Option<ActionCenter>,
+    workflow_failures: Option<WorkflowFailures>,
+    workflow_failures_error: bool,
     sessions: Vec<Session>,
     members: Vec<Member>,
     reminders: Reminders,
@@ -244,6 +258,7 @@ struct ProjectRead {
     action_center: Result<ActionCenter, String>,
     sessions: Result<Vec<Session>, String>,
     members: Result<Vec<Member>, String>,
+    workflow_failures: Option<WorkflowFailures>,
 }
 
 async fn read_project(
@@ -251,8 +266,11 @@ async fn read_project(
     workspace: &str,
     root: Option<&std::path::Path>,
 ) -> ProjectRead {
-    let (action_center, (sessions, members)) = smol::future::zip(
-        read_action_center(runtime, workspace, root),
+    let ((action_center, workflow_failures), (sessions, members)) = smol::future::zip(
+        smol::future::zip(
+            read_action_center(runtime, workspace, root),
+            read_workflow_failures(runtime, workspace),
+        ),
         smol::future::zip(
             read_list(runtime, "chat.list", workspace),
             read_list(runtime, "team.members", workspace),
@@ -272,6 +290,7 @@ async fn read_project(
         action_center,
         sessions,
         members,
+        workflow_failures,
     }
 }
 
@@ -457,7 +476,7 @@ impl HiveApp {
             .on_click(cx.listener(|this, _, window, cx| this.open_global_inbox(window, cx)))
     }
 
-    fn open_global_inbox(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_global_inbox(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.closing || window.has_active_dialog(cx) {
             return;
         }
@@ -475,12 +494,31 @@ impl HiveApp {
         if root_changed || project_removed {
             saved.reading_position = None;
         }
+        let workflow_review = self
+            .collaboration
+            .inbox_view
+            .workflow_review
+            .take()
+            .filter(|resume| !root_changed && !project_removed && resume.connection == connection);
         let intro_save_failed = saved.intro_progress.save_pending(root).is_err();
         let intro = saved
             .intro_progress
             .should_show(root)
             .then_some(IntroMode::FirstUse);
-        let new_items = self.unseen_global_inbox_items().collect();
+        let mut new_items: HashSet<_> = self.unseen_global_inbox_items().collect();
+        if let Some(resume) = &workflow_review {
+            new_items.extend(
+                resume
+                    .items
+                    .iter()
+                    .filter(|item| {
+                        self.workspaces
+                            .iter()
+                            .any(|workspace| workspace.id == item.workspace())
+                    })
+                    .cloned(),
+            );
+        }
         let inbox = cx.new(move |cx: &mut Context<GlobalInbox>| {
             cx.observe(&parent, |this, parent, cx| {
                 let app = parent.read(cx);
@@ -514,13 +552,17 @@ impl HiveApp {
                 projects: HashMap::new(),
                 preferences: saved.preferences,
                 placement: RowPlacement::default(),
-                section_depth: saved.section_depth,
+                section_depth: workflow_review
+                    .as_ref()
+                    .map_or(saved.section_depth, |resume| resume.depth),
                 reveal_more: None,
                 row_focus: HashMap::new(),
                 row_ids: Vec::new(),
-                restore_position: saved.reading_position,
+                restore_position: workflow_review
+                    .as_ref()
+                    .map_or(saved.reading_position, |resume| resume.position.clone()),
                 new_items,
-                reviewing_new: None,
+                reviewing_new: workflow_review.map(|resume| resume.review),
                 undo: UndoSlot::default(),
                 undo_review_item: None,
                 archive_undo: None,
@@ -587,7 +629,10 @@ impl HiveApp {
             Destination::Session(session) if session.workspace_id == workspace => {
                 self.navigate_to_session(session.clone(), window, cx);
             }
-            Destination::Session(_) | Destination::Member(_) | Destination::WorkflowRun(_) => {}
+            Destination::Session(_) | Destination::Member(_) => {}
+            Destination::WorkflowRun(run) => {
+                self.open_global_inbox_workflow(workspace.to_owned(), run.clone(), window, cx);
+            }
             Destination::Dispatch(_) | Destination::DispatchMessage { .. } => {
                 // Open the actual workspace first. The dispatch detail then
                 // resolves its original execution session through Hive's existing route.
@@ -1074,9 +1119,31 @@ impl GlobalInbox {
                     },
                     intro_progress: self.intro_progress.clone(),
                     workspaces_loaded: app.collaboration.inbox_view.workspaces_loaded,
+                    workflow_review: None,
                 };
                 app.collaboration.inbox_badge.dialog = None;
                 cx.notify();
+            });
+        }
+    }
+
+    fn dismiss_for_workflow(&mut self, cx: &mut Context<Self>) {
+        let resume = self
+            .reviewing_new
+            .as_ref()
+            .map(|review| WorkflowReviewResume {
+                review: review.clone(),
+                position: self
+                    .reading_position()
+                    .or_else(|| self.restore_position.clone()),
+                depth: self.section_depth,
+                items: self.new_items.clone(),
+                connection: self.connection,
+            });
+        self.dismiss(cx);
+        if let Some(parent) = self.app.upgrade() {
+            parent.update(cx, |app, _| {
+                app.collaboration.inbox_view.workflow_review = resume
             });
         }
     }
@@ -1635,6 +1702,11 @@ impl GlobalInbox {
             return;
         }
         let project = self.projects.entry(workspace.to_owned()).or_default();
+        let refreshed_workflows = result.workflow_failures.is_some();
+        project.workflow_failures_error = !refreshed_workflows;
+        if let Some(workflows) = result.workflow_failures {
+            project.workflow_failures = Some(workflows);
+        }
         let mut errors = Vec::new();
         let snapshot = match result.action_center {
             Ok(snapshot) => Some(snapshot),
@@ -1690,9 +1762,21 @@ impl GlobalInbox {
                 &app.collaboration.inbox_badge,
             );
         }
+        if refreshed_workflows && let Some(snapshot) = &project.workflow_failures {
+            update_workflow_new_items(
+                &mut self.new_items,
+                snapshot,
+                &app.collaboration.inbox_badge,
+            );
+        }
         parent.update(cx, |app, cx| {
             if refreshed_questions && let Some(snapshot) = &project.action_center {
                 app.collaboration.inbox_badge.remember_questions(snapshot);
+            }
+            if refreshed_workflows && let Some(snapshot) = &project.workflow_failures {
+                app.collaboration
+                    .inbox_badge
+                    .remember_workflow_failures(workspace, snapshot.runs.iter().map(|run| &run.id));
             }
             if let Some(saved) = &project.reminders.saved {
                 app.collaboration
@@ -1796,6 +1880,9 @@ impl ProjectInbox {
                         }
                     })
             }));
+        }
+        if let Some(snapshot) = &self.workflow_failures {
+            rows.extend(snapshot.entries());
         }
         rows
     }
@@ -1906,7 +1993,36 @@ fn update_new_items(
     badge: &InboxBadge,
 ) {
     // Seen rows stay in this dialog's review until they are answered, snoozed, or removed.
-    items.retain(|item| item.workspace() != workspace || eligible.contains(item));
+    items.retain(|item| {
+        matches!(item, BadgeItem::WorkflowFailure { .. })
+            || item.workspace() != workspace
+            || eligible.contains(item)
+    });
+    items.extend(
+        eligible
+            .into_iter()
+            .filter(|item| !matches!(item, BadgeItem::WorkflowFailure { .. }) && !badge.sees(item)),
+    );
+}
+
+fn update_workflow_new_items(
+    items: &mut HashSet<BadgeItem>,
+    snapshot: &WorkflowFailures,
+    badge: &InboxBadge,
+) {
+    let eligible: HashSet<_> = snapshot
+        .runs
+        .iter()
+        .map(|run| BadgeItem::WorkflowFailure {
+            workspace: snapshot.workspace_id.clone(),
+            run: run.id.clone(),
+        })
+        .collect();
+    items.retain(|item| {
+        !matches!(item, BadgeItem::WorkflowFailure { workspace, .. }
+        if workspace == &snapshot.workspace_id)
+            || eligible.contains(item)
+    });
     items.extend(eligible.into_iter().filter(|item| !badge.sees(item)));
 }
 
@@ -2019,9 +2135,9 @@ impl Render for GlobalInbox {
             && fresh.waiting.is_empty()
             && !(has_snoozed && self.preferences.values.show_snoozed)
             && projects.iter().all(|workspace| {
-                self.projects
-                    .get(&workspace.id)
-                    .is_none_or(|project| project.errors.is_empty())
+                self.projects.get(&workspace.id).is_none_or(|project| {
+                    project.errors.is_empty() && !project.workflow_failures_error
+                })
             })
         {
             Some(if reviewing {
@@ -2181,6 +2297,20 @@ impl Render for GlobalInbox {
                     continue;
                 };
                 let title = display_project(workspace, &app.workspaces);
+                let workflow_status = if project.workflow_failures_error {
+                    Some(tr("无法读取失败的工作流"))
+                } else if project
+                    .workflow_failures
+                    .as_ref()
+                    .is_some_and(|runs| runs.limited)
+                {
+                    Some(tr("仅显示最近 20 条工作流失败"))
+                } else {
+                    None
+                };
+                if let Some(status) = workflow_status {
+                    items.push((None, inbox_status(format!("{title} · {status}"), cx)));
+                }
                 if let Some(error) = project.errors.first() {
                     items.push((
                         None,
@@ -2232,7 +2362,7 @@ impl Render for GlobalInbox {
                     BadgeItem::UnreadSession { session, .. } => {
                         app.background_sequences.get(session).copied()
                     }
-                    BadgeItem::Question { .. } => None,
+                    BadgeItem::Question { .. } | BadgeItem::WorkflowFailure { .. } => None,
                 };
                 candidates.insert(row_id.clone(), (item, revision));
             }
@@ -2296,7 +2426,11 @@ impl Render for GlobalInbox {
                         );
                         return;
                     }
-                    this.dismiss(cx);
+                    if matches!(target, Destination::WorkflowRun(_)) {
+                        this.dismiss_for_workflow(cx);
+                    } else {
+                        this.dismiss(cx);
+                    }
                     window.close_dialog(cx);
                     app.update(cx, |app, cx| {
                         app.open_global_destination(
@@ -2655,8 +2789,9 @@ impl Render for GlobalInbox {
 mod tests {
     use super::{
         ActionCenter, BadgeItem, Destination, Entry, InboxBadge, InboxFilter, InboxSections,
-        MemberFilter, ProjectInbox, ReadingAnchor, ReadingPosition, RowId, display_project,
-        matches_member, member_choices, row_is_visible, selected_project, update_new_items,
+        MemberFilter, ProjectInbox, ReadingAnchor, ReadingPosition, RowId, WorkflowFailures,
+        display_project, matches_member, member_choices, row_is_visible, selected_project,
+        update_new_items, update_workflow_new_items,
     };
     use crate::collaboration::inbox::Priority;
     use crate::collaboration::inbox::placement::SnoozedUntil;
@@ -2671,6 +2806,48 @@ mod tests {
             name: "app".into(),
             path: path.into(),
         }
+    }
+
+    #[test]
+    fn new_items_update_workflow_and_question_projections_independently() {
+        let badge = InboxBadge::default();
+        let failure = |workspace: &str, run: &str| BadgeItem::WorkflowFailure {
+            workspace: workspace.into(),
+            run: run.into(),
+        };
+        let question = BadgeItem::Question {
+            workspace: "atlas".into(),
+            dispatch: "dispatch".into(),
+            message: "question".into(),
+        };
+        let mut current = HashSet::from([
+            failure("atlas", "stale"),
+            failure("beacon", "same"),
+            question.clone(),
+        ]);
+        let atlas: WorkflowFailures = serde_json::from_value(json!({
+            "workspaceId":"atlas","runs":[{"id":"same","name":"Daily audit","finishedAt":111}],"limited":false
+        })).unwrap();
+        update_workflow_new_items(&mut current, &atlas, &badge);
+        assert_eq!(
+            current,
+            HashSet::from([
+                failure("atlas", "same"),
+                failure("beacon", "same"),
+                question
+            ])
+        );
+        update_new_items(&mut current, "atlas", HashSet::new(), &badge);
+        assert_eq!(
+            current,
+            HashSet::from([failure("atlas", "same"), failure("beacon", "same")])
+        );
+        let empty: WorkflowFailures = serde_json::from_value(json!({
+            "workspaceId":"atlas","runs":[],"limited":false
+        }))
+        .unwrap();
+        update_workflow_new_items(&mut current, &empty, &badge);
+        assert_eq!(current, HashSet::from([failure("beacon", "same")]));
     }
 
     #[test]

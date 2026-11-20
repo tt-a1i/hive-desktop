@@ -68,11 +68,33 @@ pub(crate) async fn search_page(
 
 fn search_placeholder(archived: bool) -> &'static str {
     match (english(), archived) {
-        (true, true) => "Search archived conversations, messages, projects or agents…",
-        (true, false) => "Search conversations, messages, projects or agents…",
-        (false, true) => "搜索已归档会话、消息、项目或 Agent…",
-        (false, false) => "搜索会话、消息、项目或 Agent…",
+        (true, true) => "Search archived conversations, messages, projects, agents or worktree branches…",
+        (true, false) => "Search conversations, messages, projects, agents or worktree branches…",
+        (false, true) => "搜索已归档会话、消息、项目、Agent 或工作树分支…",
+        (false, false) => "搜索会话、消息、项目、Agent 或工作树分支…",
     }
+}
+
+pub(crate) fn recorded_worktree_branch(session: &crate::protocol::Session) -> Option<&str> {
+    session.execution.as_ref()
+        .filter(|execution| execution.kind == "worktree" && !execution.branch.is_empty())
+        .map(|execution| execution.branch.as_str())
+}
+
+pub(crate) fn recorded_worktree_branch_label(branch: &str) -> String {
+    format!("{}: {branch}", tr("记录的工作树分支"))
+}
+
+pub(crate) fn recorded_worktree_branch_row(branch: &str, cx: &App) -> Div {
+    h_flex()
+        .min_w_0()
+        .w_full()
+        .items_center()
+        .gap_1()
+        .text_xs()
+        .text_color(Color::Muted.get(cx))
+        .child(Icon::new(Glyph::GitBranch).size(px(12.)).flex_shrink_0())
+        .child(div().min_w_0().truncate().child(branch.to_owned()))
 }
 
 struct SessionSearch {
@@ -504,6 +526,11 @@ impl Render for SessionSearch {
                                     "{title} · {identity}{role_suffix} · {}",
                                     tr(hit.session.backend.label())
                                 );
+                                let branch = recorded_worktree_branch(&hit.session);
+                                if let Some(branch) = branch {
+                                    label.push('\n');
+                                    label.push_str(&recorded_worktree_branch_label(branch));
+                                }
                                 if let Some(body) = &hit.body_match {
                                     label.push('\n');
                                     label.push_str(&body.snippet);
@@ -601,6 +628,9 @@ impl Render for SessionSearch {
                                                                 .text_color(Color::Muted.get(cx))
                                                                 .child(project),
                                                         )
+                                                        .when_some(branch, |row, branch| {
+                                                            row.child(recorded_worktree_branch_row(branch, cx))
+                                                        })
                                                         .when_some(hit.body_match.as_ref(), |row, body| {
                                                             row.child(div().w_full().truncate().text_xs().text_color(Color::Muted.get(cx)).child(body.snippet.clone()))
                                                         }),

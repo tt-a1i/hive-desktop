@@ -34,8 +34,8 @@ impl HiveApp {
         } else {
             &state.list_scroll
         };
-        let disabled =
-            !self.connected || state.loading || state.acting || !self.workspace_writes_allowed();
+        let disabled = !self.connected || state.loading || state.acting
+            || (state.inbox_origin.is_none() && !self.workspace_writes_allowed());
         let count = state
             .runs
             .iter()
@@ -46,14 +46,26 @@ impl HiveApp {
             })
             .count();
 
-        let topbar_back = if state.inbox_origin {
+        let topbar_back = if let Some(origin) = &state.inbox_origin {
+            let sidebar_open = match origin {
+                super::InboxWorkflowOrigin::Project => None,
+                super::InboxWorkflowOrigin::Global { sidebar_open, .. } => Some(*sidebar_open),
+            };
             Button::new("workflow-return-to-inbox")
                 .ghost()
                 .compact()
                 .rounded_lg()
                 .icon(Glyph::ArrowLeft)
-                .label(tr("返回项目收件箱"))
-                .on_click(cx.listener(|this, _, _, cx| this.open_collaboration(cx)))
+                .label(if sidebar_open.is_some() { tr("返回收件箱") } else { tr("返回项目收件箱") })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if let Some(sidebar_open) = sidebar_open {
+                        this.close_workflows();
+                        this.sidebar_open = sidebar_open;
+                        this.open_global_inbox(window, cx);
+                    } else {
+                        this.open_collaboration(cx);
+                    }
+                }))
         } else if state.selected.is_some() {
             Button::new("workflow-back")
                 .ghost()
@@ -95,6 +107,15 @@ impl HiveApp {
 
         if state.selected.is_none() {
             topbar = topbar.badge(format!("{}", state.runs.len()));
+        } else if let Some(super::InboxWorkflowOrigin::Global { workspace, .. }) = &state.inbox_origin
+            && let Some(project) = self.workspaces.iter().find(|project| project.id == *workspace)
+        {
+            let title = if self.workspaces.iter().filter(|item| item.name == project.name).count() > 1 {
+                &project.path
+            } else {
+                &project.name
+            };
+            topbar = topbar.badge(title.clone());
         }
 
         v_flex()
@@ -191,7 +212,7 @@ impl HiveApp {
                         .when(state.selected.is_none(), |view| {
                             view.child(self.render_workflow_settings(cx))
                         })
-                        .when(!state.inbox_origin && state.enabled == Some(false), |view| {
+                        .when(state.inbox_origin.is_none() && state.enabled == Some(false), |view| {
                             view.child(
                                 div()
                                     .px_3()

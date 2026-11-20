@@ -506,6 +506,9 @@ impl HiveApp {
     }
 
     fn render_workflow_dispatch(&self, dispatch: &Dispatch, cx: &mut Context<Self>) -> AnyElement {
+        let in_current_project = self.workflows.detail.as_ref().is_some_and(|run| {
+            self.workspace.as_deref() == Some(run.workspace_id.as_str())
+        });
         let item = crate::collaboration::Dispatch {
             id: dispatch.id.clone(),
             state: dispatch.status.clone(),
@@ -566,7 +569,11 @@ impl HiveApp {
                 div()
                     .text_xs()
                     .text_color(Color::Muted.get(cx))
-                    .child(self.agent_name(&dispatch.to_agent_id)),
+                    .child(if in_current_project {
+                        self.agent_name(&dispatch.to_agent_id)
+                    } else {
+                        dispatch.to_agent_id.clone()
+                    }),
             )
             .when_some(dispatch.phase.clone(), |view, phase| {
                 view.child(
@@ -615,6 +622,9 @@ impl HiveApp {
                 )
             })
             .children(dispatch.artifacts.iter().enumerate().map(|(index, path)| {
+                if !in_current_project {
+                    return div().text_xs().child(path.clone()).into_any_element();
+                }
                 Reveal::new(
                     SharedString::from(format!(
                         "workflow-artifact-reveal-{}-{index}",
@@ -622,9 +632,9 @@ impl HiveApp {
                     )),
                     &self.workflows.detail_scroll,
                     self.artifact_link(&dispatch.id, index, path, Some(&dispatch.id), Some(&dispatch.to_agent_id), cx),
-                )
+                ).into_any_element()
             }))
-            .child(Reveal::new(
+            .when(in_current_project, |view| view.child(Reveal::new(
                 SharedString::from(format!("workflow-dispatch-actions-reveal-{}", dispatch.id)),
                 &self.workflows.detail_scroll,
                 h_flex()
@@ -673,7 +683,7 @@ impl HiveApp {
                                 }
                             }))
                     }),
-            ))
+            )))
             .into_any_element()
     }
 }
