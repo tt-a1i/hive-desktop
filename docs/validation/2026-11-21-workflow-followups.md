@@ -21,6 +21,9 @@
 - macOS 菜单实际显示 Finder、Devin Desktop、Zed、Antigravity、Qoder、Xcode、Terminal、Ghostty 与 cmux 的应用图标。Finder 与 Ghostty 在带空格、符号和中文的临时目录中启动，两者的目标目录已独立核对。
 - macOS 原生 Diff 窗口将选中的删除行和新增行写入既有草稿，并保留在本机草稿文件。原生历史测试从全局搜索打开 120 条的窗口、向前和向后各加载一页，并回到最新尾部。返回的历史 ID 连续，底层会话文件字节一致。收据位于 `.artifacts/workflow-followups/native-history/receipt.json`。
 - 隔离仓库从真实 GitHub PR #46 建立独立评审工作树，独立核对了 GitHub 的基准与目标提交、两棵检出的 HEAD 和保存的草稿来源。受控 GitHub 协议回归另覆盖 fork PR、旧版本预览拒绝、脏目录提示、受保护的当前检出切换及冷恢复。真实仓库试验的收据位于 `.artifacts/workflow-followups/github-live/receipt.json`。 [用于验收的 PR](https://github.com/tt-a1i/hive-desktop/pull/46)
+- macOS 终端实窗以两行输出核对字形、行距、光标与选区。右键操作将选中的第二行加入聊天草稿。独立的 GPUI 进程使用同一字体初始化函数，确认系统选项解析到 SF Mono。截图和字体选择结果在 `.artifacts/workflow-followups/native-terminal/`。
+- Rust 桌面测试通过 162 项，1 项原有测试忽略。终端库 7 项通过，包括设备像素对齐、输入法组合状态和宽字符网格测试。
+- macOS arm64 测试包基于 `cb51448`。解包后通过签名与摘要核对、运行时和 PTY 冒烟、原生桌面启动恢复、Shell 进程回收。前一测试包 `fb48de6` 的 80 项包内离线功能全通过，最终包的 Node 和整个运行时目录与其逐文件一致。ZIP、SHA-256、功能收据和验证日志位于 `.artifacts/workflow-followups/`。
 - Windows x64 目标通过 MSVC 交叉类型检查。Windows 原生窗口和该平台安装包验收待执行。
 
 以上运行时与桌面验证使用隔离数据或受控 Agent 对端。
