@@ -40,34 +40,52 @@ try {
         if ($buttons.Count -lt 2) { throw 'Question attachment button unavailable' }
         Invoke-Control $buttons[0]
         # The owned common dialog is included under the application's UIA
-        # tree on Windows; it need not appear among desktop root children.
+        # tree on Windows; locate the Open dialog's ComboBoxEx32/ComboBox/Edit
+        # filename field via UIA or its Win32 child HWND, then click the OK button.
+        Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class OpenDialogHelper {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, string lParam);
+}
+'@
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
-        $field = $null
-        $fieldPattern = $null
+        $openDialog = $null
+        $okButton = $null
         do {
-            $candidates = @(All-Controls | Where-Object {
+            $openDialog = @(All-Controls | Where-Object {
                 $_.Current.ProcessId -eq $AppProcessId -and
-                ($_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -or
-                 $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::ComboBox) -and
-                ($_.Current.AutomationId -eq '1148' -or $_.Current.Name -ceq 'File name:')
-            })
-            $preferred = @($candidates | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit })
-            if ($preferred.Count -eq 0) { $preferred = $candidates }
-            foreach ($cand in $preferred) {
-                $vp = $null
-                if ($cand.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) {
-                    $field = $cand
-                    $fieldPattern = $vp
-                    break
-                }
-            }
-            if ($null -ne $field) { break }
+                $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and
+                $_.Current.Name -ceq 'Open'
+            }) | Select-Object -First 1
+            $okButton = @(All-Controls | Where-Object {
+                $_.Current.ProcessId -eq $AppProcessId -and
+                $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
+                $_.Current.Name -ceq 'Select images, documents or other files'
+            }) | Select-Object -First 1
+            if ($null -ne $openDialog -and $null -ne $okButton) { break }
             Start-Sleep -Milliseconds 150
         } while ([DateTime]::UtcNow -lt $deadline)
-        if ($null -eq $field) { throw "Native file chooser filename field unavailable: $($candidates.Count)" }
-        $fieldPattern.SetValue($Source)
-        $field.SetFocus()
-        [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+        if ($null -eq $openDialog -or $null -eq $okButton) { throw 'Native file chooser Open dialog unavailable' }
+        $dialogHwnd = [IntPtr]$openDialog.Current.NativeWindowHandle
+        $comboEx = [OpenDialogHelper]::FindWindowEx($dialogHwnd, [IntPtr]::Zero, 'ComboBoxEx32', $null)
+        $combo = if ($comboEx -ne [IntPtr]::Zero) { [OpenDialogHelper]::FindWindowEx($comboEx, [IntPtr]::Zero, 'ComboBox', $null) } else { [IntPtr]::Zero }
+        $editHwnd = if ($combo -ne [IntPtr]::Zero) { [OpenDialogHelper]::FindWindowEx($combo, [IntPtr]::Zero, 'Edit', $null) } else { [IntPtr]::Zero }
+        if ($editHwnd -ne [IntPtr]::Zero) {
+            [void][OpenDialogHelper]::SendMessage($editHwnd, 0x000C, [IntPtr]::Zero, $Source)
+        } else {
+            $field = @($openDialog.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
+                $vp = $null
+                ($_.Current.AutomationId -eq '1148' -or $_.Current.Name -ceq 'File name:') -and
+                $_.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)
+            }) | Select-Object -First 1
+            if ($null -eq $field) { throw 'Native file chooser filename Edit HWND and ValuePattern unavailable' }
+            $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Source)
+        }
+        $okButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
         [void](Wait-Name 'Remove question-proof.txt')
         # Wait for the original question's saved draft and compare the exact
         # private bytes before moving the source and submitting the answer.
