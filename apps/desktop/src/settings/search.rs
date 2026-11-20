@@ -393,6 +393,7 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_codex_account_setup_focus();
         self.preferences_search_open = false;
         self.settings_search
             .update(cx, |input, cx| input.set_value("", window, cx));

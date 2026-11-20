@@ -25,6 +25,7 @@ pub(super) struct InboxViewPreferences {
     pub(super) member_filter: Option<MemberFilter>,
     pub(super) backend_filter: Option<Backend>,
     pub(super) activity_filter: Option<ActivityRange>,
+    pub(super) hide_workflow_runs: bool,
     pub(super) show_waiting: bool,
     pub(super) show_snoozed: bool,
 }
@@ -107,6 +108,7 @@ impl ViewPreferences {
             self.values.member_filter.is_some(),
             self.values.backend_filter.is_some(),
             self.values.activity_filter.is_some(),
+            self.values.hide_workflow_runs,
         ]
         .into_iter()
         .filter(|selected| *selected)
@@ -121,6 +123,7 @@ impl ViewPreferences {
         self.values.member_filter = None;
         self.values.backend_filter = None;
         self.values.activity_filter = None;
+        self.values.hide_workflow_runs = false;
         self.save_changed();
         true
     }
@@ -191,6 +194,7 @@ mod tests {
         view.values.project_filter = Some("selected".into());
         view.values.backend_filter = Some(Backend::PiRpc);
         view.values.activity_filter = Some(ActivityRange::ThreeDays);
+        view.values.hide_workflow_runs = true;
         view.values.show_waiting = true;
         view.values.show_snoozed = true;
         view.save_changed();
@@ -204,15 +208,31 @@ mod tests {
             reopened.values.activity_filter,
             Some(ActivityRange::ThreeDays)
         );
+        assert!(reopened.values.hide_workflow_runs);
         assert!(reopened.values.show_waiting);
         assert!(reopened.values.show_snoozed);
         assert!(reopened.restore_root(Some(second.path())));
         assert!(reopened.values.project_filter.is_none());
         assert!(reopened.values.backend_filter.is_none());
         assert!(reopened.values.activity_filter.is_none());
+        assert!(!reopened.values.hide_workflow_runs);
         assert!(!reopened.values.show_waiting);
         assert!(!reopened.values.show_snoozed);
         assert!(!second.path().join(FILE).exists());
+    }
+
+    #[test]
+    fn an_existing_inbox_view_keeps_its_preferences_and_shows_workflow_runs_by_default() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join(FILE),
+            r#"{"projectFilter":"atlas","showSnoozed":true}"#,
+        )
+        .unwrap();
+        let saved = load(root.path()).unwrap();
+        assert_eq!(saved.project_filter.as_deref(), Some("atlas"));
+        assert!(saved.show_snoozed);
+        assert!(!saved.hide_workflow_runs);
     }
 
     #[test]
@@ -230,11 +250,12 @@ mod tests {
         });
         view.values.backend_filter = Some(Backend::Codex);
         view.values.activity_filter = Some(ActivityRange::OneDay);
+        view.values.hide_workflow_runs = true;
         view.values.show_waiting = true;
         view.values.show_snoozed = true;
         view.save_changed();
 
-        assert_eq!(view.filter_count(), 4);
+        assert_eq!(view.filter_count(), 5);
         assert!(view.clear_filters());
         assert_eq!(view.filter_count(), 0);
         let saved = load(root.path()).unwrap();
@@ -242,6 +263,7 @@ mod tests {
         assert!(saved.member_filter.is_none());
         assert!(saved.backend_filter.is_none());
         assert!(saved.activity_filter.is_none());
+        assert!(!saved.hide_workflow_runs);
         assert!(saved.show_waiting);
         assert!(saved.show_snoozed);
     }

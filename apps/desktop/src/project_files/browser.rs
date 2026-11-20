@@ -510,10 +510,17 @@ impl MarkdownPreview {
     ) {
         let rendered = document.rendered_text();
         let headings = headings.get_or_init(|| MarkdownHeadings::parse(rendered.source()));
-        if let Some(range) = headings
-            .range(fragment)
-            .and_then(|range| rendered.range_for_source(range))
-        {
+        if let Some(range) = headings.range(fragment) {
+            Self::reveal_heading_range(document, range, cx);
+        }
+    }
+
+    fn reveal_heading_range(
+        document: &mut TextViewState,
+        source_range: Range<usize>,
+        cx: &mut Context<TextViewState>,
+    ) {
+        if let Some(range) = document.rendered_text().range_for_source(source_range) {
             let _ = document.reveal_range(range, cx);
         }
     }
@@ -3320,7 +3327,11 @@ impl FileBrowser {
             .markdown
             .as_ref()
             .zip(text.as_ref())
-            .map(|(preview, text)| MarkdownPreview::new(preview.mode, text, cx));
+            .map(|(preview, text)| {
+                let mut markdown = MarkdownPreview::new(preview.mode, text, cx);
+                markdown.headings = preview.headings.clone();
+                markdown
+            });
         let return_focus = window
             .focused(cx)
             .filter(|_| self.browser_focus.contains_focused(window, cx));
@@ -3329,7 +3340,7 @@ impl FileBrowser {
             if let Some(app) = app.upgrade() {
                 cx.observe(&app, |_, _, cx| cx.notify()).detach();
             }
-            ExpandedFilePreview {
+            let reader = ExpandedFilePreview {
                 browser: browser.downgrade(),
                 app,
                 scope,
@@ -3347,7 +3358,9 @@ impl FileBrowser {
                 return_focus,
                 dialog_focus: None,
                 dismissed: false,
-            }
+            };
+            reader.observe_markdown_document(cx);
+            reader
         });
         self.expanded_preview = Some(reader.downgrade());
         let focus = reader.read(cx).focus.clone();
@@ -4253,6 +4266,109 @@ impl ExpandedFilePreview {
         }
     }
 
+    fn observe_markdown_document(&self, cx: &mut Context<Self>) {
+        if let Some(document) = self.markdown.as_ref().and_then(|md| md.document.as_ref())
+            && document.read(cx).rendered_text().source().is_empty()
+        {
+            // The outline lives in the toolbar, outside the Markdown TextView.
+            let mut waiting = true;
+            cx.observe(document, move |_, document, cx| {
+                if waiting && !document.read(cx).rendered_text().source().is_empty() {
+                    waiting = false;
+                    cx.notify();
+                }
+            })
+            .detach();
+        }
+    }
+
+    fn outline_menu(&self, markdown: &MarkdownPreview, cx: &Context<Self>) -> Option<AnyElement> {
+        let rendered = markdown.document.as_ref()?.read(cx).rendered_text();
+        let source = rendered.source();
+        if source.is_empty() {
+            return None;
+        }
+        markdown
+            .headings
+            .get_or_init(|| MarkdownHeadings::parse(source))
+            .outline()?;
+        let headings = markdown.headings.clone();
+        let reader = cx.weak_entity();
+        Some(
+            Button::new("file-reader-outline")
+                .outline()
+                .small()
+                .label(tr("本页目录"))
+                .dropdown_menu(move |menu, window, _| {
+                    let outline = headings
+                        .get()
+                        .and_then(MarkdownHeadings::outline)
+                        .expect("available outline");
+                    let top_level = outline.iter().map(|heading| heading.level).min().unwrap();
+                    let width = (window.viewport_size().width - px(32.)).min(px(360.));
+                    outline.iter().enumerate().fold(
+                        menu.min_w(width).max_w(width).scrollable(true),
+                        |menu, (index, heading)| {
+                            let title: SharedString = heading.title.clone().into();
+                            let indent = px(12. * f32::from(heading.level - top_level));
+                            let select = {
+                                let reader = reader.clone();
+                                move |cx: &mut App| {
+                                    let _ = reader.update(cx, |reader, cx| {
+                                        reader.select_outline_heading(index, cx);
+                                    });
+                                }
+                            };
+                            let activate = select.clone();
+                            menu.item(
+                                PopupMenuItem::element(move |_, _| {
+                                    let activate = activate.clone();
+                                    div()
+                                        .id(("file-reader-outline-heading", index))
+                                        .role(Role::Button)
+                                        .aria_label(title.clone())
+                                        .on_a11y_action(
+                                            AccessibleAction::Click,
+                                            move |_, window, cx| {
+                                                cx.stop_propagation();
+                                                window.dispatch_action(Box::new(Cancel), cx);
+                                                activate(cx);
+                                            },
+                                        )
+                                        .flex_1()
+                                        .min_w_0()
+                                        .pl(indent)
+                                        .truncate()
+                                        .child(title.clone())
+                                })
+                                .on_click(move |_, _, cx| select(cx)),
+                            )
+                        },
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn select_outline_heading(&mut self, index: usize, cx: &mut Context<Self>) {
+        if !self.current(cx) {
+            return;
+        }
+        if let Some(markdown) = self.markdown.as_ref().filter(|md| md.active())
+            && let Some(document) = &markdown.document
+            && let Some(heading) = markdown
+                .headings
+                .get()
+                .and_then(MarkdownHeadings::outline)
+                .and_then(|outline| outline.get(index))
+        {
+            let range = heading.range.clone();
+            document.update(cx, |document, cx| {
+                MarkdownPreview::reveal_heading_range(document, range, cx);
+            });
+        }
+    }
+
     fn copy_file_text(&mut self, cx: &mut Context<Self>) {
         if !self.current(cx) {
             return;
@@ -4414,7 +4530,11 @@ impl ExpandedFilePreview {
             && let Some(markdown) = &mut self.markdown
             && let Some(text) = &self.text
         {
+            let starts_parser = mode == FilePreviewMode::Markdown && markdown.document.is_none();
             markdown.switch(mode, text, cx);
+            if starts_parser {
+                self.observe_markdown_document(cx);
+            }
             if mode == FilePreviewMode::Markdown {
                 self.find = None;
             }
@@ -4602,6 +4722,7 @@ impl Render for ExpandedFilePreview {
                     .when_some(self.markdown.as_ref(), |row, markdown| {
                         row.child(markdown_mode_controls(markdown.mode, Self::set_mode, cx))
                     })
+                    .children(rendered.and_then(|markdown| self.outline_menu(markdown, cx)))
                     .when(source_visible, |row| {
                         row.child(
                             Button::new("file-reader-wrap-source")

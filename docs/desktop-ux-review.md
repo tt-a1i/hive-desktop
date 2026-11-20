@@ -545,8 +545,23 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 打开工作树 A 的同名文件并读到第 2 页。切到 B 后在磁盘修改 A，返回 A 时收到一次精确到 A 工作树的重新读取请求，预览恢复第 2 页并显示新内容。在 B 打开新预览会替换此前记录。点 X 后切走再回来，预览保持关闭。另在 A 发出读取后切到 B，A 的延迟回包没有打开旧预览。证据在 `.artifacts/batch39-files-native`。
 - 运行时专项用真实顶层和子工作流核对独立上限、工作区范围、静默完成和同 ID 失败。332 项桌面 Rust 测试、9 项终端 Rust 测试通过，1 项桌面测试原有忽略。TypeScript、桌面运行时、文件运行时和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
 
+## 2026-11-21 第四十批
+
+本轮从 Hive Desktop `bd53cd3` 开始。参考 T3 Code `d984b71`、Cindy `1db8327`、Beluga `eed1b7e`。Hive 上游 `main` 为 `18861b8`。
+
+- **欢迎页增加 Codex 登录引导。** 已检测到简单的默认 Codex 配置但没有登录凭据时，可直达并聚焦原账号检查。用户确认检查后，未登录状态提供按实际程序和认证目录生成的登录命令。完成设置后可以返回欢迎页重新检查。 [T3 Code 欢迎页](https://github.com/pingdotgg/t3code/blob/d984b71385910bd575d4ed10ae6c0d1caf48f008/docs/user/welcome-page.md#L23-L46)
+- **跨项目收件箱可隐藏工作流运行。** 窄屏用筛选菜单，宽屏可直接操作。筛选保存到本机并同步更新分区计数，工作流发出的提问和会话回复仍可见。「新事项」仍可打开新失败的准确日志。 [Cindy 隐藏自动化任务筛选](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/apps/desktop/src/renderer/features/cc-agent/sidebar/SidebarFilterPopover.tsx#L863-L867)
+- **展开 Markdown 预览提供「本页目录」。** 至少有两个一级至三级标题时，可从按文档顺序列出的标题跳转，包括重复标题和中文标题。键盘选择只改变当前文档的阅读位置。 [Beluga 生成目录](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/Outline.tsx#L56-L84)
+
+- macOS 用全新的默认配置打开欢迎页，从「继续设置 Codex 登录」直达并聚焦账号检查。按空格后，模拟程序收到 `account/read` 且 `refreshToken` 为 `false`，返回未登录。界面显示引用了实际可执行文件和认证目录的命令，两处路径均含空格和引号。复制控件在原生窗口可见，实际 Shell 参数另由隔离运行时专项核对。证据在 `.artifacts/b40-welcome-fixture`。
+- macOS 在宽窗隐藏工作流，普通提问和成员待处理行仍可见。冷重开和缩窄窗口后筛选仍生效。新失败的 `B40 LIVE FRESH` 从「新事项」打开原日志，返回后筛选仍保留。工作流来源的提问和暂缓计数由 Rust 专项覆盖。证据在 `.artifacts/batch40-inbox-native`。
+- macOS 在没有手写目录的 Markdown 中用方向键和 Return 跳到第二个同名标题与中文子标题，目标标记实际出现在阅读区域顶部。按 Escape 关闭目录时阅读器仍打开，目录没有列出代码围栏中的假标题。跳转没有重复读取文件。证据在 `.artifacts/batch40-markdown-native`。
+- 336 项桌面 Rust 测试通过，1 项原有忽略。TypeScript、账号检查、就绪检测、桌面和文件运行时，以及 Windows x64 MSVC 交叉检查通过。命令专项用隔离程序核对 POSIX Shell 的实际参数与认证目录。Windows 命令通过字符串检查，Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **在欢迎页指明 Codex 登录的下一步。** 已安装但没有凭据时，当前「配置」打开的是程序输入框。验收从欢迎页聚焦账号检查，未登录时可复制正确引用路径的登录命令，返回欢迎页后能重新检查。使用隔离认证目录和路径带空格的模拟程序。 [T3 Code 欢迎页](https://github.com/pingdotgg/t3code/blob/d984b71385910bd575d4ed10ae6c0d1caf48f008/docs/user/welcome-page.md#L23-L46)
-- **在跨项目收件箱筛选工作流记录。** 工作流占满列表时，当前只能逐个项目查问题和回复。验收开关随筛选保存，启用后隐藏工作流行及对应计数，保留回复、提问和「新事项」里的新失败。 [Cindy 隐藏自动化任务筛选](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/apps/desktop/src/renderer/features/cc-agent/sidebar/SidebarFilterPopover.tsx#L891-L898)
-- **为展开的 Markdown 阅读器生成目录。** 阅读没有手写目录的长文时，目前只能滚动或查找。验收用键盘选中第二个同名标题和中文子标题，准确定位且无需再次读取文件。 [Beluga 生成目录](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/Outline.tsx#L56-L84)
+按用户要求暂停持续推进。以下保留为恢复后的优先项。
+
+- **未读会话开始新一轮时移到等待区。** 现在旧的未读回复会盖住正在运行的状态。验收上一轮回复仍未读时开始第二轮，原会话移到「等待 Agent」，途中有批准或提问仍进入「需要关注」，新回复送达后原会话再次提示。 [Cindy 会话优先级](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/packages/maker-shared/src/liveTaskPriority.ts#L23-L34)
+- **全选并复制当前终端保留的输出。** 现在读取长构建日志需要跨屏拖选。验收菜单和快捷键均选中当前标签保留的首尾内容，宽字符和自动换行正确，普通 Ctrl+A 仍交给 Shell。 [T3 Code 终端选择](https://github.com/pingdotgg/t3code/blob/d984b71385910bd575d4ed10ae6c0d1caf48f008/docs/user/terminal.md#L44-L47)
+- **磁盘更新时自动刷新当前预览的图片。** 现在重读会重置预览。验收在工作树 A 放大并平移图片后替换原文件，新图出现时保留倍率和视野。B 的同名文件和损坏的临时图片不影响已显示的图。 [Beluga 文件变更处理](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/src/core/session.ts#L1469-L1475)

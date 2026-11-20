@@ -4,6 +4,13 @@ use std::{collections::HashMap, ops::Range};
 #[derive(Default)]
 pub(super) struct MarkdownHeadings {
     ranges: HashMap<String, Range<usize>>,
+    outline: Vec<MarkdownOutlineHeading>,
+}
+
+pub(super) struct MarkdownOutlineHeading {
+    pub(super) title: String,
+    pub(super) level: u8,
+    pub(super) range: Range<usize>,
 }
 
 impl MarkdownHeadings {
@@ -15,29 +22,45 @@ impl MarkdownHeadings {
         let Ok(root) = to_mdast(source, &options) else {
             return Self::default();
         };
-        let mut ranges = HashMap::new();
+        let mut headings = Self::default();
         let mut next_suffix = HashMap::new();
         let mut nodes = vec![&root];
         while let Some(node) = nodes.pop() {
             if let Node::Heading(heading) = node
                 && let Some(position) = &heading.position
             {
-                let base = heading_slug(&heading.children);
+                let text = heading_text(&heading.children);
+                let base = heading_slug(&text);
                 let mut slug = base.clone();
-                if ranges.contains_key(&slug) {
+                if headings.ranges.contains_key(&slug) {
                     let suffix = next_suffix.entry(base.clone()).or_insert(1);
-                    while ranges.contains_key(&slug) {
+                    while headings.ranges.contains_key(&slug) {
                         slug = format!("{base}-{suffix}");
                         *suffix += 1;
                     }
                 }
-                ranges.insert(slug, position.start.offset..position.end.offset);
+                let range = position.start.offset..position.end.offset;
+                headings.ranges.insert(slug, range.clone());
+                if heading.depth <= 3 {
+                    let title = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                    if !title.is_empty() {
+                        headings.outline.push(MarkdownOutlineHeading {
+                            title,
+                            level: heading.depth,
+                            range,
+                        });
+                    }
+                }
             }
             if let Some(children) = node.children() {
                 nodes.extend(children.iter().rev());
             }
         }
-        Self { ranges }
+        headings
+    }
+
+    pub(super) fn outline(&self) -> Option<&[MarkdownOutlineHeading]> {
+        (self.outline.len() >= 2).then_some(&self.outline)
     }
 
     pub(super) fn range(&self, fragment: &str) -> Option<Range<usize>> {
@@ -49,7 +72,7 @@ impl MarkdownHeadings {
     }
 }
 
-fn heading_slug(children: &[Node]) -> String {
+fn heading_text(children: &[Node]) -> String {
     let mut title = String::new();
     let mut nodes: Vec<_> = children.iter().rev().collect();
     while let Some(node) = nodes.pop() {
@@ -65,7 +88,10 @@ fn heading_slug(children: &[Node]) -> String {
         }
     }
     title
-        .to_lowercase()
+}
+
+fn heading_slug(text: &str) -> String {
+    text.to_lowercase()
         .chars()
         .filter_map(|character| {
             let character = if character == ' ' { '-' } else { character };
@@ -194,6 +220,48 @@ mod tests {
         ] {
             assert_eq!(headings.range(fragment), None, "{fragment}");
         }
+    }
+
+    #[test]
+    fn outline_keeps_heading_order_depth_and_exact_duplicate_positions() {
+        let source = concat!(
+            "# **Repeat**\n\n",
+            "```md\n## Fake heading\n```\n\n",
+            "$$\n### Math heading\n$$\n\n",
+            "#### Repeat\n\n",
+            "Repeat\n------\n\n",
+            "> ### [中文](./notes.md) `Café`\n",
+        );
+        let headings = MarkdownHeadings::parse(source);
+        let outline = headings.outline().unwrap();
+        assert_eq!(
+            outline
+                .iter()
+                .map(|heading| (
+                    heading.title.as_str(),
+                    heading.level,
+                    &source[heading.range.clone()]
+                ))
+                .collect::<Vec<_>>(),
+            [
+                ("Repeat", 1, "# **Repeat**"),
+                ("Repeat", 2, "Repeat\n------"),
+                ("中文 Café", 3, "### [中文](./notes.md) `Café`"),
+            ]
+        );
+        assert_eq!(Some(outline[1].range.clone()), headings.range("repeat-2"));
+        assert_eq!(
+            Some(outline[2].range.clone()),
+            headings.range("%E4%B8%AD%E6%96%87-caf%C3%A9")
+        );
+    }
+
+    #[test]
+    fn outline_requires_two_nonempty_headings_within_its_levels() {
+        let headings =
+            MarkdownHeadings::parse("## Only\n\n#### Deeper\n\n###\n\n```\n## Fake\n```");
+        assert!(headings.outline().is_none());
+        assert!(headings.range("deeper").is_some());
     }
 
     #[test]

@@ -58,6 +58,7 @@ impl HiveApp {
                 .content(move |body, window, cx| {
                     let shell = content
                         .update(cx, |this, cx| {
+                            this.finish_codex_account_setup(window, cx);
                             this.render_preferences(
                                 window.viewport_size().width < px(768.),
                                 window,

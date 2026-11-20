@@ -212,6 +212,12 @@ impl HiveApp {
             })
             .children(agents.into_iter().map(|(backend, name)| {
                 let report = self.backend_readiness(backend);
+                let codex_sign_in = backend == "codex"
+                    && !self.readiness_loading
+                    && self.readiness_error.is_none()
+                    && report.is_some_and(|entry| entry.level == "missing_credentials")
+                    && self.can_open_codex_sign_in_setup(cx);
+                let action = tr(if codex_sign_in { "继续设置 Codex 登录" } else { "配置" });
                 let (label, color) = match report {
                     Some(entry)
                         if entry.level == "ready" && entry.credential_state != "present" =>
@@ -223,7 +229,13 @@ impl HiveApp {
                     None => (tr("尚未检查"), Color::Muted.get(cx)),
                 };
                 let detail = report
-                    .map(|entry| localize_owned_error(&entry.remediation_key))
+                    .map(|entry| {
+                        if codex_sign_in {
+                            tr("已检测到 Codex CLI。请先检查连接与账号。").to_owned()
+                        } else {
+                            localize_owned_error(&entry.remediation_key)
+                        }
+                    })
                     .or_else(|| match backend {
                         "pi" => Some(self.pi_accounts.setup_status()),
                         "codex" => Some(self.codex_account_setup_status(cx)),
@@ -267,8 +279,12 @@ impl HiveApp {
                         Button::new(format!("guide-agent-{backend}"))
                             .outline()
                             .small()
-                            .label(tr("配置"))
-                            .accessibility_label(format!("{} · {name}", tr("配置")))
+                            .label(action)
+                            .accessibility_label(if codex_sign_in {
+                                action.to_owned()
+                            } else {
+                                format!("{action} · {name}")
+                            })
                             .disabled(
                                 !self.connected || self.closing || self.welcome_setup.starting,
                             )
@@ -283,6 +299,9 @@ impl HiveApp {
                                     window,
                                     cx,
                                 ),
+                                "codex" if codex_sign_in => {
+                                    this.open_codex_sign_in_setup(window, cx)
+                                }
                                 "pi-rpc" => this.open_program_setup("pi", window, cx),
                                 _ => this.open_program_setup(backend, window, cx),
                             })),

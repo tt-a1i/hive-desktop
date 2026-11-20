@@ -1,8 +1,28 @@
 import {CodexTransport} from './agents/codex-transport.js';
+import {posix, win32} from 'node:path';
+import {terminalArgument, terminalCommand} from './terminal-command.js';
 
 export type CodexAccountStatus =
   | {status:'account_detected';accountType:'chatgpt'|'apiKey'|'amazonBedrock'|'gcp'}
   | {status:'signed_out'|'not_required'|'unknown'|'failed'|'cancelled'};
+
+/** Use the same inherited Codex home when pasting into a separate terminal. */
+export function codexLoginCommand(command: string, codexHome: string | undefined, platform = process.platform): string | undefined {
+  const path = platform === 'win32' ? win32 : posix;
+  const hasPath = (platform === 'win32' ? /[\\/]/ : /\//).test(command);
+  if (platform === 'win32' && /^[\\/](?![\\/])|^[a-z]:(?![\\/])/i.test(command)) return undefined;
+  const executable = hasPath && !path.isAbsolute(command)
+    ? `${process.cwd()}${path.sep}${command}`
+    : command;
+  const argv = [executable, 'login'];
+  const invocation = terminalCommand(argv, platform);
+  if (!codexHome) return invocation;
+  if (!path.isAbsolute(codexHome) || /[\x00-\x1f\x7f]/.test(codexHome)) return undefined;
+  if (platform === 'win32' && /^[\\/](?![\\/])/.test(codexHome)) return undefined;
+  const home = terminalArgument(codexHome, platform);
+  if (platform !== 'win32') return `CODEX_HOME=${home} ${invocation}`;
+  return `& { $previous = $env:CODEX_HOME; try { $env:CODEX_HOME = ${home}; ${invocation} } finally { $env:CODEX_HOME = $previous } }`;
+}
 
 /** Read native account metadata without a token refresh, login, thread or model turn.
  * Return only the closed status/type set; never expose account IDs, email or tokens.

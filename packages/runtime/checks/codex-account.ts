@@ -1,10 +1,10 @@
 /** Real owned JSONL subprocesses; synthetic peers are not Codex login evidence. */
 import assert from 'node:assert/strict';
-import {mkdtemp, writeFile, readFile} from 'node:fs/promises';
+import {mkdir, mkdtemp, writeFile, readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
-import {probeCodexAccount} from '../src/codex-account.js';
+import {codexLoginCommand, probeCodexAccount} from '../src/codex-account.js';
 const root = await mkdtemp(join(tmpdir(), 'hive-codex-account-'));
 async function peer(name:string, response:unknown, hold=false) {
  const file=join(root,`${name}.cjs`), log=join(root,`${name}.jsonl`), pid=join(root,`${name}.pid`);
@@ -41,18 +41,35 @@ console.log('CODEX_ACCOUNT_PEERS_OK: exact no-refresh request, account variants/
 // The same check through real Hive app-state HTTP/SQLite, including env precedence
 // and runtime shutdown. Only fixtures below: no inference or user auth writes.
 const {createDesktopRuntime}=await import('../src/desktop-runtime.js');
-const {terminalCommand}=await import('../src/terminal-command.js');
 const test=await peer('settings',{requiresOpenaiAuth:true,account:{type:'chatgpt',email:'private@example.invalid'}});
+const previousCodexHome = process.env.CODEX_HOME;
+const codexHome = join(root, "Signed out CLI's auth home");
+await mkdir(codexHome);
+process.env.CODEX_HOME = codexHome;
 let runtime=await createDesktopRuntime(join(root,'data'),()=>{},{executableEnvironment:{}});
 try {
- const signedOut=await peer('settings-signed-out',{requiresOpenaiAuth:true,account:null});
+ const signedOut=await peer("Signed out CLI's executable",{requiresOpenaiAuth:true,account:null});
+ const loginCommand = codexLoginCommand(signedOut.command, codexHome);
+ assert.ok(loginCommand);
  const signedResult=await runtime.settings.codexAccount(signedOut.command);
- assert.deepEqual(signedResult,{command:signedOut.command,source:'draft',status:'signed_out',loginCommand:terminalCommand([signedOut.command,'login'])});
+ assert.deepEqual(signedResult,{command:signedOut.command,source:'draft',status:'signed_out',loginCommand});
  const before=await runtime.settings.get();
  const result=await runtime.settings.codexAccount(test.command);
  assert.deepEqual(result,{command:test.command,source:'draft',status:'account_detected',accountType:'chatgpt'});
  assert.deepEqual(await runtime.settings.get(),before);
  for(const invalid of [undefined,{},true,'\ncommand'])await assert.rejects(runtime.settings.codexAccount(invalid));
+ await runtime.settings.update({...before,codexCommand:signedOut.command});
+ const profile = await runtime.profiles.currentRef('default-codex');
+ assert.deepEqual(await runtime.settings.codexAccount(undefined,profile),{
+   command:signedOut.command,source:'profile',profile,status:'signed_out',loginCommand,
+ });
+ const simple = await runtime.profiles.list();
+ const custom = await runtime.profiles.update(profile.id, {
+   launch: {command:signedOut.command, args:['--fixture-setting'], configDir:codexHome},
+ }, simple.storeVersion);
+ assert.deepEqual(await runtime.settings.codexAccount(undefined,custom.profile.ref),{
+   command:signedOut.command,source:'profile',profile:custom.profile.ref,status:'signed_out',
+ });
  await runtime.settings.update({...before,codexCommand:test.command});
  assert.equal((await runtime.settings.codexAccount(test.command)).source,'app');
  await runtime.close();
@@ -60,6 +77,8 @@ try {
  assert.deepEqual(await runtime.settings.codexAccount(join(root,'missing draft')),{command:test.command,source:'env',status:'account_detected',accountType:'chatgpt'});
  const native=process.env.HIVE_CODEX_COMMAND;
  if(native) {
+   if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+   else process.env.CODEX_HOME = previousCodexHome;
    await runtime.close();runtime=await createDesktopRuntime(join(root,'native'),()=>{},{executableEnvironment:{}});
    const before=await runtime.settings.get();const result=await runtime.settings.codexAccount(native);
    assert.equal(result.status,'account_detected');assert.equal(result.accountType,'chatgpt');
@@ -76,4 +95,8 @@ try {
  assert.ok(reading);await runtime.close();assert.equal((await running).status,'cancelled');
  const pid=Number(await readFile(shutdownPeer.pid,'utf8'));assert.throws(()=>process.kill(pid,0),(error:NodeJS.ErrnoException)=>error.code==='ESRCH');
  console.log('CODEX_ACCOUNT_SETTINGS_OK: real Hive HTTP/SQLite, exact draft/app/env source, no path save, input validation and runtime-close drain.');
-} finally { await runtime.close(); }
+} finally {
+ if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+ else process.env.CODEX_HOME = previousCodexHome;
+ await runtime.close();
+}

@@ -39,6 +39,7 @@ use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
+        checkbox::Checkbox,
         menu::{DropdownMenu, PopupMenu, PopupMenuItem},
         scroll::ScrollableElement,
         *,
@@ -1254,6 +1255,19 @@ impl GlobalInbox {
         cx.notify();
     }
 
+    fn set_hide_workflow_runs(&mut self, hide: bool, cx: &mut Context<Self>) {
+        if !self.is_current(self.connection, cx)
+            || self.reviewing_new.is_some()
+            || self.preferences.values.hide_workflow_runs == hide
+        {
+            return;
+        }
+        self.preferences.values.hide_workflow_runs = hide;
+        self.preferences.save_changed();
+        self.clear_filter_position();
+        cx.notify();
+    }
+
     fn filter_controls(
         &self,
         app: &HiveApp,
@@ -1309,6 +1323,8 @@ impl GlobalInbox {
         );
 
         let inbox = cx.weak_entity();
+        let hide_workflow_runs = current.hide_workflow_runs;
+        let hide_workflow_runs_label = tr("隐藏工作流运行");
         if compact {
             let count = self.preferences.filter_count();
             let title = tr("筛选");
@@ -1324,11 +1340,15 @@ impl GlobalInbox {
                 format!("{}: {}", tr("最近活跃"), activity.title),
             ];
             let count_label = tr("{count} 项筛选生效").replace("{count}", &count.to_string());
-            let summary = format!(
+            let mut summary = format!(
                 "{} · {count_label} · {}",
                 tr("收件箱筛选"),
                 labels.join(" · ")
             );
+            if hide_workflow_runs {
+                summary.push_str(" · ");
+                summary.push_str(hide_workflow_runs_label);
+            }
             return vec![
                 Button::new("global-inbox-compact-filters")
                     .outline()
@@ -1374,6 +1394,16 @@ impl GlobalInbox {
                             cx,
                             inbox.clone(),
                             Self::select_activity,
+                        );
+                        let toggle_inbox = inbox.clone();
+                        let menu = menu.item(
+                            PopupMenuItem::new(hide_workflow_runs_label)
+                                .checked(hide_workflow_runs)
+                                .on_click(move |_, _, cx| {
+                                    let _ = toggle_inbox.update(cx, |this, cx| {
+                                        this.set_hide_workflow_runs(!hide_workflow_runs, cx)
+                                    });
+                                }),
                         );
                         if count == 0 {
                             return menu;
@@ -1422,6 +1452,15 @@ impl GlobalInbox {
             inbox,
             Self::select_activity,
         ));
+        controls.push(
+            Checkbox::new("global-inbox-hide-workflow-runs")
+                .label(hide_workflow_runs_label)
+                .checked(hide_workflow_runs)
+                .on_change(cx.listener(|this, checked, _, cx| {
+                    this.set_hide_workflow_runs(*checked, cx);
+                }))
+                .into_any_element(),
+        );
         if self.preferences.has_filters() {
             controls.push(
                 Button::new("global-inbox-clear-filters")
@@ -1996,6 +2035,10 @@ fn matches_member(workspace: &str, entry: &Entry, selected: Option<&MemberFilter
     })
 }
 
+fn matches_workflow_filter(entry: &Entry, hide_workflow_runs: bool, reviewing_new: bool) -> bool {
+    reviewing_new || !hide_workflow_runs || !matches!(entry.target, Destination::WorkflowRun { .. })
+}
+
 pub(super) fn section_title(
     id: &'static str,
     title: &str,
@@ -2111,6 +2154,7 @@ impl Render for GlobalInbox {
             .values
             .activity_filter
             .filter(|_| !reviewing);
+        let hide_workflow_runs = self.preferences.values.hide_workflow_runs;
         let selected_title = selected_project(&app.workspaces, None, selected)
             .map(|project| display_project(project, &app.workspaces));
         let available: Vec<_> = app
@@ -2151,6 +2195,7 @@ impl Render for GlobalInbox {
                             matches_member(&workspace.id, entry, selected_member)
                                 && entry.matches_backend(selected_backend)
                                 && activity_matches(entry.activity_at, activity_since)
+                                && matches_workflow_filter(entry, hide_workflow_runs, reviewing)
                                 && (!reviewing
                                     || project
                                         .badge_item(app, &workspace.id, entry, now)
@@ -2342,10 +2387,8 @@ impl Render for GlobalInbox {
                 let title = display_project(workspace, &app.workspaces);
                 let workflow_status = if project.workflow_runs_error {
                     Some(tr("无法读取需关注的工作流运行"))
-                } else if project
-                    .workflow_runs
-                    .as_ref()
-                    .is_some_and(|runs| runs.limited)
+                } else if (reviewing || !hide_workflow_runs)
+                    && project.workflow_runs.as_ref().is_some_and(|runs| runs.limited)
                 {
                     Some(tr("收件箱保留最近 20 条失败或中断的工作流运行，以及暂缓过的运行"))
                 } else {
@@ -2845,8 +2888,8 @@ mod tests {
     use super::{
         ActionCenter, BadgeItem, Destination, Entry, InboxBadge, InboxFilter, InboxSections,
         MemberFilter, ProjectInbox, ReadingAnchor, ReadingPosition, RowId, WorkflowRuns,
-        display_project, matches_member, member_choices, row_is_visible, selected_project,
-        update_new_items, update_workflow_new_items,
+        display_project, matches_member, matches_workflow_filter, member_choices, row_is_visible,
+        selected_project, update_new_items, update_workflow_new_items,
     };
     use crate::collaboration::inbox::Priority;
     use crate::collaboration::inbox::placement::SnoozedUntil;
@@ -2968,6 +3011,79 @@ mod tests {
                 run: run.into(),
             }])
         );
+    }
+
+    #[test]
+    fn hiding_workflow_runs_filters_each_section_and_keeps_workflow_questions() {
+        let workspace = "atlas";
+        let dispatch = "70035fa8-80a3-4215-b86c-9d940ae01610";
+        let running = "70035fa8-80a3-4215-b86c-9d940ae01611";
+        let failed = "70035fa8-80a3-4215-b86c-9d940ae01612";
+        let interrupted = "70035fa8-80a3-4215-b86c-9d940ae01613";
+        let snoozed_key = super::super::workflow_run_key(interrupted);
+        let action_center: ActionCenter = serde_json::from_value(json!({
+            "workspace_id": workspace,
+            "generated_at": 200,
+            "attention": [
+                { "kind": "question_waiting_answer", "dispatch_id": dispatch, "message_id": "question",
+                  "message_sender_id": "atlas:__workflow__" },
+                { "kind": "dispatch_waiting_report", "dispatch_id": dispatch },
+                { "kind": "message_delivery_pending", "dispatch_id": dispatch, "message_id": "queued" }
+            ],
+            "recent_dispatch_messages": []
+        }))
+        .unwrap();
+        let workflows: WorkflowRuns = serde_json::from_value(json!({
+            "workspaceId": workspace, "limited": false,
+            "runningRuns": [{"id": running, "name": "Audit", "startedAt": 10}],
+            "runs": [
+                {"id": failed, "name": "Audit", "finishedAt": 20, "status": "failed"},
+                {"id": interrupted, "name": "Audit", "finishedAt": 20, "status": "interrupted"}
+            ],
+        }))
+        .unwrap();
+        let sections = |hide, review| {
+            InboxSections::from_rows(
+                action_center
+                    .entries(str::to_owned)
+                    .into_iter()
+                    .chain(workflows.entries())
+                    .filter(|entry| matches_workflow_filter(entry, hide, review))
+                    .map(|entry| (workspace, entry))
+                    .collect(),
+                |_, entry| {
+                    entry
+                        .snooze_key
+                        .as_deref()
+                        .is_some_and(|key| key == snoozed_key || key == "message:queued")
+                        .then_some(SnoozedUntil::Indefinitely)
+                },
+            )
+        };
+        let visible = sections(false, false);
+        assert_eq!(
+            (visible.attention.len(), visible.waiting.len(), visible.snoozed.len()),
+            (2, 2, 2)
+        );
+
+        let hidden = sections(true, false);
+        assert_eq!(
+            (hidden.attention.len(), hidden.waiting.len(), hidden.snoozed.len()),
+            (1, 1, 1)
+        );
+        let (project, question) = &hidden.attention[0];
+        assert!(matches!(
+            BadgeItem::from_entry(project, question, false),
+            Some(BadgeItem::Question { message, .. }) if message == "question"
+        ));
+
+        let review = sections(true, true);
+        assert!(review.attention.iter().any(|(project, entry)| {
+            matches!(
+                BadgeItem::from_entry(project, entry, false),
+                Some(BadgeItem::WorkflowRun { run, .. }) if run == failed
+            )
+        }));
     }
 
     #[test]

@@ -293,7 +293,7 @@ export async function collectReadinessReport(options: {
   };
 
   // 2. Codex (read-only executable + ~/.codex/config.toml & auth.json check)
-  const codexCmd = desktopSettings.codexCommand?.trim() || 'codex';
+  const codexCmd = desktopSettings.effective.codex.command;
   const codexExec = resolveExecutable(codexCmd, env);
   const codexHome = env.CODEX_HOME?.trim() || join(home, '.codex');
   const codexConfigPath = join(codexHome, 'config.toml');

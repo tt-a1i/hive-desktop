@@ -187,6 +187,7 @@ impl HiveApp {
             self.archive_settings.release_search();
             self.pi_models.vault.close();
             self.program_setup_focus = None;
+            self.cancel_codex_account_setup_focus();
             self.executable_picker_generation += 1;
         }
     }

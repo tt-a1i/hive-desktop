@@ -1,4 +1,9 @@
-use crate::{app::HiveApp, language::tr, palette::Color};
+use crate::{
+    app::{HiveApp, SettingsSection},
+    focus_scroll::Reveal,
+    language::tr,
+    palette::Color,
+};
 use gpui_kit::{
     component::{Theme, button::Button, *},
     prelude::FluentBuilder,
@@ -48,9 +53,11 @@ struct AccountResult {
     command: String,
     source: String,
     login_command: Option<String>,
+    profile: Option<crate::protocol::ProfileRef>,
 }
 #[derive(Default)]
 pub struct CodexAccountCheck {
+    setup_focus_pending: bool,
     scope: Option<super::CheckScope>,
     request_id: u64,
     loading: bool,
@@ -114,6 +121,13 @@ impl LimitsState {
     }
 }
 impl AccountResult {
+    fn matches_scope(&self, scope: &super::CheckScope) -> bool {
+        match scope {
+            super::CheckScope::Profile { reference, .. } => self.profile.as_ref() == Some(reference),
+            super::CheckScope::Draft { .. } => self.profile.is_none(),
+        }
+    }
+
     fn message_key(&self) -> &'static str {
         match self.status.as_str() {
             "account_detected" => match self.account_type.as_deref() {
@@ -147,6 +161,55 @@ impl CodexAccountCheck {
     }
 }
 impl HiveApp {
+    pub(crate) fn can_open_codex_sign_in_setup(&self, cx: &App) -> bool {
+        if let Some(settings) = &self.executable_settings
+            && self.codex_command.read(cx).value().trim()
+                != settings.codex_command.as_deref().unwrap_or_default()
+        {
+            return false;
+        }
+        self.profiles.snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot.profiles.iter().any(|profile| {
+                profile.id == "default-codex"
+                    && profile.driver == "codex"
+                    && profile.enabled
+                    && profile.revisions.iter().any(|revision| {
+                        revision.revision == profile.current_revision
+                            && revision.launch.config_dir.is_none()
+                            && revision.launch.args.is_empty()
+                    })
+            })
+        })
+    }
+
+    pub(crate) fn open_codex_sign_in_setup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_settings_section(SettingsSection::Programs, window, cx);
+        self.codex_account.setup_focus_pending = true;
+        cx.notify();
+    }
+
+    pub(super) fn cancel_codex_account_setup_focus(&mut self) {
+        self.codex_account.setup_focus_pending = false;
+    }
+
+    pub(super) fn finish_codex_account_setup(&mut self, window: &mut Window, cx: &mut App) {
+        if !self.codex_account.setup_focus_pending
+            || self.settings_loading
+            || self.profiles.loading
+            || self.codex_account.loading
+        {
+            return;
+        }
+        self.cancel_codex_account_setup_focus();
+        if self.settings_panel
+            && self.settings_section == SettingsSection::Programs
+            && self.preferences_focus.is_focused(window)
+            && self.program_check_scope("codex", cx).is_ok()
+        {
+            self.codex_account_focus.focus(window, cx);
+        }
+    }
+
     fn check_codex_account(&mut self, cx: &mut Context<Self>) {
         if !self.connected || self.codex_account.loading {
             return;
@@ -169,7 +232,14 @@ impl HiveApp {
                     params,
                 )
                 .await
-                .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()));
+                .and_then(|value| serde_json::from_value::<AccountResult>(value).map_err(|error| error.to_string()))
+                .and_then(|result| {
+                    if result.matches_scope(&scope) {
+                        Ok(result)
+                    } else {
+                        Err("Codex account response did not match the requested scope".into())
+                    }
+                });
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection || this.codex_account.request_id != id { return; }
                 let current = this.program_check_scope("codex", cx);
@@ -432,6 +502,25 @@ impl HiveApp {
                 },
             }
         };
+        let check = Button::new("check-codex-account")
+            .track_focus(&self.codex_account_focus)
+            .outline()
+            .small()
+            .h(px(28.))
+            .px_3()
+            .rounded_lg()
+            .label(if state.loading {
+                tr("检查中…")
+            } else {
+                tr("检查 Codex 连接与账号")
+            })
+            .disabled(
+                !self.connected
+                    || self.settings_loading
+                    || self.executable_settings.is_none()
+                    || state.loading,
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.check_codex_account(cx)));
         v_flex()
             .min_w_0()
             .gap_2()
@@ -448,26 +537,7 @@ impl HiveApp {
                     .justify_between()
                     .gap_2()
                     .flex_wrap()
-                    .child(
-                        Button::new("check-codex-account")
-                            .outline()
-                            .small()
-                            .h(px(28.))
-                            .px_3()
-                            .rounded_lg()
-                            .label(if state.loading {
-                                tr("检查中…")
-                            } else {
-                                tr("检查 Codex 连接与账号")
-                            })
-                            .disabled(
-                                !self.connected
-                                    || self.settings_loading
-                                    || self.executable_settings.is_none()
-                                    || state.loading,
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| this.check_codex_account(cx))),
-                    )
+                    .child(Reveal::new("check-codex-account-reveal", &self.program_scroll, check))
                     .child(
                         h_flex()
                             .flex_shrink_0()
@@ -537,9 +607,26 @@ impl HiveApp {
                         result
                             .login_command
                             .as_ref()
-                            .filter(|_| result.status == "signed_out"),
+                            .filter(|_| self.connected && result.status == "signed_out"),
                         |view, command| {
                             let copy = command.clone();
+                            let request_id = state.request_id;
+                            let copy_button = Button::new("copy-codex-login-command")
+                                .outline()
+                                .small()
+                                .h(px(26.))
+                                .px_2p5()
+                                .rounded_lg()
+                                .label(tr("复制 Codex 登录命令"))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let current = this.program_check_scope("codex", cx);
+                                    if this.connected
+                                        && this.codex_account.request_id == request_id
+                                        && !this.codex_account.input_changed(&current)
+                                    {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
+                                    }
+                                }));
                             view.child(
                                 v_flex()
                                     .gap_1p5()
@@ -582,20 +669,11 @@ impl HiveApp {
                                                     .text_color(Color::Text.get(cx)),
                                                 ),
                                             )
-                                            .child(
-                                                Button::new("copy-codex-login-command")
-                                                    .outline()
-                                                    .small()
-                                                    .h(px(26.))
-                                                    .px_2p5()
-                                                    .rounded_lg()
-                                                    .label(tr("复制 Codex 登录命令"))
-                                                    .on_click(move |_, _, cx| {
-                                                        cx.write_to_clipboard(
-                                                            ClipboardItem::new_string(copy.clone()),
-                                                        )
-                                                    }),
-                                            ),
+                                            .child(Reveal::new(
+                                                "copy-codex-login-command-reveal",
+                                                &self.program_scroll,
+                                                copy_button,
+                                            )),
                                     ),
                             )
                         },

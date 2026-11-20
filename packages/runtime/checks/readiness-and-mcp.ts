@@ -51,7 +51,8 @@ try {
 
   const fakeSettings = {
     get: async () => ({
-      codexCommand: fakeCodex,
+      codexCommand: null,
+      effective: { codex: { command: fakeCodex, source: 'env' } },
       claudeCommand: '/nonexistent/path/to/claude',
       piCommand: 'definitely-missing-pi-binary-xyz',
     }),
@@ -71,6 +72,7 @@ try {
   const byId = Object.fromEntries(report.backends.map(b => [b.backend, b]));
   assert.equal(byId.pi?.level, 'ready');
   assert.equal(byId.codex?.level, 'ready');
+  assert.equal(byId.codex?.executable, fakeCodex);
   assert.equal(byId.codex?.mcpCount, 3);
   assert.equal(byId.claude?.level, 'invalid_path');
   assert.equal(byId['pi-rpc']?.level, 'missing_executable');
@@ -104,6 +106,11 @@ try {
   const piExt = report.mcpResources.find(r => r.source === 'pi' && r.transport === 'extension');
   assert.equal(piExt?.name, 'custom-tool.ts');
 
+  const signedOutReport = await collectReadinessReport({
+    settings: fakeSettings, profiles: fakeProfiles, homeDir: home,
+    env: { PATH: '', CODEX_HOME: join(root, 'isolated Codex home') },
+  });
+  assert.equal(signedOutReport.backends.find(entry => entry.backend === 'codex')?.level, 'missing_credentials');
   console.log('READINESS_MCP_OK: all 5 backends readiness levels, Codex TOML MCP, Pi extensions, and malformed config diagnostics verified read-only.');
 } finally {
   rmSync(root, { recursive: true, force: true });

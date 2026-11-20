@@ -544,14 +544,15 @@ impl HiveApp {
                         }),
                 )
             });
-        let field = field.when(backend == "codex", |field| {
-            field.child(self.render_codex_account_check(cx))
-        });
-        crate::focus_scroll::Reveal::new(
-            SharedString::from(format!("program-{backend}-reveal")),
-            &self.program_scroll,
-            field,
-        )
+        v_flex()
+            .child(crate::focus_scroll::Reveal::new(
+                SharedString::from(format!("program-{backend}-reveal")),
+                &self.program_scroll,
+                field,
+            ))
+            .when(backend == "codex", |field| {
+                field.child(div().min_w_0().px_4().pb_3p5().child(self.render_codex_account_check(cx)))
+            })
     }
 
     fn probe_mcp_resource(

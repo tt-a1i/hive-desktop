@@ -2,8 +2,7 @@ import type { AgentProfiles, AgentProfileRef } from './agent-profiles.js';
 import { nativeProfileLaunch } from './agent-session-factory.js';
 import {probeCodexLimits} from './codex-limits.js';
 import { probeExecutable } from './executable-probe.js';
-import {probeCodexAccount} from './codex-account.js';
-import {terminalCommand} from './terminal-command.js';
+import {codexLoginCommand, probeCodexAccount} from './codex-account.js';
 import type { HiveHost } from './hive-host.js';
 
 export interface DesktopExecutables { piCommand: string | null; codexCommand: string | null; claudeCommand: string | null }
@@ -106,7 +105,13 @@ export class DesktopSettings {
       const launch = nativeProfileLaunch(profile);
       const task = probeCodexAccount(launch.command!, this.probeAbort.signal, launch);
       this.probes.add(task);
-      try { return {...await task, profile: profile.ref, command: launch.command, source: 'profile'}; }
+      try {
+        const result = await task;
+        const loginCommand = result.status === 'signed_out' && !profile.launch.configDir && !launch.args.length
+          ? codexLoginCommand(launch.command!, launch.env.CODEX_HOME)
+          : undefined;
+        return {...result, profile: profile.ref, command: launch.command, source: 'profile', ...(loginCommand && {loginCommand})};
+      }
       finally { this.probes.delete(task); }
     }
     const candidate=command(draft,'command');
@@ -117,8 +122,11 @@ export class DesktopSettings {
     this.probes.add(task);
     try {
       const result=await task;
+      const loginCommand = result.status === 'signed_out'
+        ? codexLoginCommand(effective.command, process.env.CODEX_HOME)
+        : undefined;
       return {...effective,source:effective.source==='app'&&candidate!==saved.codexCommand?'draft':effective.source,...result,
-        ...(result.status==='signed_out' && {loginCommand:terminalCommand([effective.command,'login'])})};
+        ...(loginCommand && {loginCommand})};
     } finally { this.probes.delete(task); }
   }
   async close(): Promise<void> {
