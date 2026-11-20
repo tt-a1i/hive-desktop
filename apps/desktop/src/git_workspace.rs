@@ -109,6 +109,13 @@ struct Change {
     conflict_stages: Option<Vec<Stage>>,
 }
 impl Change {
+    fn reveal_path(&self) -> Option<&str> {
+        (self.path_role.as_deref() != Some("rename-source")
+            && self.worktree_status != "D"
+            && !matches!(self.worktree_mode.as_deref(), Some("000000" | "120000" | "160000")))
+            .then_some(self.path.as_str())
+    }
+
     fn badge(&self) -> (&'static str, &'static str) {
         if self.kind == "unmerged"
             || self.index_status == "U"
@@ -1010,6 +1017,35 @@ impl GitWorkspace {
     }
     fn selected_change(&self) -> Option<&Change> {
         self.status.as_ref()?.entries.get(self.selected)
+    }
+
+    fn reveal_selected_file(&self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        let source = cx.weak_entity();
+        window.defer(cx, move |window, cx| {
+            let Some(source) = source.upgrade() else { return; };
+            let source = source.read(cx);
+            if source.preview_mock
+                || !source.current(cx)
+                || source.busy(cx)
+                || source.selected_change().and_then(Change::reveal_path) != Some(path.as_str())
+            {
+                return;
+            }
+            let app = source.app.clone();
+            if source.in_drawer {
+                if window.has_active_dialog(cx) {
+                    return;
+                }
+            } else {
+                window.close_dialog(cx);
+            }
+            let _ = app.update(cx, |app, cx| {
+                if app.git_drawer_open {
+                    app.close_git_workspace(cx);
+                }
+                app.reveal_project_file(path, window, cx);
+            });
+        });
     }
     fn select(&mut self, index: usize, load: bool, cx: &mut Context<Self>) {
         if self.status_loading
@@ -2110,6 +2146,7 @@ impl GitWorkspace {
         };
         let path_for_confirm = change.path.clone();
         let path_for_discard = change.path.clone();
+        let path_for_reveal = change.reveal_path().map(str::to_owned);
         let ws_discard = self.workspace.clone();
         let can_discard = change.kind != "untracked"
             && !change.worktree_status.is_empty()
@@ -2146,8 +2183,31 @@ impl GitWorkspace {
                     .child(
                         h_flex()
                             .flex_shrink_0()
+                            .max_w_full()
+                            .flex_wrap()
                             .items_center()
                             .gap_1()
+                            .child(
+                                Button::new("git-diff-reveal-file")
+                                    .outline()
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(22.))
+                                    .px_2()
+                                    .rounded_sm()
+                                    .label(tr("在文件面板中定位"))
+                                    .tooltip(tr(if path_for_reveal.is_some() {
+                                        "在文件面板中定位"
+                                    } else {
+                                        "此改动没有可定位的当前文件。"
+                                    }))
+                                    .disabled(path_for_reveal.is_none() || self.busy(cx))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if let Some(path) = path_for_reveal.clone() {
+                                            this.reveal_selected_file(path, window, cx);
+                                        }
+                                    })),
+                            )
                             .child(
                                 Button::new("git-diff-review-toggle")
                                     .outline()
@@ -3819,6 +3879,7 @@ mod tests {
         assert_eq!(status.total, 201);
         let change: &Change = &status.entries[0];
         assert_eq!(change.path, "新\n名.txt");
+        assert!(change.reveal_path().is_none());
         assert_eq!(change.original_path.as_deref(), Some("旧名.txt"));
         assert_eq!(change.conflict_stages.as_ref().unwrap()[0].oid, "stage-two");
         assert!(change.title().contains("\\n"));
@@ -3827,6 +3888,21 @@ mod tests {
                 .metadata()
                 .contains("stage 2: mode=100644 oid=stage-two")
         );
+    }
+
+    #[test]
+    fn git_reveal_uses_the_live_destination_of_a_rename() {
+        let mut change: Change = serde_json::from_value(json!({
+            "path":"nested/destination.txt", "repositoryPath":"project/nested/destination.txt",
+            "originalPath":"original.txt", "pathRole":"target", "kind":"rename",
+            "indexStatus":"R", "worktreeStatus":".", "worktreeMode":"100644"
+        })).unwrap();
+        assert_eq!(change.reveal_path(), Some("nested/destination.txt"));
+        change.worktree_status = "D".into();
+        assert_eq!(change.reveal_path(), None);
+        change.worktree_status = ".".into();
+        change.worktree_mode = Some("000000".into());
+        assert_eq!(change.reveal_path(), None);
     }
     #[test]
     fn git_diff_binary_and_errors_are_not_fabricated_text_patches() {

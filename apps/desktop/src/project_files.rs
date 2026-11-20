@@ -486,6 +486,26 @@ enum SourceState {
     Missing,
 }
 impl HiveApp {
+    fn can_reveal_project_file_reference(&self, item: &AttachmentRef) -> bool {
+        let Some(reference) = &item.project_file else {
+            return false;
+        };
+        if !self.can_browse_project_files() || self.workspace.as_ref() != Some(&item.workspace_id) {
+            return false;
+        }
+        let session = self.session.as_ref().filter(|session| session.workspace_id == item.workspace_id);
+        match reference.source_session_id.as_deref() {
+            Some(source) => session.is_some_and(|session| session.id == source),
+            None => session.is_none_or(|session| {
+                session.execution_path.as_deref().is_some_and(|directory| {
+                    self.workspaces.iter().any(|workspace| {
+                        workspace.id == item.workspace_id && workspace.path == directory
+                    })
+                })
+            }),
+        }
+    }
+
     pub(crate) fn open_project_file_details(
         &mut self,
         item: AttachmentRef,
@@ -526,6 +546,20 @@ impl ReferenceDetails {
                 && app.connection_generation == self.connection
                 && app.workspace.as_ref() == Some(&self.item.workspace_id)
         })
+    }
+
+    fn reveal_source(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.current(cx) {
+            return;
+        }
+        let _ = self.app.update(cx, |app, cx| {
+            if !app.can_reveal_project_file_reference(&self.item) {
+                return;
+            }
+            let path = self.item.project_file.as_ref().expect("validated project reference").relative_path.clone();
+            window.close_dialog(cx);
+            app.reveal_project_file(path, window, cx);
+        });
     }
     fn check(&mut self, cx: &mut Context<Self>) {
         if self.loading || !self.current(cx) {
@@ -576,6 +610,7 @@ impl Render for ReferenceDetails {
         let current = self.current(cx);
         let item = self.item.clone();
         let app = self.app.clone();
+        let can_reveal = current && app.upgrade().is_some_and(|app| app.read(cx).can_reveal_project_file_reference(&item));
         let state = match self.state {
             Some(SourceState::Unchanged) => tr("源文件与快照一致"),
             Some(SourceState::Changed) => tr("源文件已更改，发送仍使用保存的快照"),
@@ -650,7 +685,13 @@ impl Render for ReferenceDetails {
                                     app.open_attachment_preview(item.clone(), window, cx)
                                 });
                             }),
-                    ),
+                    )
+                    .when(can_reveal, |actions| actions.child(
+                        Button::new("reveal-project-reference-source")
+                            .outline()
+                            .label(tr("在文件面板中定位"))
+                            .on_click(cx.listener(|this, _, window, cx| this.reveal_source(window, cx))),
+                    )),
             )
     }
 }

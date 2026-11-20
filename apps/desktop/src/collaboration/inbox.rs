@@ -692,6 +692,7 @@ impl HiveApp {
                     action.disabled(!self.connected || self.closing),
                     scroll,
                     cx,
+                    None,
                     |this, workspace, key, delay, wake, cx| {
                         if this.workspace.as_deref() != Some(workspace)
                             || this.collaboration.inbox.workspace.as_deref() != Some(workspace)
@@ -778,6 +779,14 @@ fn inbox_status(text: impl Into<SharedString>, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+type InboxRowObserver = std::rc::Rc<dyn Fn(&bool, &mut Window, &mut App)>;
+
+struct InboxRowInteraction {
+    focus: FocusHandle,
+    hover: InboxRowObserver,
+    snooze_menu: InboxRowObserver,
+}
+
 fn inbox_row<T: 'static>(
     workspace: &str,
     project: Option<String>,
@@ -787,6 +796,7 @@ fn inbox_row<T: 'static>(
     open: Button,
     scroll: &ScrollHandle,
     cx: &Context<T>,
+    interaction: Option<InboxRowInteraction>,
     on_snooze: impl Fn(&mut T, &str, &str, Option<Delay>, &Option<Wake>, &mut Context<T>) + 'static,
 ) -> AnyElement {
     let label = tr(entry.label);
@@ -812,7 +822,7 @@ fn inbox_row<T: 'static>(
         .label(snooze_label)
         .disabled(!can_snooze)
         .accessibility_label(format!("{snooze_label} · {label} · {subject}"));
-    Reveal::new(
+    let row = Reveal::new(
         SharedString::from(row_id),
         scroll,
         h_flex()
@@ -845,9 +855,16 @@ fn inbox_row<T: 'static>(
             )
             .child(
                 h_flex()
+                    .id("inbox-row-actions")
                     .gap_1()
                     .flex_wrap()
                     .justify_end()
+                    .when_some(interaction.as_ref(), |actions, interaction| {
+                        let hover = interaction.hover.clone();
+                        actions.on_hover(move |over, window, cx| {
+                            hover(over, window, cx);
+                        })
+                    })
                     .when_some(entry.snooze_key, |buttons, key| {
                         let workspace = workspace.to_owned();
                         let entity = cx.weak_entity();
@@ -859,7 +876,7 @@ fn inbox_row<T: 'static>(
                             }));
                         }
                         let on_snooze = std::rc::Rc::new(on_snooze);
-                        buttons.child(snooze_button.dropdown_menu(move |menu, _, _| {
+                        let menu = snooze_button.dropdown_menu(move |menu, _, _| {
                             Delay::OPTIONS.iter().fold(menu, |menu, (title, delay)| {
                                 let entity = entity.clone();
                                 let on_snooze = on_snooze.clone();
@@ -881,6 +898,12 @@ fn inbox_row<T: 'static>(
                                     },
                                 ))
                             })
+                        });
+                        buttons.child(menu.when_some(interaction.as_ref(), |menu, interaction| {
+                            let observe_menu = interaction.snooze_menu.clone();
+                            menu.on_open_change(move |open, window, cx| {
+                                observe_menu(open, window, cx);
+                            })
                         }))
                     })
                     .child(
@@ -891,8 +914,9 @@ fn inbox_row<T: 'static>(
                             .accessibility_label(format!("{action} · {label} · {subject}")),
                     ),
             ),
-    )
-    .into_any_element()
+    );
+    row.when_some(interaction, |row, state| row.track_focus(&state.focus))
+        .into_any_element()
 }
 
 #[cfg(test)]

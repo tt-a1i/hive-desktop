@@ -82,7 +82,7 @@ impl Viewport {
         }
     }
 }
-fn viewport_scroll_delta(target: Bounds<Pixels>, bounds: Bounds<Pixels>) -> Pixels {
+pub(crate) fn viewport_scroll_delta(target: Bounds<Pixels>, bounds: Bounds<Pixels>) -> Pixels {
     // Current reveal groups place their controls after their explanatory text.
     // When the group cannot fit, keep those trailing actions visible.
     if target.size.height > bounds.size.height {

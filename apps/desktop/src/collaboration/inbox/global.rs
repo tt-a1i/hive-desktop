@@ -1,7 +1,11 @@
+#[path = "placement.rs"]
+mod placement;
+
+use self::placement::{InboxSections, RowId, RowPlacement};
 use super::snoozes::{Reminder, now_ms};
 use super::{
-    ActionCenter, Destination, Entry, Priority, Reminders, inbox_row, inbox_status, is_snoozed,
-    read_action_center, same_wake_target, sort_entries, toggle_button,
+    ActionCenter, Destination, Entry, InboxRowInteraction, Reminders, inbox_row, inbox_status,
+    is_snoozed, read_action_center, same_wake_target, toggle_button,
 };
 use crate::{
     app::HiveApp,
@@ -32,6 +36,8 @@ struct GlobalInbox {
     project_filter: Option<String>,
     show_waiting: bool,
     show_snoozed: bool,
+    placement: RowPlacement,
+    row_focus: HashMap<RowId, (FocusHandle, [Subscription; 2])>,
     dismissed: bool,
     scroll: ScrollHandle,
 }
@@ -116,6 +122,8 @@ impl HiveApp {
                 project_filter: None,
                 show_waiting: false,
                 show_snoozed: false,
+                placement: RowPlacement::default(),
+                row_focus: HashMap::new(),
                 dismissed: false,
                 scroll: ScrollHandle::new(),
             }
@@ -200,6 +208,7 @@ impl GlobalInbox {
             return;
         }
         self.project_filter = project;
+        self.placement.clear();
         self.scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
@@ -216,6 +225,7 @@ impl GlobalInbox {
                     if this.connection != app.connection_generation {
                         this.connection = app.connection_generation;
                         this.projects.clear();
+                        this.placement.clear();
                     }
                     this.projects
                         .retain(|id, _| app.workspaces.iter().any(|project| project.id == *id));
@@ -374,34 +384,6 @@ fn selected_project<'a>(
     workspaces.iter().find(|project| project.id == id)
 }
 
-#[derive(Default)]
-struct InboxSections<'a> {
-    attention: Vec<(&'a str, Entry)>,
-    waiting: Vec<(&'a str, Entry)>,
-    snoozed: Vec<(&'a str, Entry)>,
-}
-
-impl<'a> InboxSections<'a> {
-    fn from_rows(
-        mut rows: Vec<(&'a str, Entry)>,
-        mut snoozed: impl FnMut(&str, &Entry) -> bool,
-    ) -> Self {
-        sort_entries(&mut rows);
-        let mut sections = Self::default();
-        for (project, entry) in rows {
-            let section = if snoozed(project, &entry) {
-                &mut sections.snoozed
-            } else if entry.priority == Priority::Active {
-                &mut sections.waiting
-            } else {
-                &mut sections.attention
-            };
-            section.push((project, entry));
-        }
-        sections
-    }
-}
-
 fn section_title(id: &'static str, title: &str, count: usize, cx: &App) -> impl IntoElement {
     div()
         .id(id)
@@ -425,16 +407,18 @@ impl Render for GlobalInbox {
         let removing = app.workspace_removing.as_deref();
         let selected = selected_project(&app.workspaces, removing, self.project_filter.as_deref());
         if selected.is_none() && self.project_filter.take().is_some() {
+            self.placement.clear();
             self.scroll.set_offset(point(px(0.), px(0.)));
         }
+        let selected_title = selected.map(|project| display_project(project, &app.workspaces));
         let available: Vec<_> = app
             .workspaces
             .iter()
             .filter(|workspace| removing != Some(workspace.id.as_str()))
+            .cloned()
             .collect();
         let projects: Vec<_> = available
             .iter()
-            .copied()
             .filter(|project| selected.is_none_or(|selected| project.id == selected.id))
             .collect();
         let now = now_ms();
@@ -456,10 +440,10 @@ impl Render for GlobalInbox {
         } else {
             Vec::new()
         };
-        let sections = InboxSections::from_rows(rows, |id, entry| {
+        let fresh = InboxSections::from_rows(rows, |id, entry| {
             is_snoozed(entry, &self.projects[id].reminders, now)
         });
-        let has_snoozed = !sections.snoozed.is_empty();
+        let has_snoozed = !fresh.snoozed.is_empty();
         let status = if !ready {
             Some("后台连接后将显示跨项目收件箱。")
         } else if projects
@@ -467,8 +451,8 @@ impl Render for GlobalInbox {
             .any(|project| !self.projects.contains_key(&project.id))
         {
             Some("正在读取收件箱…")
-        } else if sections.attention.is_empty()
-            && sections.waiting.is_empty()
+        } else if fresh.attention.is_empty()
+            && fresh.waiting.is_empty()
             && !(has_snoozed && self.show_snoozed)
             && projects.iter().all(|workspace| {
                 self.projects
@@ -478,7 +462,7 @@ impl Render for GlobalInbox {
         {
             Some(if has_snoozed {
                 "此范围内的协作事项均已暂缓。"
-            } else if selected.is_some() {
+            } else if selected_title.is_some() {
                 "此项目暂无需要关注的协作事项。"
             } else {
                 "暂无需要关注的协作事项"
@@ -486,6 +470,27 @@ impl Render for GlobalInbox {
         } else {
             None
         };
+        let focused = window
+            .last_input_was_keyboard()
+            .then(|| {
+                self.row_focus
+                    .iter()
+                    .find_map(|(id, (focus, _))| focus.contains_focused(window, cx).then_some(id))
+            })
+            .flatten();
+        let sections = self
+            .placement
+            .arrange(fresh, focused, self.show_waiting, self.show_snoozed);
+        self.row_focus.retain(|id, _| self.placement.shows(id));
+        for id in self.placement.visible_rows() {
+            self.row_focus.entry(id.clone()).or_insert_with(|| {
+                let focus = cx.focus_handle();
+                let enter = cx.on_focus_in(&focus, window, |_, _, cx| cx.notify());
+                let exit = cx.on_focus_out(&focus, window, |_, _, _, cx| cx.notify());
+                (focus, [enter, exit])
+            });
+        }
+        let app = parent.read(cx);
         if available.len() > 1 || has_snoozed {
             let mut controls = h_flex()
                 .items_center()
@@ -494,10 +499,7 @@ impl Render for GlobalInbox {
                 .gap_2();
             if available.len() > 1 {
                 let all = tr("全部项目");
-                let title = selected.map_or_else(
-                    || all.to_owned(),
-                    |project| display_project(project, &app.workspaces),
-                );
+                let title = selected_title.unwrap_or_else(|| all.to_owned());
                 let tooltip = format!("{} · {title}", tr("按项目筛选收件箱"));
                 let choices: Vec<_> = std::iter::once((None, all.to_owned()))
                     .chain(available.iter().map(|project| {
@@ -548,6 +550,7 @@ impl Render for GlobalInbox {
                 controls = controls.child(toggle_button(self.show_snoozed).on_click(cx.listener(
                     |this, _, _, cx| {
                         this.show_snoozed = !this.show_snoozed;
+                        this.placement.clear();
                         cx.notify();
                     },
                 )));
@@ -596,12 +599,14 @@ impl Render for GlobalInbox {
         let connection = self.connection;
         let render_row = |(id, entry): (&str, Entry)| {
             let project = projects.iter().find(|project| project.id == id)?;
+            let row_id = RowId::for_entry(id, &entry);
             let title = display_project(project, &app.workspaces);
             let reminders = &self.projects[id].reminders;
             let snoozed = is_snoozed(&entry, reminders, now);
             let target = entry.target.clone();
             let id = id.to_owned();
             let button_workspace = id.clone();
+            let open_id = row_id.clone();
             let open =
                 Button::new("open-inbox-item").on_click(cx.listener(move |this, _, window, cx| {
                     if !this.is_current(connection, cx) {
@@ -610,6 +615,17 @@ impl Render for GlobalInbox {
                     let Some(app) = this.app.upgrade() else {
                         return;
                     };
+                    if app.read(cx).workspace_removing.as_deref() == Some(&button_workspace)
+                        || !this.placement.shows(&open_id)
+                        || !this.projects.get(&button_workspace).is_some_and(|project| {
+                            project.entries(app.read(cx)).iter().any(|entry| {
+                                RowId::for_entry(&button_workspace, entry) == open_id
+                                    && entry.target.key() == target.key()
+                            })
+                        })
+                    {
+                        return;
+                    }
                     this.dismissed = true;
                     window.close_dialog(cx);
                     app.update(cx, |app, cx| {
@@ -622,6 +638,21 @@ impl Render for GlobalInbox {
                         )
                     });
                 }));
+            let (focus, _) = self.row_focus.get(&row_id)?;
+            let hovered_id = row_id.clone();
+            let interaction = InboxRowInteraction {
+                focus: focus.clone(),
+                hover: std::rc::Rc::new(cx.listener(move |this, over, _, cx| {
+                    if this.placement.hover(&hovered_id, *over) {
+                        cx.notify();
+                    }
+                })),
+                snooze_menu: std::rc::Rc::new(cx.listener(move |this, open, _, cx| {
+                    if this.placement.menu(&row_id, *open) {
+                        cx.notify();
+                    }
+                })),
+            };
             Some(inbox_row(
                 &id,
                 Some(title),
@@ -631,6 +662,7 @@ impl Render for GlobalInbox {
                 open,
                 &self.scroll,
                 cx,
+                Some(interaction),
                 move |this, workspace, key, delay, wake, cx| {
                     if !this.is_current(connection, cx) {
                         return;
@@ -700,6 +732,7 @@ impl Render for GlobalInbox {
                     .accessibility_label(format!("{action} ({count})"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.show_waiting = !this.show_waiting;
+                        this.placement.clear();
                         cx.notify();
                     })),
             ));
@@ -724,9 +757,9 @@ impl Render for GlobalInbox {
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionCenter, Destination, Entry, InboxSections, Priority, display_project,
-        selected_project,
+        ActionCenter, Destination, Entry, InboxSections, display_project, selected_project,
     };
+    use crate::collaboration::inbox::Priority;
     use crate::protocol::Workspace;
     use serde_json::json;
 

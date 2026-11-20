@@ -105,7 +105,9 @@ impl HiveApp {
             .project_import
             .busy(self.connection_generation)
         {
-            self.welcome_setup.project_import = Default::default();
+            self.welcome_setup
+                .project_import
+                .reopen(self.data_dir.as_deref(), self.connection_generation);
         }
         self.welcome_scroll.set_offset(point(px(0.), px(0.)));
         self.showing_welcome_guide = true;

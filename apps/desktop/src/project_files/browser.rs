@@ -77,6 +77,67 @@ struct DirectoryPage {
     total: usize,
 }
 
+struct FileReveal {
+    path: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RevealStep<'a> {
+    Expand(&'a str),
+    Load(&'a str),
+    Wait,
+    Select,
+    Missing,
+}
+
+impl FileReveal {
+    fn step(
+        &self,
+        directories: &HashMap<String, Directory>,
+        expanded: Option<&HashSet<String>>,
+    ) -> RevealStep<'_> {
+        if self.path.contains(['\\', '\0'])
+            || self
+                .path
+                .split('/')
+                .any(|part| matches!(part, "" | "." | ".." | ".git"))
+        {
+            return RevealStep::Missing;
+        }
+        let mut parent = "";
+        for end in self
+            .path
+            .match_indices('/')
+            .map(|(index, _)| index)
+            .chain([self.path.len()])
+        {
+            let target = &self.path[..end];
+            let last = end == self.path.len();
+            let expects_directory = !last;
+            let Some(folder) = directories.get(parent) else {
+                return RevealStep::Load(parent);
+            };
+            if let Some(entry) = folder.entries.iter().find(|entry| entry.path == target) {
+                if entry.directory != expects_directory {
+                    return RevealStep::Missing;
+                }
+                if expects_directory && !expanded.is_some_and(|expanded| expanded.contains(target))
+                {
+                    return RevealStep::Expand(target);
+                }
+                parent = target;
+            } else if folder.loading || folder.error.is_some() {
+                return RevealStep::Wait;
+            } else if !folder.loaded || folder.next_offset < folder.total {
+                return RevealStep::Load(parent);
+            } else {
+                return RevealStep::Missing;
+            }
+        }
+        RevealStep::Select
+    }
+}
+
 #[derive(Clone, Deserialize)]
 struct Match {
     path: String,
@@ -163,6 +224,10 @@ impl FileTreeExpansions {
         }
         paths.insert(path);
         true
+    }
+
+    fn expand(&mut self, scope: TreeScope, path: String) {
+        self.paths.entry(scope).or_default().insert(path);
     }
 }
 
@@ -282,6 +347,8 @@ pub(crate) struct FileBrowser {
     resize_focus: FocusHandle,
     tree_focus: FocusHandle,
     tree_selected: Option<TreeItem>,
+    reveal: Option<FileReveal>,
+    reveal_missing: Option<String>,
     tree_scroll: ScrollHandle,
     search_scroll: ScrollHandle,
     search: SearchPage,
@@ -380,17 +447,49 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_project_file_browser(None, window, cx);
+    }
+
+    pub(crate) fn reveal_project_file(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_project_file_browser(Some(FileReveal { path }), window, cx);
+    }
+
+    fn show_project_file_browser(
+        &mut self,
+        reveal: Option<FileReveal>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if window.has_active_dialog(cx) {
             return;
         }
         let docked = self.can_dock_project_files(window);
-        if docked && self.project_file_dock.is_some() {
+        if docked && reveal.is_none() && self.project_file_dock.is_some() {
             self.close_project_file_dock(window, cx);
             return;
         }
         let (Some(scope), Some(runtime)) = (self.project_file_scope(), self.runtime.clone()) else {
             return;
         };
+        if let Some(browser) = self.project_file_dock.clone().filter(|_| docked) {
+            browser.update(cx, |browser, cx| {
+                // Observe current files even when this dock already visited the path.
+                browser.set_scope(Some(scope), Some(runtime), cx);
+                browser
+                    .query
+                    .update(cx, |query, cx| query.set_value("", window, cx));
+                browser.reveal = reveal;
+            });
+            Self::focus_file_tree(&browser, window);
+            cx.notify();
+            return;
+        }
+        let revealing = reveal.is_some();
         let app = cx.weak_entity();
         let expansions = self.project_file_tree_expansions.clone();
         let browser = cx.new(|cx| {
@@ -399,6 +498,8 @@ impl HiveApp {
                 &query,
                 |this: &mut FileBrowser, _, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Change) {
+                        this.reveal = None;
+                        this.reveal_missing = None;
                         this.search_offset = 0;
                         this.load_search(true, cx);
                     }
@@ -436,6 +537,8 @@ impl HiveApp {
                 resize_focus: cx.focus_handle(),
                 tree_focus: cx.focus_handle(),
                 tree_selected: None,
+                reveal: None,
+                reveal_missing: None,
                 tree_scroll: ScrollHandle::new(),
                 search_scroll: ScrollHandle::new(),
                 search: SearchPage::default(),
@@ -448,10 +551,18 @@ impl HiveApp {
                 preview_task: None,
             };
             browser.set_scope(Some(scope), Some(runtime), cx);
+            browser.reveal = reveal;
             browser
         });
-        let focus = browser.read(cx).query.read(cx).focus_handle(cx);
+        let focus = if revealing {
+            browser.read(cx).tree_focus.clone()
+        } else {
+            browser.read(cx).query.read(cx).focus_handle(cx)
+        };
         if docked {
+            if revealing {
+                Self::focus_file_tree(&browser, window);
+            }
             self.project_file_dock = Some(browser);
             // Keep typing in the same place when opening the side panel.
             cx.notify();
@@ -475,6 +586,19 @@ impl HiveApp {
         window.on_next_frame(move |window, cx| {
             if dialog_focus.is_some_and(|root| root.contains_focused(window, cx)) {
                 focus.focus(window, cx);
+            }
+        });
+    }
+
+    fn focus_file_tree(browser: &Entity<FileBrowser>, window: &mut Window) {
+        let browser = browser.downgrade();
+        window.on_next_frame(move |window, cx| {
+            if let Some(browser) = browser.upgrade() {
+                let browser = browser.read(cx);
+                let focus = browser.current(cx).then(|| browser.tree_focus.clone());
+                if let Some(focus) = focus.filter(|_| !window.has_active_dialog(cx)) {
+                    focus.focus(window, cx);
+                }
             }
         });
     }
@@ -680,6 +804,8 @@ impl FileBrowser {
         self.scope_generation += 1;
         self.directories.clear();
         self.tree_selected = None;
+        self.reveal = None;
+        self.reveal_missing = None;
         self.tree_scroll = ScrollHandle::new();
         self.search = SearchPage::default();
         self.search_offset = 0;
@@ -742,7 +868,11 @@ impl FileBrowser {
                     Ok(page) => {
                         folder.loaded = true;
                         folder.total = page.total;
-                        folder.next_offset += page.entries.len();
+                        folder.next_offset = if page.entries.is_empty() {
+                            page.total
+                        } else {
+                            folder.next_offset + page.entries.len()
+                        };
                         for entry in page.entries {
                             // The page may have shifted after files were added.
                             if !folder
@@ -761,6 +891,7 @@ impl FileBrowser {
                 {
                     this.select_tree_item(TreeItem::Entry(path), cx);
                 }
+                this.advance_reveal(cx);
                 this.restore_visible_expansions(cx);
                 cx.notify();
             });
@@ -772,6 +903,8 @@ impl FileBrowser {
         if !self.current(cx) {
             return;
         }
+        self.reveal = None;
+        self.reveal_missing = None;
         let scope = self
             .scope
             .as_ref()
@@ -816,6 +949,40 @@ impl FileBrowser {
         }
         for path in unrequested_expansions(&self.directories, expanded) {
             self.load_directory(path, cx);
+        }
+    }
+
+    fn advance_reveal(&mut self, cx: &mut Context<Self>) {
+        while let Some(reveal) = self.reveal.as_ref() {
+            match reveal.step(&self.directories, self.expanded_paths(cx)) {
+                RevealStep::Expand(path) => {
+                    let scope = self
+                        .scope
+                        .as_ref()
+                        .expect("current file scope")
+                        .tree
+                        .clone();
+                    let path = path.to_owned();
+                    self.expansions.update(cx, |expansions, cx| {
+                        expansions.expand(scope, path);
+                        cx.notify();
+                    });
+                }
+                RevealStep::Load(path) => {
+                    self.load_directory(path.to_owned(), cx);
+                    return;
+                }
+                RevealStep::Wait => return,
+                RevealStep::Select => {
+                    let item = TreeItem::Entry(reveal.path.clone());
+                    self.reveal = None;
+                    self.select_tree_item(item, cx);
+                }
+                RevealStep::Missing => {
+                    self.reveal_missing = Some(reveal.path.clone());
+                    self.reveal = None;
+                }
+            }
         }
     }
 
@@ -1027,6 +1194,8 @@ impl FileBrowser {
         if !self.current(cx) {
             return;
         }
+        self.reveal = None;
+        self.reveal_missing = None;
         let scope = self.scope.as_ref().expect("current file scope");
         let params = scope.params(json!({"relativePath":selection.path}));
         let runtime = self.runtime.clone().expect("current file runtime");
@@ -1563,6 +1732,16 @@ impl Render for FileBrowser {
         view = view.when_some(source, |view, source| {
             view.child(text_reading::selectable_text("browser-directory", source).text_xs())
         });
+        view = view.when_some(self.reveal_missing.as_ref(), |view, path| {
+            view.child(
+                div()
+                    .id("browser-reveal-missing")
+                    .role(Role::Status)
+                    .text_xs()
+                    .text_color(Color::Error.get(cx))
+                    .child(format!("{} {}", tr("当前文件树中找不到此文件。"), path)),
+            )
+        });
         view.child(
             h_flex()
                 .gap_1()
@@ -1616,8 +1795,8 @@ impl Render for FileBrowser {
 #[cfg(test)]
 mod tests {
     use super::{
-        Directory, DirectoryEntry, FileError, FileTreeExpansions, TreeRow, TreeScope, TreeSource,
-        dock_width, json, px, unrequested_expansions, visible_tree,
+        Directory, DirectoryEntry, FileError, FileReveal, FileTreeExpansions, RevealStep, TreeRow,
+        TreeScope, TreeSource, dock_width, json, px, unrequested_expansions, visible_tree,
     };
     use std::collections::{HashMap, HashSet};
 
@@ -1732,5 +1911,103 @@ mod tests {
         assert!(unrequested_expansions(&directories, &expanded).is_empty());
         let rows = visible_tree(&directories, Some(&expanded));
         assert!(rows.iter().any(|row| matches!(row, TreeRow::LoadMore("docs/nested", folder, _) if folder.error.is_some())));
+    }
+
+    #[test]
+    fn reveal_expands_cached_ancestors_and_pages_until_the_exact_file() {
+        let reveal = FileReveal {
+            path: "docs/nested/目标.txt".into(),
+        };
+        let entry = |path: &str, directory| DirectoryEntry {
+            path: path.into(),
+            directory,
+        };
+        let mut directories = HashMap::new();
+        let mut expanded = HashSet::new();
+        assert_eq!(reveal.step(&directories, None), RevealStep::Load(""));
+        directories.insert(
+            "".into(),
+            Directory {
+                entries: vec![entry("docs", true)],
+                loaded: true,
+                ..Default::default()
+            },
+        );
+        directories.insert(
+            "docs".into(),
+            Directory {
+                entries: vec![entry("docs/nested", true)],
+                loaded: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            reveal.step(&directories, Some(&expanded)),
+            RevealStep::Expand("docs")
+        );
+        expanded.insert("docs".into());
+        assert_eq!(
+            reveal.step(&directories, Some(&expanded)),
+            RevealStep::Expand("docs/nested")
+        );
+        expanded.insert("docs/nested".into());
+        assert_eq!(
+            reveal.step(&directories, Some(&expanded)),
+            RevealStep::Load("docs/nested")
+        );
+        directories.insert(
+            "docs/nested".into(),
+            Directory {
+                entries: vec![entry("docs/nested/另一目标.txt", false)],
+                total: 101,
+                next_offset: 100,
+                loaded: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            reveal.step(&directories, Some(&expanded)),
+            RevealStep::Load("docs/nested")
+        );
+        let folder = directories.get_mut("docs/nested").unwrap();
+        folder.next_offset = 101;
+        folder.entries.push(entry("docs/nested/目标.txt", false));
+        assert_eq!(
+            reveal.step(&directories, Some(&expanded)),
+            RevealStep::Select
+        );
+        directories.clear();
+        assert_eq!(
+            reveal.step(&directories, Some(&expanded)),
+            RevealStep::Load("")
+        );
+    }
+
+    #[test]
+    fn reveal_waits_for_failed_reads_and_reports_missing_or_replaced_files() {
+        let reveal = FileReveal {
+            path: "removed.txt".into(),
+        };
+        let mut root = HashMap::from([(
+            "".into(),
+            Directory {
+                error: Some(FileError::Request("Retry this read".into())),
+                ..Default::default()
+            },
+        )]);
+        assert_eq!(reveal.step(&root, None), RevealStep::Wait);
+        let folder = root.get_mut("").unwrap();
+        folder.error = None;
+        folder.loaded = true;
+        assert_eq!(reveal.step(&root, None), RevealStep::Missing);
+        root.get_mut("").unwrap().entries.push(DirectoryEntry {
+            path: "removed.txt".into(),
+            directory: true,
+        });
+        assert_eq!(reveal.step(&root, None), RevealStep::Missing);
+        let traversal = FileReveal {
+            path: "docs/../outside.txt".into(),
+        };
+        assert_eq!(traversal.step(&root, None), RevealStep::Missing);
     }
 }
