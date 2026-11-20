@@ -95,8 +95,12 @@ public static class OpenDialogHelper {
         if ($editHwnd -eq [IntPtr]::Zero) { throw 'Native file chooser ComboBox Edit HWND unavailable' }
         [void][OpenDialogHelper]::SendMessage($editHwnd, 0x000C, [IntPtr]::Zero, $Source)
         Start-Sleep -Milliseconds 150
-        [void][OpenDialogHelper]::PostMessage($editHwnd, 0x0100, [IntPtr]0x0D, [IntPtr]::Zero)
-        [void][OpenDialogHelper]::PostMessage($editHwnd, 0x0101, [IntPtr]0x0D, [IntPtr]::Zero)
+        # Trigger IDOK (1) on the IFileOpenDialog, and fall back to SendKeys Enter if still open.
+        [void][OpenDialogHelper]::PostMessage($dialogHwnd, 0x0111, [IntPtr]1, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 300
+        if ([NativeFixtureWindow]::GetForegroundWindow() -eq $dialogHwnd) {
+            [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+        }
         [void](Wait-Name 'Remove question-proof.txt')
         # Wait for the original question's saved draft and compare the exact
         # private bytes before moving the source and submitting the answer.
