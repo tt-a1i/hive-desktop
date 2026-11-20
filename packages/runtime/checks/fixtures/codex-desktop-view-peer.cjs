@@ -28,7 +28,11 @@ const setup = (id, saved) => {
 const notify = (method, params) => send({ method, params: { threadId: thread.id, ...params } });
 const save = () => writeFileSync(snapshotPath(thread.id), JSON.stringify(thread));
 const modelInfo = id => ({ id, model: id, displayName: 'Controlled metadata', hidden: false,
-  supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'medium' }] });
+  supportedReasoningEfforts: ['low', 'medium', 'high'].map(reasoningEffort => ({reasoningEffort})) });
+const override = name => {
+  const path = join(directory, `${thread.id}.${name}`);
+  return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
+};
 
 log({ method: 'process/start', version });
 createInterface({ input: process.stdin }).on('line', async line => {
@@ -37,6 +41,7 @@ createInterface({ input: process.stdin }).on('line', async line => {
   const { id, method, params } = request;
   log({ method, threadId: params?.threadId ?? thread?.id, cwd: params?.cwd,
     ...(method === 'thread/resume' && { deferGoalContinuation: params.deferGoalContinuation }),
+    ...(method === 'thread/settings/update' && {effort:params.effort}),
     ...(method === 'turn/start' && { input: params.input, additionalContext: params.additionalContext }) });
   const reply = result => send({ id, result });
   try {
@@ -52,7 +57,7 @@ createInterface({ input: process.stdin }).on('line', async line => {
       }
       case 'thread/read':
         await gate(`${thread.id}.hold-read`);
-        return reply({ thread: { ...thread, model, reasoningEffort: effort }, model, modelProvider: 'openai' });
+        return reply({ thread: { ...thread, model:override('reported-model') ?? model, reasoningEffort: effort }, model, modelProvider: 'openai' });
       case 'thread/turns/list': {
         const offset = Number(params.cursor ?? 0);
         const turn = thread.turns[offset];
@@ -64,7 +69,7 @@ createInterface({ input: process.stdin }).on('line', async line => {
       case 'thread/settings/update':
         await gate(`${thread.id}.hold-settings`);
         model = params.model ?? model;
-        effort = params.effort ?? effort;
+        effort = params.effort !== undefined ? override('clamped-effort') ?? params.effort : effort;
         reply({});
         return notify('thread/settings/updated', { threadSettings: { model, effort } });
       case 'turn/start': {

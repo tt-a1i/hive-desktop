@@ -190,13 +190,14 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     await refresh(); options.signal?.throwIfAborted(); initialized = true;
   } catch (error) { disposed = true; await transport.close(); throw error; }
   finally { options.signal?.removeEventListener('abort', onInitAbort); }
-  const reasoning = async () => {
+  const readReasoning = async () => {
     ensureOpen();
     const current = await transport.request<State & { thinkingLevel: string }>('get_state');
     const { levels } = await transport.request<{ levels: string[] }>('get_available_thinking_levels');
     if (typeof current.thinkingLevel !== 'string' || !Array.isArray(levels) || !levels.every(level => typeof level === 'string')) throw new Error('外部 Pi 未返回有效的推理强度信息。');
-    return { level: current.thinkingLevel, levels: current.model ? levels : [] };
+    return { model: current.model, state: { level: current.thinkingLevel, levels: current.model ? levels : [] } };
   };
+  const reasoning = async () => (await readReasoning()).state;
   return {
     sessionId: state.sessionId,
     teamToolName: transport.teamToolName,
@@ -313,13 +314,16 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
       return result.commands.filter(command => command.name !== transport.bridgeCommand);
     },
     reasoning,
-    async setReasoning(level) {
+    async setReasoning(level, guard) {
       ensureOpen();
       if (active) throw new Error('External Pi session is already processing a prompt');
-      const previous = await reasoning();
-      if (!previous.levels.includes(level)) throw new TypeError('当前模型不支持此推理强度。');
+      const previous = await readReasoning();
+      if (!previous.state.levels.includes(level)) throw new TypeError('当前模型不支持此推理强度。');
+      guard?.('before', previous.state, previous.model);
       await transport.request('set_thinking_level', { level });
-      return reasoning();
+      const applied = await readReasoning();
+      guard?.('after', applied.state, applied.model);
+      return applied.state;
     },
     setModel,
   };

@@ -115,6 +115,16 @@ impl HiveApp {
     }
 
     pub(crate) fn show_team(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_inbox_member_reveal();
+        self.show_team_view(window, cx, true);
+    }
+
+    pub(crate) fn show_team_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        focus_search: bool,
+    ) {
         self.close_workflows();
         self.close_memory();
         self.close_settings();
@@ -122,8 +132,10 @@ impl HiveApp {
         self.close_roles();
         self.hide_terminal(cx);
         self.member_panel = true;
-        let focus = self.member_search.read(cx).focus_handle(cx);
-        window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        if focus_search {
+            let focus = self.member_search.read(cx).focus_handle(cx);
+            window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        }
         if window.viewport_size().width < px(820.) {
             self.sidebar_open = false;
         }

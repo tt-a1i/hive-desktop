@@ -39,7 +39,7 @@ import { type CodexSessionHandle } from './agents/codex.js';
 import { CodexModes, CodexSavedModeError, type CodexModeReplacement } from './agents/codex-modes.js';
 import { CodexTransport } from './agents/codex-transport.js';
 import { type ExternalPiSessionHandle } from './agents/external-pi.js';
-import { isCodexWorkMode, type PiEvent, type PiSessionHandle } from './agents/types.js';
+import { isCodexWorkMode, type PiEvent, type PiSessionHandle, type ReasoningState } from './agents/types.js';
 import { ChatIndex, SessionIdentityError, assertWorktreeUse, canStartFreshWorktreeDraft, comparePinnedSessions, declaredExecutionPath, isUnsetPiModel, worktreeDraftAvailability, type ChatRecord, type ChatBackend, type PinnedSessionRef } from './chat-index.js';
 import { createScratchConversation, isScratchWorkspace, validateScratchConversation } from './scratch-workspace.js';
 import { ScratchProjectLinks, type ScratchProjectRequest } from './scratch-project-links.js';
@@ -4211,35 +4211,125 @@ export class Chats implements StructuredSessionPort {
       };
       const chat = await this.require(id, browse);
       if (!chat.handle.reasoning || !chat.handle.setReasoning) throw new Error('此后端尚未接入推理强度设置。');
-      const decorate = (state: Awaited<ReturnType<NonNullable<PiSessionHandle['reasoning']>>>) => ({...state,
-        ...(chat.handle.currentModel() && {model:chat.handle.currentModel()}),
-        ...(chat.reasoningFailure && {description:`原设置未能恢复：${chat.reasoningFailure.message} 请选择当前可用档位。`})});
-      if (level === undefined) return decorate(await chat.handle.reasoning());
+      if (level === undefined) return this.reasoningState(chat, await chat.handle.reasoning());
       if (chat.queue.busy) throw new Error('请在当前回复结束后调整推理强度。');
       if (!(await chat.handle.reasoning()).levels.includes(level as string)) throw new TypeError('当前模型不支持此推理强度。');
       if (chat.queue.busy) throw new Error('请在当前回复结束后调整推理强度。');
       return this.changeNativeSettings(id, chat, async () => {
         const state = await chat.handle.setReasoning!(level as string);
-        if (record.backend === 'codex' || record.backend === 'claude') {
-          const model = chat.handle.currentModel();
-          if (!model) throw new Error('原生会话未提供可保存推理设置的模型身份。');
-          const current = this.index.get(id);
-          delete current.inheritedDraftReasoning;
-          delete current.unavailableReasoning;
-          // An explicit picker may accept the backend's advertised clamped
-          // value. Only the level that actually applied is eligible to inherit.
-          if (state.levels.includes(state.level)) current.reasoning = {provider:model.provider,modelId:model.id,level:state.level};
-          else delete current.reasoning;
-          this.index.save({...current, model});
-        }
+        this.saveReasoningState(id, state, chat.handle.currentModel());
         delete chat.reasoningFailure;
-        return decorate(state);
+        return this.reasoningState(chat, state);
       });
     });
   }
-  private async changeNativeSettings<T>(id: string, chat: LiveChat, change: () => T | Promise<T>): Promise<T> {
+
+  async stepReasoning(id: string, direction: 'increase' | 'decrease', revision: number) {
+    return this.readDesktopView(id, revision, async () => {
+      const {workspaceId} = this.index.get(id);
+      this.assertWorkspaceAvailable(workspaceId);
+      return this.withWorkspace(workspaceId, async () => {
+        this.assertDesktopView(id, revision);
+        this.assertWorkspaceAvailable(workspaceId);
+        const chat = this.live.get(id);
+        if (!chat || chat.cleanup || chat.failure || chat.modeChanging)
+          throw new Error('Connect to the Agent before stepping its reasoning effort.');
+        const {handle, queue} = chat;
+        if (!handle.reasoning || !handle.setReasoning) throw new Error('This backend does not support reasoning effort.');
+        const model = handle.currentModel();
+        const matchesModel = (value: {id: string; provider: string} | undefined) =>
+          !!model && value?.id === model.id && value.provider === model.provider;
+        const assertOwner = () => {
+          this.closeAbort.signal.throwIfAborted();
+          this.assertWorkspaceAvailable(workspaceId);
+          if (this.live.get(id) !== chat || chat.cleanup || chat.failure)
+            throw new Error('The native conversation changed while reading its reasoning controls.');
+          if (!matchesModel(handle.currentModel()) || !matchesModel(this.index.get(id).model))
+            throw new Error('The conversation model changed while reading its reasoning controls.');
+        };
+        const assertReadyToWrite = () => {
+          this.assertDesktopView(id, revision);
+          assertOwner();
+          const current = this.index.get(id);
+          assertWorktreeUse(current);
+          if (current.archived || current.unavailableDraftModel || current.unavailableReasoning || chat.reasoningFailure
+            || (current.handoff && this.handoffDeliveries.get(id)?.status !== 'consumed')
+            || this.deliveryFailure(id, queue))
+            throw new Error('Resolve the conversation state before stepping its reasoning effort.');
+          if (queue.busy || queue.pendingCount || handle.interactions?.().length)
+            throw new Error('Finish running or queued work before stepping reasoning effort.');
+        };
+        assertReadyToWrite();
+        const record = await this.runnableIdentity(this.index.get(id));
+        await this.initializationReady(record);
+        if (record.rewindOperationId) await this.assertHistoryReady(record);
+        if (record.scratch || this.isSharedWorktree(record)) await this.executionDirectory(workspaceId, id);
+        assertReadyToWrite();
+
+        const previous = await handle.reasoning();
+        assertReadyToWrite();
+        const levels = [...new Set(previous.levels)];
+        const index = levels.indexOf(previous.level);
+        if (levels.length < 2 || index < 0) throw new Error('The current model has no other reasoning level to step to.');
+        const next = levels[(index + (direction === 'increase' ? 1 : levels.length - 1)) % levels.length]!;
+
+        const wasPaused = queue.isPaused;
+        let writing = false;
+        let confirmed = false;
+        chat.modeChanging = true;
+        try {
+          await queue.pause();
+          assertReadyToWrite();
+          const applied = await this.changeNativeSettings(id, chat, async () => {
+            const state = await handle.setReasoning!(next, (phase, native, actualModel) => {
+              if (phase === 'before') assertReadyToWrite();
+              else assertOwner();
+              if (!matchesModel(actualModel)) throw new Error('The Agent reported a different model for its reasoning controls.');
+              if (phase === 'before') {
+                if (native.level !== previous.level || !isDeepStrictEqual([...new Set(native.levels)], levels))
+                  throw new Error('The Agent changed its reasoning controls before the step.');
+                writing = true;
+              } else {
+                confirmed = true;
+              }
+            });
+            if (!confirmed || !state.levels.includes(state.level))
+              throw new Error('The Agent did not confirm a supported reasoning level.');
+            if (state.level !== previous.level) this.saveReasoningState(id, state, model);
+            return state;
+          }, () => writing);
+          if (applied.level === previous.level) throw new Error('The Agent left its reasoning level unchanged.');
+          return this.reasoningState(chat, applied);
+        } finally {
+          delete chat.modeChanging;
+          if (!wasPaused && !chat.failure && !chat.cleanup) queue.resume();
+        }
+      });
+    });
+  }
+
+  private reasoningState(chat: LiveChat, state: ReasoningState) {
+    const model = chat.handle.currentModel();
+    return {...state, ...(model && {model}),
+      ...(chat.reasoningFailure && {description:`原设置未能恢复：${chat.reasoningFailure.message} 请选择当前可用档位。`})};
+  }
+
+  private saveReasoningState(id: string, state: ReasoningState, model: ReturnType<PiSessionHandle['currentModel']>) {
+    const current = this.index.get(id);
+    if (current.backend !== 'codex' && current.backend !== 'claude') return;
+    if (!model) throw new Error('原生会话未提供可保存推理设置的模型身份。');
+    delete current.inheritedDraftReasoning;
+    delete current.unavailableReasoning;
+    // The native Agent may apply a different supported level.
+    if (state.levels.includes(state.level)) current.reasoning = {provider:model.provider, modelId:model.id, level:state.level};
+    else delete current.reasoning;
+    this.index.save({...current, model});
+  }
+
+  private async changeNativeSettings<T>(id: string, chat: LiveChat, change: () => T | Promise<T>, writeStarted?: () => boolean): Promise<T> {
     try { return await change(); }
     catch (error) {
+      if (writeStarted && !writeStarted()) throw error;
       // Native setters may advance memory/branch pointers before a failed write.
       // Reuse the existing pause/dispose path so retry reloads durable state.
       console.error('[hive-desktop] native session settings failed', error);

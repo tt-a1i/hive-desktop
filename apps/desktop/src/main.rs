@@ -170,6 +170,8 @@ fn main() {
                 ),
                 KeyBinding::new("enter", NextConversationMatch, Some("HiveConversationFind")),
                 KeyBinding::new("shift-enter", PreviousConversationMatch, Some("HiveConversationFind")),
+                KeyBinding::new("enter", NextConversationMatch, Some("HiveExpandedFileFind")),
+                KeyBinding::new("shift-enter", PreviousConversationMatch, Some("HiveExpandedFileFind")),
                 KeyBinding::new("down", NextSessionResult, Some("HiveSessionSearch")),
                 KeyBinding::new("up", PreviousSessionResult, Some("HiveSessionSearch")),
                 KeyBinding::new("down", NextSessionResult, Some("HiveProjectFileSearch")),

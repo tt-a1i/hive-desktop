@@ -49,7 +49,39 @@ pub(super) struct Inbox {
     show_snoozed: bool,
     section_depth: SectionDepth,
     return_position: Option<ProjectInboxPosition>,
+    member_reveal: Option<InboxMemberReveal>,
+    member_open_error: bool,
     undo: UndoSlot,
+}
+
+const OPEN_INBOX_MEMBER_FAILED: &str = "无法打开团队成员";
+
+struct InboxMemberReveal {
+    workspace: String,
+    member: String,
+    connection: u64,
+    focus: FocusHandle,
+    pending: bool,
+}
+
+fn exact_inbox_member<'a>(members: &'a [Member], id: &str) -> Option<&'a Member> {
+    let mut matches = members.iter().filter(|member| member.id == id);
+    let member = matches.next()?;
+    matches.next().is_none().then_some(member)
+}
+
+async fn verify_inbox_member(
+    runtime: &Runtime,
+    workspace: &str,
+    member: &str,
+) -> Option<Vec<Member>> {
+    let value = runtime
+        .request("team.members", json!({"workspaceId":workspace}))
+        .await
+        .ok()?;
+    let members: Vec<Member> = serde_json::from_value(value).ok()?;
+    exact_inbox_member(&members, member)?;
+    Some(members)
 }
 
 #[derive(Clone, PartialEq)]
@@ -69,6 +101,7 @@ impl Inbox {
     pub(super) fn invalidate(&mut self) {
         self.generation += 1;
         self.loading = false;
+        self.member_open_error = false;
         self.undo.clear();
     }
 }
@@ -971,6 +1004,122 @@ impl Attention {
 }
 
 impl HiveApp {
+    fn show_verified_inbox_member(
+        &mut self,
+        workspace: &str,
+        member: &str,
+        members: Vec<Member>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(exact) = exact_inbox_member(&members, member) else {
+            return;
+        };
+        let search = self.member_search.read(cx).value().trim().to_lowercase();
+        if !exact.matches_team_status(self.member_status_filter) {
+            self.member_status_filter = "all";
+        }
+        if !exact.matches_team_search(&search) {
+            self.member_search
+                .update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        if self.workspace.as_deref() != Some(workspace) {
+            self.select_workspace(workspace.to_owned(), cx);
+        }
+        self.members = members;
+        self.member_details_open
+            .entry(member.to_owned())
+            .or_default();
+        self.member_focus_search = false;
+        self.collaboration.inbox.member_reveal = Some(InboxMemberReveal {
+            workspace: workspace.to_owned(),
+            member: member.to_owned(),
+            connection: self.connection_generation,
+            focus: cx.focus_handle(),
+            pending: true,
+        });
+        self.show_team_view(window, cx, false);
+    }
+
+    pub(crate) fn clear_inbox_member_reveal(&mut self) {
+        self.collaboration.inbox.member_reveal = None;
+    }
+
+    pub(crate) fn inbox_member_focus(&self, member: &str) -> Option<&FocusHandle> {
+        let reveal = self.collaboration.inbox.member_reveal.as_ref()?;
+        (self.member_panel
+            && self.connection_generation == reveal.connection
+            && self.workspace.as_deref() == Some(&reveal.workspace)
+            && reveal.member == member)
+            .then_some(&reveal.focus)
+    }
+
+    pub(crate) fn reveal_inbox_member(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(reveal) = &mut self.collaboration.inbox.member_reveal else {
+            return;
+        };
+        if !reveal.pending
+            || !self.member_panel
+            || self.workspace.as_deref() != Some(&reveal.workspace)
+            || self.connection_generation != reveal.connection
+            || exact_inbox_member(&self.members, &reveal.member).is_none()
+        {
+            return;
+        }
+        reveal.pending = false;
+        let member = reveal.member.clone();
+        let focus = reveal.focus.clone();
+        let app = cx.weak_entity();
+        window.on_next_frame(move |window, cx| {
+            if app
+                .upgrade()
+                .is_some_and(|app| app.read(cx).inbox_member_focus(&member) == Some(&focus))
+            {
+                focus.focus(window, cx);
+            }
+        });
+    }
+
+    fn open_project_inbox_member(
+        &mut self,
+        workspace: String,
+        member: String,
+        position: ProjectInboxPosition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(origin), Some(runtime)) = (self.history_link_target(), self.runtime.clone())
+        else {
+            return;
+        };
+        self.collaboration.detail_generation += 1;
+        let generation = self.collaboration.detail_generation;
+        self.collaboration.inbox.member_open_error = false;
+        cx.spawn_in(window, async move |this, cx| {
+            let roster = verify_inbox_member(&runtime, &workspace, &member).await;
+            let _ = cx.update(|window, cx| {
+                let _ = this.update(cx, |app, cx| {
+                    if !origin.current(app)
+                        || app.collaboration.detail_generation != generation
+                        || app.workspace.as_deref() != Some(&workspace)
+                        || app.workspace_removing.as_deref() == Some(&workspace)
+                        || !app.collaboration.visible
+                    {
+                        return;
+                    }
+                    if let Some(roster) = roster {
+                        app.show_verified_inbox_member(&workspace, &member, roster, window, cx);
+                        app.collaboration.inbox.return_position = Some(position);
+                    } else {
+                        app.collaboration.inbox.member_open_error = true;
+                        cx.notify();
+                    }
+                });
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn note_live_inbox_reply(
         &mut self,
         workspace: &str,
@@ -1490,6 +1639,9 @@ impl HiveApp {
             .when_some(status, |panel, status| {
                 panel.child(inbox_status(tr(status), cx))
             })
+            .when(current && inbox.member_open_error, |panel| {
+                panel.child(inbox_status(tr(OPEN_INBOX_MEMBER_FAILED), cx))
+            })
             .when_some(
                 current.then(|| inbox.reminders.notice()).flatten(),
                 |panel, (label, error)| {
@@ -1640,10 +1792,13 @@ impl HiveApp {
                                         this.collaboration.inbox.return_position = Some(position);
                                     }
                                 }
-                                Destination::Member(_) => {
-                                    this.show_team(window, cx);
-                                    this.collaboration.inbox.return_position = Some(position);
-                                }
+                                Destination::Member(member) => this.open_project_inbox_member(
+                                    workspace.clone(),
+                                    member.clone(),
+                                    position,
+                                    window,
+                                    cx,
+                                ),
                             }
                         }),
                     );
@@ -2102,11 +2257,44 @@ mod tests {
     use super::{
         ActionCenter, ActionableCursor, ActionablePage, ArchiveInboxSession, Attention, Delay,
         Destination, Entry, MarkInboxRead, Priority, Reminders, SnoozeEdit, Snoozes,
-        UNREAD_CONVERSATION, Wake, exact_message, now_ms, sort_entries, validate_actionable_rows,
+        UNREAD_CONVERSATION, Wake, exact_inbox_member, exact_message, now_ms, sort_entries,
+        validate_actionable_rows,
     };
-    use crate::protocol::MemberDesktopActivity;
+    use crate::protocol::{Member, MemberDesktopActivity};
     use serde_json::json;
     use std::collections::HashSet;
+
+    #[test]
+    fn selecting_an_inbox_member_uses_unique_exact_id_and_the_same_team_filter_predicates() {
+        let make = |id: &str, description: &str, status: &str| {
+            serde_json::from_value::<Member>(json!({
+                "id":id, "name":"Same reviewer", "description":description,
+                "role":"reviewer", "status":status, "pending_task_count":3,
+            }))
+            .unwrap()
+        };
+        let first = make("first", "Review migration", "working");
+        let second = make("second", "Verify billing", "stopped");
+        let roster = [first, second];
+        let target = exact_inbox_member(&roster, "second").unwrap();
+        assert_eq!(target.description, "Verify billing");
+        assert!(target.matches_team_search("reviewer"));
+        assert!(!target.matches_team_search("migration"));
+        assert!(target.matches_team_status("all"));
+        assert!(!target.matches_team_status("working"));
+        assert!(target.matches_team_status("stopped"));
+        assert!(exact_inbox_member(&roster, "unknown").is_none());
+        assert!(
+            exact_inbox_member(
+                &[
+                    make("second", "Verify billing", "stopped"),
+                    make("second", "Other", "idle")
+                ],
+                "second",
+            )
+            .is_none()
+        );
+    }
 
     #[test]
     fn actionable_pages_reject_missing_boundaries_incomplete_pages_and_duplicates() {

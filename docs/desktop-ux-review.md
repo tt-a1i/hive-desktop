@@ -448,8 +448,22 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - Rust 专项覆盖三个分区独立的展开上限、101 条待答时保留完整计数与较深的返回位置。另核对旧发送设置、多行按键分派、源码横向滚动边界及旧外观设置默认继续换行。
 - 305 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、桌面视图、收件箱通信及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
 
+## 2026-11-21 第三十三批
+
+本轮从 Hive Desktop `7aadec0` 开始。参考 T3 Code `a1b9e1c`、Cindy `6b05493`、Beluga `eed1b7e`。Hive 上游 `main` 为 `18861b8`。
+
+- **收件箱直达对应团队成员。** 项目与跨项目入口按工作区和成员 ID 核对目标，展开职责说明并将焦点移过去。团队搜索或状态筛选仅在挡住目标时清除。无法核对目标时在原收件箱提示。 [Cindy 伙伴收件箱规则](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/docs/product-rules/task-inbox.md#L90-L106)
+- **通过可自定义的快捷键调整当前会话的推理强度。** 提高和降低默认无键位。给动作绑定快捷键后，在已连接且空闲的会话输入框中直接切换档位，两端循环。按 Agent 当前模型的可用档位判断，保存 Agent 确认的结果。 [T3 Code 推理强度快捷键](https://github.com/pingdotgg/t3code/blob/a1b9e1cc8709d50190bf8e1f50e94257ce206525/docs/user/keybindings.md#L41-L44)
+- **在展开的源码阅读器内查找。** 用 `Cmd/Ctrl+F` 搜索已加载的源码，显示匹配总数，用 `Enter` 或 `Shift+Enter` 前后切换。同一行上的命中可单独定位，关闭换行时也会滚到远处匹配。按 `Esc` 先回到源码，再返回文件面板。 [Beluga 文件内查找](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/DocFind.tsx#L22-L39)
+
+- macOS 先设置挡住目标的团队搜索和「工作中」筛选，再从跨项目收件箱打开成员 2，看到 Atlas 的正确职责说明。随后从 Atlas 进入 Beacon 的同名成员，显示 Beacon 的正文。项目与跨项目入口跳转后按空格，只有目标职责说明收起，证明焦点在正确控件。重新打开两个收件箱后，目标行均返回原坐标。证据在 `.artifacts/batch33-inbox-qa`。
+- macOS 在一个 740 行文件中用 `Cmd+F` 找到四处文本，包括同一行中的两处。`Enter` 和 `Shift+Enter` 前后跳转，只有最初读取文件的请求。关闭换行后跳到第 350 行的第 1,619 列，实窗坐标确认正文横向移动 13,726 像素。两次 `Esc` 依次关闭查找和阅读器，文件面板保留原搜索。证据在 `.artifacts/batch33-find-qa`。
+- macOS 冷开后在快捷键设置中确认两个动作已绑定，绑定值来自隔离夹具配置。聚焦输入框后按 `Cmd+Shift+J`、`Cmd+Shift+J`、`Cmd+Shift+K`，受控 Codex 对端收到同一会话的三次设置更新，档位依次为高、低、高。另在草稿中间放置光标，切换档位后在同一位置插入字符，确认文字和光标保持。未发送提示。证据在 `.artifacts/batch33-effort-qa`。
+- 专项测试覆盖同名成员与筛选、旧快捷键配置迁移和冲突、Unicode 匹配范围及跨页定位。受控 Codex 运行时核对两端循环、每次有效调整只写一次、另一会话设置保持、保存后端实际档位，以及忙碌、模型变化、失效视图和未连接时不写入。内置 Pi 的运行时测试核对原生会话记录只追加一次，且全局默认设置字节一致。
+- 310 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、Hive HTTP 与 SQLite、桌面视图、推理强度专项与 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **从项目收件箱打开具体成员。** 当两个已停止成员都有未结派单时，从项目收件箱打开其中一项只会进入通用团队页。跨项目入口会展开对应成员。验收在团队筛选会挡住目标的情况下，点击后仍可直接定位目标，并能返回原收件箱位置。 [Cindy 伙伴收件箱规则](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/docs/product-rules/task-inbox.md#L90-L106)
-- **按快捷键提高或降低当前会话的推理强度。** 目前需要打开选择器。为两个动作提供可自定义的键位，默认留空。用三个档位验证两端循环、一次按键只改一次，并保留草稿光标和另一会话的设置。 [T3 Code 推理强度快捷键](https://github.com/pingdotgg/t3code/blob/21d7feaff7edb445855c91e0d4526b9cce63d83a/docs/user/keybindings.md#L41-L44)
-- **在展开的源码阅读器内查找。** 目前能回到原项目搜索命中，无法在同一文件寻找下一处。验收文件内查找跨页，同一行的两个命中可单独定位，换行关闭时也能滚到命中。先按 Esc 关闭查找，再按一次返回文件面板并保留原筛选。 [Beluga 文件内查找](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/components/markdown/DocFind.tsx#L42-L134)
+- **在项目收件箱发现失败的工作流运行。** 目前要打开工作流页面并手动找运行记录。用同项目两次同名失败、一次成功和另一项目的同名失败验收。收件箱只显示当前项目的失败，点击后打开所选运行及原日志，返回保留阅读位置。 [Cindy 失败回到待处理](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/docs/product-rules/task-inbox.md#L30-L50) · [Hive 工作流运行接口](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/routes-workflows.ts#L12-L34)
+- **在当前 Git 差异内查找。** 目前查找快捷键只进入聊天。验收差异聚焦时查找已加载补丁的增删和上下文行，可按键前后跳转并揭开已加载的折叠行。切换文件或比较范围后清除旧结果，回到聊天后查找仍搜索会话。 [T3 Code 差异内查找](https://github.com/pingdotgg/t3code/blob/a1b9e1cc8709d50190bf8e1f50e94257ce206525/docs/user/keybindings.md#L66-L73)
+- **在展开阅读器复制整份已加载文本。** 当前工具栏只提供路径复制。用两个工作树中的同名文件验收，定位到第 350 行并翻页后复制。剪贴板应包含当前工作树的原始全文，保留 CRLF、Unicode、首尾行与当前阅读位置。 [Beluga 复制文件文本](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/views/reader/FileFocus.tsx#L193-L201)

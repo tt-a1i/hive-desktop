@@ -215,7 +215,7 @@ fn send_and_start_draft_has_its_own_rebindable_composer_chord() {
     use gpui_kit::{Action, KeyContext};
     let target = Target::SendAndStartDraft;
     for os in [OperatingSystem::Mac, OperatingSystem::Windows] {
-        let chord = target.default(os);
+        let chord = target.default(os).unwrap();
         assert!(target.validate(chord, os).is_ok());
         assert!(Target::NewSession.validate(chord, os).is_err());
         let map = Keymap::new(vec![KeyBinding::new(
@@ -235,6 +235,52 @@ fn send_and_start_draft_has_its_own_rebindable_composer_chord() {
 }
 
 #[test]
+fn effort_shortcuts_can_be_assigned_rebound_and_reset_without_a_default() {
+    use gpui_kit::{Action, KeyContext};
+
+    let root = tempfile::tempdir().unwrap();
+    let os = OperatingSystem::Mac;
+    let increase = Target::IncreaseReasoningEffort;
+    let decrease = Target::DecreaseReasoningEffort;
+    let old = r#"{"version":1,"bindings":{"search":"cmd-k","find":"cmd-f","preferences":"cmd-,"}}"#;
+    fs::write(root.path().join(FILE), old).unwrap();
+    let mut bindings = load(root.path(), os, identity).unwrap();
+    assert_eq!(bindings.get(increase), &None);
+    assert_eq!(bindings.get(decrease), &None);
+
+    bindings.set(increase, Some("cmd-shift-j".into()));
+    bindings.set(decrease, Some("cmd-shift-j".into()));
+    assert_eq!(bindings.normalized(os), Err(CHORD_CONFLICT));
+    bindings.set(decrease, Some("cmd-shift-k".into()));
+    save(root.path(), &bindings, os).unwrap();
+    assert_eq!(load(root.path(), os, identity).unwrap(), bindings);
+
+    let mut keymap = Keymap::new(vec![
+        KeyBinding::new("cmd-shift-j", super::IncreaseReasoningEffort, Some("HiveComposer")),
+        KeyBinding::new("cmd-shift-k", super::DecreaseReasoningEffort, Some("HiveComposer")),
+    ]);
+    let composer = [KeyContext::parse("HiveComposer").unwrap(), KeyContext::parse("Input").unwrap()];
+    let terminal = [KeyContext::parse("HiveTerminal").unwrap(), KeyContext::parse("Input").unwrap()];
+    for (target, action) in [
+        (increase, super::IncreaseReasoningEffort.name()),
+        (decrease, super::DecreaseReasoningEffort.name()),
+    ] {
+        let chord = bindings.get(target).as_deref().unwrap();
+        let keys = [target.validate(chord, os).unwrap()];
+        assert_eq!(target.context().unwrap().depth_of(&composer), Some(1));
+        assert_eq!(keymap.bindings_for_input(&keys, &composer).0[0].action().name(), action);
+        assert!(keymap.bindings_for_input(&keys, &terminal).0.is_empty());
+        super::replace_bindings(&mut keymap, vec![(action, None)]);
+        assert!(keymap.bindings_for_input(&keys, &composer).0.is_empty());
+        bindings.set(target, target.default(os).map(str::to_owned));
+    }
+    save(root.path(), &bindings, os).unwrap();
+    let loaded = load(root.path(), os, identity).unwrap();
+    assert_eq!(loaded.get(increase), &None);
+    assert_eq!(loaded.get(decrease), &None);
+}
+
+#[test]
 fn legacy_three_key_file_migrates_new_targets_and_preserves_explicit_null() {
     let root = tempfile::tempdir().unwrap();
     let legacy = r#"{"version":1,"bindings":{"search":"cmd-shift-j","find":null,"preferences":"cmd-,"}}"#;
@@ -245,11 +291,11 @@ fn legacy_three_key_file_migrates_new_targets_and_preserves_explicit_null() {
     assert_eq!(migrated.get(Target::Preferences).as_deref(), Some("cmd-,"));
     assert_eq!(
         migrated.get(Target::NewSession).as_deref(),
-        Some(Target::NewSession.default(OperatingSystem::Mac))
+        Target::NewSession.default(OperatingSystem::Mac)
     );
     assert_eq!(
         migrated.get(Target::ToggleTerminal).as_deref(),
-        Some(Target::ToggleTerminal.default(OperatingSystem::Mac))
+        Target::ToggleTerminal.default(OperatingSystem::Mac)
     );
 
     let with_disabled_new = r#"{"version":1,"bindings":{"search":"cmd-shift-j","find":"cmd-f","preferences":"cmd-,","new_session":null}}"#;
@@ -263,8 +309,8 @@ fn legacy_custom_shortcuts_take_priority_over_new_defaults() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join(FILE);
     for os in [OperatingSystem::Mac, OperatingSystem::Windows] {
-        let search = Target::PreviousSession.default(os);
-        let find = Target::OpenGitWorkspace.default(os);
+        let search = Target::PreviousSession.default(os).unwrap();
+        let find = Target::OpenGitWorkspace.default(os).unwrap();
         let legacy = serde_json::json!({
             "version": 1,
             "bindings": {"search": search, "find": find, "preferences": null}
@@ -281,10 +327,10 @@ fn legacy_custom_shortcuts_take_priority_over_new_defaults() {
         assert_eq!(migrated.get(Target::OpenGitWorkspace), &None);
         assert_eq!(
             migrated.get(Target::NextSession).as_deref(),
-            Some(Target::NextSession.default(os))
+            Target::NextSession.default(os)
         );
 
-        migrated.set(Target::Search, Some(Target::Search.default(os).to_owned()));
+        migrated.set(Target::Search, Target::Search.default(os).map(str::to_owned));
         save(root.path(), &migrated, os).unwrap();
         assert_eq!(load(root.path(), os, identity).unwrap(), migrated);
     }

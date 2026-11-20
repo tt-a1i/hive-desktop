@@ -8,6 +8,8 @@ use gpui_kit::{
     *,
 };
 
+use std::{cell::Cell, ops::Range, rc::Rc};
+
 pub(crate) fn region(
     id: String,
     label: String,
@@ -109,7 +111,24 @@ pub(crate) fn selectable_text(
         .child(gpui_kit::base::SelectableText::new(id, text))
 }
 
-pub(crate) fn numbered_source(id: &'static str, page: &TextPages, wrap: bool, cx: &App) -> Div {
+pub(crate) struct SourceMatch {
+    pub range: Range<usize>,
+    pub scroll: ScrollHandle,
+    pub reveal: Rc<Cell<bool>>,
+    pub horizontal: bool,
+}
+
+pub(crate) fn numbered_source(
+    id: &'static str,
+    page: &TextPages,
+    wrap: bool,
+    active_match: Option<SourceMatch>,
+    cx: &App,
+) -> Div {
+    let active_match = active_match.and_then(|mut active| {
+        active.range = page.local_range(&active.range)?;
+        Some(active)
+    });
     let numbers = page.line_numbers();
     let digits = numbers.end.saturating_sub(1).to_string().len().max(2) as f32;
     let gutter = rems(0.6 * digits + 0.625);
@@ -135,17 +154,21 @@ pub(crate) fn numbered_source(id: &'static str, page: &TextPages, wrap: bool, cx
                             source: StyledText::new(text),
                             numbers,
                             color: Color::Muted.get(cx).into(),
+                            active_match,
+                            highlight: Color::Accent.get(cx).opacity(0.30).into(),
                         }),
                 ),
         )
 }
 
 /// Use the same text layout as the selectable source so wrapping and font metrics
-/// agree. Only paint the gutter, leaving the raw source as one selection run.
+/// agree. Paint the gutter and the current Find match independently of selection.
 struct SourceLineNumbers {
     source: StyledText,
     numbers: std::ops::Range<usize>,
     color: Hsla,
+    active_match: Option<SourceMatch>,
+    highlight: Hsla,
 }
 
 impl IntoElement for SourceLineNumbers {
@@ -205,6 +228,21 @@ impl Element for SourceLineNumbers {
         let line_height = layout.line_height();
         let mut y = bounds.top();
         let viewport = window.content_mask().bounds;
+        if let Some(active) = &self.active_match
+            && let Some(start) = layout.position_for_index(active.range.start)
+        {
+            let end = layout.position_for_index(active.range.end).unwrap_or(start);
+            let source = layout.bounds();
+            let rectangles = match_rectangles(start, end, source, line_height);
+            for rectangle in rectangles.iter().filter(|rect| rect.intersects(&viewport)) {
+                window.paint_quad(fill(*rectangle, self.highlight));
+            }
+            if active.reveal.get()
+                && let Some(target) = rectangles.first()
+            {
+                reveal_source_match(active, *target, viewport, window);
+            }
+        }
         let style = window.text_style();
         let font_size = style.font_size.to_pixels(window.rem_size());
         for (number, line) in self.numbers.clone().zip(layout.line_layouts()) {
@@ -224,6 +262,103 @@ impl Element for SourceLineNumbers {
             y += line.size(line_height).height;
         }
     }
+}
+
+fn match_rectangles(
+    start: Point<Pixels>,
+    end: Point<Pixels>,
+    source: Bounds<Pixels>,
+    line_height: Pixels,
+) -> Vec<Bounds<Pixels>> {
+    let rect =
+        |left, top, right, bottom| Bounds::from_corners(point(left, top), point(right, bottom));
+    if start.y == end.y {
+        return vec![rect(
+            start.x.min(end.x),
+            start.y,
+            start.x.max(end.x) + px(1.),
+            start.y + line_height,
+        )];
+    }
+    let mut rectangles = vec![rect(
+        start.x,
+        start.y,
+        source.right(),
+        start.y + line_height,
+    )];
+    if end.y > start.y + line_height {
+        rectangles.push(rect(
+            source.left(),
+            start.y + line_height,
+            source.right(),
+            end.y,
+        ));
+    }
+    if end.x > source.left() {
+        rectangles.push(rect(source.left(), end.y, end.x, end.y + line_height));
+    }
+    rectangles
+}
+
+fn reveal_axis(
+    start: Pixels,
+    end: Pixels,
+    top: Pixels,
+    bottom: Pixels,
+    offset: Pixels,
+    max_offset: Pixels,
+) -> Pixels {
+    let inset = px(8.).min((bottom - top) / 4.);
+    let viewport_start = top + inset;
+    let viewport_end = bottom - inset;
+    let delta = if start < viewport_start || end - start > viewport_end - viewport_start {
+        viewport_start - start
+    } else if end > viewport_end {
+        viewport_end - end
+    } else {
+        px(0.)
+    };
+    (offset + delta).clamp(-max_offset, px(0.))
+}
+
+fn reveal_source_match(
+    active: &SourceMatch,
+    target: Bounds<Pixels>,
+    viewport: Bounds<Pixels>,
+    window: &mut Window,
+) {
+    let scroll = active.scroll.clone();
+    let offset = scroll.offset();
+    let maximum = scroll.max_offset();
+    let next = point(
+        if active.horizontal {
+            reveal_axis(
+                target.left(),
+                target.right(),
+                viewport.left(),
+                viewport.right(),
+                offset.x,
+                maximum.x,
+            )
+        } else {
+            offset.x
+        },
+        reveal_axis(
+            target.top(),
+            target.bottom(),
+            viewport.top(),
+            viewport.bottom(),
+            offset.y,
+            maximum.y,
+        ),
+    );
+    let reveal = active.reveal.clone();
+    window.on_next_frame(move |window, _| {
+        if reveal.replace(false) && scroll.offset() != next {
+            scroll.set_offset(next);
+            window.refresh();
+        }
+    });
 }
 
 const PAGE_BYTES: usize = 32 * 1024;
@@ -273,6 +408,36 @@ impl TextPages {
         self.page = page;
         self.visible = SharedString::from(&self.full[start..self.boundaries[page + 1].0]);
         true
+    }
+
+    /// Open the canonical page containing the start of a find hit. Where a
+    /// hit straddles a page break, show its remaining bytes without changing
+    /// the page boundaries used for manual paging or the underlying preview.
+    pub(crate) fn show_match(&mut self, range: &Range<usize>) -> bool {
+        debug_assert!(
+            self.full
+                .get(range.clone())
+                .is_some_and(|text| !text.is_empty())
+        );
+        let page = self.boundaries[..self.count()]
+            .partition_point(|&(offset, _)| offset <= range.start)
+            .saturating_sub(1);
+        let (start, first_line) = self.boundaries[page];
+        let end = self.boundaries[page + 1].0.max(range.end);
+        if self.page == page && self.visible.len() == end - start {
+            return false;
+        }
+        self.page = page;
+        self.first_line = first_line;
+        self.visible = SharedString::from(&self.full[start..end]);
+        true
+    }
+
+    fn local_range(&self, range: &Range<usize>) -> Option<Range<usize>> {
+        let start = self.boundaries[self.page].0;
+        let end = start + self.visible.len();
+        let clipped = range.start.max(start)..range.end.min(end);
+        (!clipped.is_empty()).then(|| clipped.start - start..clipped.end - start)
     }
 
     pub fn show_line(&mut self, line: usize) {
@@ -353,6 +518,56 @@ fn page_boundaries(text: &str) -> Vec<(usize, usize)> {
 mod tests {
     use super::{PAGE_BYTES, PAGE_LINES, TextPages, horizontal_offset, page_boundaries};
     use gpui_kit::px;
+
+    #[test]
+    fn find_matches_select_exact_byte_pages_including_long_line_continuations() {
+        let source = format!(
+            "{}marker{}marker",
+            "x".repeat(PAGE_BYTES - 3),
+            "x".repeat(PAGE_BYTES)
+        );
+        let matches: Vec<_> = source
+            .match_indices("marker")
+            .map(|(start, hit)| start..start + hit.len())
+            .collect();
+        let mut pages = TextPages::new(source.into());
+        let count = pages.count();
+        assert!(pages.show_match(&matches[0]));
+        assert_eq!(pages.page, 0);
+        assert_eq!(
+            &pages.visible[pages.local_range(&matches[0]).unwrap()],
+            "marker"
+        );
+        assert!(pages.show_match(&matches[1]));
+        assert_eq!(pages.page, 2);
+        assert_eq!(pages.first_line, 1);
+        assert_eq!(
+            &pages.visible[pages.local_range(&matches[1]).unwrap()],
+            "marker"
+        );
+        assert!(pages.local_range(&matches[0]).is_none());
+        assert_eq!(pages.count(), count);
+        assert!(pages.show(0));
+        assert_eq!(pages.visible.len(), PAGE_BYTES);
+    }
+
+    #[test]
+    fn match_reveal_keeps_visible_axes_and_clamps_offscreen_matches() {
+        let axis = |start, end, offset, maximum| {
+            super::reveal_axis(
+                gpui_kit::px(start),
+                gpui_kit::px(end),
+                gpui_kit::px(0.),
+                gpui_kit::px(100.),
+                gpui_kit::px(offset),
+                gpui_kit::px(maximum),
+            )
+        };
+        assert_eq!(axis(30., 60., -150., 500.), gpui_kit::px(-150.));
+        assert_eq!(axis(170., 190., 0., 500.), gpui_kit::px(-98.));
+        assert_eq!(axis(-30., -20., -20., 500.), gpui_kit::px(0.));
+        assert_eq!(axis(800., 900., 0., 500.), gpui_kit::px(-500.));
+    }
 
     #[test]
     fn text_pages_preserve_every_byte_and_bound_each_layout() {

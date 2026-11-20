@@ -76,11 +76,20 @@ try {
   assert.equal(saved.error,undefined);assert.equal(saved.result.level,'high');assert.ok(saved.result.levels.includes('high'));
   for(const level of ['invalid',null,true,{},5]) assert.ok((await rpc('chat.setReasoning',{sessionId:id,level})).error);
   assert.equal((await rpc('chat.reasoning',{sessionId:id})).result.level,'high');
+  assert.equal((await rpc('chat.open', {sessionId:id, viewRevision:1})).error, undefined);
+  const nextLevel = saved.result.levels[(saved.result.levels.indexOf('high') + 1) % saved.result.levels.length];
+  const stepped = await rpc('chat.stepReasoning', {sessionId:id, direction:'increase', viewRevision:1});
+  assert.equal(stepped.error, undefined);
+  assert.equal(stepped.result.level, nextLevel);
   assert.equal(await readFile(join(agentDir,'settings.json'),'utf8'),settings);
   const index=JSON.parse(await readFile(join(directory,'desktop/chats/index.json'),'utf8'));
-  assert.ok((await readFile(index.find((item:any)=>item.id===id).sessionFile,'utf8')).includes('"thinkingLevel":"high"'));
+  const transcript = await readFile(index.find((item:any)=>item.id===id).sessionFile,'utf8');
+  const thinkingChanges = transcript.trim().split('\n').map(line => JSON.parse(line))
+    .filter(entry => entry.type === 'thinking_level_change');
+  assert.equal(thinkingChanges.at(-2)?.thinkingLevel, 'high');
+  assert.equal(thinkingChanges.at(-1)?.thinkingLevel, nextLevel);
   assert.equal((await rpc('shutdown')).result.ok,true);await exited;assert.equal(child.exitCode,0);
-  console.log('PI_REASONING_WIRE_OK: production JSONL native read/set, strict levels, transcript persistence and unchanged global defaults. No model request.');
+  console.log('PI_REASONING_WIRE_OK: production JSONL native read/set/step, strict levels, transcript persistence and unchanged global defaults. No model request.');
 } finally {
   if(child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');await exited;}
   lines.close();await rm(directory,{recursive:true,force:true});

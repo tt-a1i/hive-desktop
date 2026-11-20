@@ -1,6 +1,7 @@
 use super::{FileError, Target};
 mod content_results;
 mod image_preview;
+mod reader_find;
 mod search_snippet;
 use crate::{
     app::HiveApp,
@@ -32,6 +33,7 @@ use gpui_kit::{
     *,
 };
 use image_preview::ImageViewport;
+use reader_find::ReaderFind;
 use search_snippet::{SearchSnippet, path_highlights};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -370,6 +372,7 @@ struct ExpandedFilePreview {
     markdown: Option<MarkdownPreview>,
     markdown_start_offset: Option<Point<Pixels>>,
     scroll: ScrollHandle,
+    find: Option<ReaderFind>,
     focus: FocusHandle,
     return_focus: Option<FocusHandle>,
     dialog_focus: Option<FocusHandle>,
@@ -567,7 +570,13 @@ fn expand_preview_hint(cx: &App) -> String {
     format!("{} ({shortcut})", tr("展开预览"))
 }
 
-fn preview_text(id: &'static str, text: &TextPages, wrap: bool, cx: &App) -> Stateful<Div> {
+fn preview_text(
+    id: &'static str,
+    text: &TextPages,
+    wrap: bool,
+    active_match: Option<text_reading::SourceMatch>,
+    cx: &App,
+) -> Stateful<Div> {
     let appearance = cx.global::<crate::appearance::Appearance>();
     let font = appearance
         .code_font_family()
@@ -585,7 +594,13 @@ fn preview_text(id: &'static str, text: &TextPages, wrap: bool, cx: &App) -> Sta
     if text.full.is_empty() {
         view.child(text_reading::selectable_text(id, tr("此文件为空")))
     } else {
-        view.child(text_reading::numbered_source(id, text, wrap, cx))
+        view.child(text_reading::numbered_source(
+            id,
+            text,
+            wrap,
+            active_match,
+            cx,
+        ))
     }
 }
 
@@ -663,7 +678,7 @@ impl ProjectFilePreviewText {
                     cx,
                 )
                 .child(rendered.map_or_else(
-                    || preview_text("git-current-source", &self.text, true, cx),
+                    || preview_text("git-current-source", &self.text, true, None, cx),
                     |markdown| markdown.render("git-current-markdown", cx),
                 )),
             )
@@ -3022,6 +3037,7 @@ impl FileBrowser {
                 markdown,
                 markdown_start_offset,
                 scroll,
+                find: None,
                 focus: cx.focus_handle(),
                 return_focus,
                 dialog_focus: None,
@@ -3811,7 +3827,7 @@ impl FileBrowser {
                 text_reading::region("browser-preview".into(), path, scroll, height, cx)
                     .when(stretch, |region| region.flex_1().min_h_0())
                     .child(rendered.map_or_else(
-                        || preview_text("browser-text-preview", text, true, cx),
+                        || preview_text("browser-text-preview", text, true, None, cx),
                         |markdown| markdown.render("browser-markdown-preview", cx),
                     )),
             )
@@ -3941,6 +3957,7 @@ impl ExpandedFilePreview {
         }
         let current = self.current(cx);
         self.dismissed = true;
+        self.find = None;
         self.cancel_path_request(cx);
         if let Some(browser) = self.browser.upgrade() {
             let browser = browser.read(cx);
@@ -3981,6 +3998,7 @@ impl ExpandedFilePreview {
             && let Some(text) = &mut self.text
             && step_preview(text, &mut self.scroll, step)
         {
+            self.clear_find_reveal();
             cx.notify();
         }
     }
@@ -4001,11 +4019,18 @@ impl ExpandedFilePreview {
         {
             return;
         }
-        let wrap = cx.global::<crate::appearance::Appearance>().reader_word_wrap();
+        let wrap = cx
+            .global::<crate::appearance::Appearance>()
+            .reader_word_wrap();
         crate::appearance::choose_reader_word_wrap(!wrap, window, cx);
-        if wrap != cx.global::<crate::appearance::Appearance>().reader_word_wrap() {
+        if wrap
+            != cx
+                .global::<crate::appearance::Appearance>()
+                .reader_word_wrap()
+        {
             let y = self.scroll.offset().y;
             self.scroll.set_offset(point(px(0.), y));
+            self.refresh_find_reveal();
         }
         cx.notify();
     }
@@ -4016,6 +4041,9 @@ impl ExpandedFilePreview {
             && let Some(text) = &self.text
         {
             markdown.switch(mode, text, cx);
+            if mode == FilePreviewMode::Markdown {
+                self.find = None;
+            }
             cx.notify();
         }
     }
@@ -4032,7 +4060,18 @@ impl Render for ExpandedFilePreview {
                 window.close_dialog(cx);
                 this.restore_focus_after_close(window, cx);
             }));
-        let view = v_flex().w_full().min_w_0().gap_3();
+        let view = v_flex()
+            .w_full()
+            .min_w_0()
+            .gap_3()
+            .on_action(
+                cx.listener(|this, _: &crate::OpenConversationFind, window, cx| {
+                    this.open_find(window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &Cancel, window, cx| {
+                this.close_find(window, cx);
+            }));
         if !self.current(cx) {
             return view
                 .child(
@@ -4053,9 +4092,13 @@ impl Render for ExpandedFilePreview {
         let rendered = self.markdown.as_ref().filter(|markdown| markdown.active());
         let source_visible =
             rendered.is_none() && self.text.as_ref().is_some_and(|text| !text.full.is_empty());
-        let wrap = !source_visible || cx.global::<crate::appearance::Appearance>().reader_word_wrap();
+        let wrap = !source_visible
+            || cx
+                .global::<crate::appearance::Appearance>()
+                .reader_word_wrap();
         let extra_rows = u8::from(self.markdown.is_some() || source_visible)
-            + u8::from(markdown_limited);
+            + u8::from(markdown_limited)
+            + u8::from(self.find.is_some());
         let header = px(194. + 32. * f32::from(extra_rows));
         let height = (window.viewport_size().height - header).max(px(112.));
         // Wait for the background parser so the empty first layout cannot
@@ -4166,17 +4209,38 @@ impl Render for ExpandedFilePreview {
                                     this.toggle_source_wrap(window, cx)
                                 })),
                         )
+                        .child(
+                            Button::new("file-reader-find-open")
+                                .outline()
+                                .compact()
+                                .small()
+                                .icon(Glyph::Search)
+                                .tooltip(tr("在此文件中查找"))
+                                .accessibility_label(tr("在此文件中查找"))
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.open_find(window, cx)),
+                                ),
+                        )
                     }),
             )
         })
         .when(markdown_limited, |view| {
             view.child(markdown_limit_notice(cx))
         })
+        .children(self.find_bar(cx))
         .child(
             text_reading::source_region("file-reader".into(), path, scroll, height, wrap, cx)
                 .track_focus(&self.focus)
                 .child(rendered.map_or_else(
-                    || preview_text("file-reader-text", text, wrap, cx),
+                    || {
+                        preview_text(
+                            "file-reader-text",
+                            text,
+                            wrap,
+                            self.find_source_match(wrap),
+                            cx,
+                        )
+                    },
                     |markdown| markdown.render("file-reader-markdown", cx),
                 )),
         )
@@ -4201,6 +4265,7 @@ impl Render for ExpandedFilePreview {
                                     }
                                     text.show_line(line);
                                     this.scroll = ScrollHandle::new();
+                                    this.clear_find_reveal();
                                     cx.notify();
                                 }
                             })),

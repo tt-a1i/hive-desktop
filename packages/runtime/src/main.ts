@@ -877,6 +877,12 @@ async function dispatch(requestId: number | string, method: string, params: Reco
         : chats.readDesktopView(id, viewRevision(params.viewRevision), () => chats.reasoning(id, undefined, true));
     }
     case 'chat.setReasoning': return chats.reasoning(text(params, 'sessionId'), text(params, 'level'));
+    case 'chat.stepReasoning': {
+      exact(params, ['sessionId', 'direction', 'viewRevision']);
+      const {direction} = params;
+      if (direction !== 'increase' && direction !== 'decrease') throw new TypeError('Expected an increase or decrease direction');
+      return chats.stepReasoning(text(params, 'sessionId'), direction, viewRevision(params.viewRevision));
+    }
     case 'chat.setModel': return chats.setModel(text(params, 'sessionId'), text(params, 'provider'), text(params, 'modelId'));
     case 'shutdown': {
       exact(params, ['desktopInstallerId']);

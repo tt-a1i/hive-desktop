@@ -19,6 +19,20 @@ use gpui_kit::{
 use serde_json::{Value, json};
 
 impl Member {
+    pub(crate) fn matches_team_status(&self, status: &str) -> bool {
+        status == "all" || self.status == status
+    }
+
+    pub(crate) fn matches_team_search(&self, query: &str) -> bool {
+        query.is_empty()
+            || format!(
+                "{} {} {} {} {}",
+                self.name, self.role, self.role_label(), self.backend_label(), self.description
+            )
+            .to_lowercase()
+            .contains(query)
+    }
+
     pub fn role_label(&self) -> &str {
         crate::roles::role_label(&self.role)
     }

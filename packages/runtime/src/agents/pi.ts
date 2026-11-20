@@ -394,16 +394,19 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       ...session.resourceLoader.getSkills().skills.map(skill => ({name: `skill:${skill.name}`, description: skill.description, source: 'skill' as const, sourceInfo: skill.sourceInfo})),
     ],
     reasoning: () => ({ level: session.thinkingLevel, levels: !savedModelUnavailable && session.model ? session.getAvailableThinkingLevels() : [] }),
-    setReasoning(level) {
+    setReasoning(level, guard) {
       if (disposed) throw new Error('Pi session is disposed');
       if (persistenceFailure) throw persistenceFailure;
       if (active) throw new Error('Pi session is already processing a prompt');
       const levels = !savedModelUnavailable && session.model ? session.getAvailableThinkingLevels() : [];
       const selected = levels.find(candidate => candidate === level);
       if (!selected) throw new TypeError('当前模型不支持此推理强度。');
+      guard?.('before', {level:session.thinkingLevel, levels}, session.model);
       try { session.setThinkingLevel(selected, { persist: false }); }
       catch (cause) { throw failPersistence(cause); }
-      return { level: session.thinkingLevel, levels: session.getAvailableThinkingLevels() };
+      const applied = { level: session.thinkingLevel, levels: session.getAvailableThinkingLevels() };
+      guard?.('after', applied, session.model);
+      return applied;
     },
     setModel,
   };

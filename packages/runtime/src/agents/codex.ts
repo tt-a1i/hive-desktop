@@ -364,14 +364,17 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     if (active) throw new Error('Codex session is already processing a prompt');
   };
   initialized = true;
-  const reasoning = async () => {
+  const readReasoning = async () => {
     if (disposed) throw new Error('Codex session is disposed');
     const read = await transport.sendRequest<{thread:{model?:string;reasoningEffort?:string|null}}>('thread/read', {threadId,includeTurns:false});
     const level = read.thread.reasoningEffort;
     if (level !== null && level !== undefined && typeof level !== 'string') throw new Error('Codex 未返回有效的推理强度。');
-    const model = models.find(model => model.model === (read.thread.model ?? response.model));
-    return {level:level ?? 'native',levels:model?.supportedReasoningEfforts?.map(option=>option.reasoningEffort) ?? [],description:'从原生 Codex 线程读取；档位由当前模型提供。'};
+    const id = read.thread.model ?? response.model;
+    const model = models.find(model => model.model === id);
+    return {model:{provider:response.modelProvider,id},
+      state:{level:level ?? 'native',levels:model?.supportedReasoningEfforts?.map(option=>option.reasoningEffort) ?? [],description:'从原生 Codex 线程读取；档位由当前模型提供。'}};
   };
+  const reasoning = async () => (await readReasoning()).state;
   const steeringTurn = () => active && !disposed && !active.terminalComplete && !active.cancelled && !active.error
     ? active.turnId : undefined;
   return {
@@ -541,14 +544,17 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       return transport.close();
     },
     reasoning,
-    async setReasoning(level) {
+    async setReasoning(level, guard) {
       ensureIdle();
-      const current = await reasoning();
-      if (!current.levels.includes(level)) throw new TypeError('当前 Codex 模型不支持此推理强度。');
+      const current = await readReasoning();
+      if (!current.state.levels.includes(level)) throw new TypeError('当前 Codex 模型不支持此推理强度。');
       ensureIdle();
-      if (current.level === level) return current;
+      guard?.('before', current.state, current.model);
+      if (current.state.level === level) return current.state;
       await updateCodexSettings(transport, threadId, { effort: level }, lifetime.signal);
-      return reasoning();
+      const applied = await readReasoning();
+      guard?.('after', applied.state, applied.model);
+      return applied.state;
     },
     currentModel: () => ({ provider: response.modelProvider, id: response.model,
       name: models.find(model => model.model === response.model)?.displayName ?? response.model }),

@@ -41,6 +41,9 @@ impl HiveApp {
                             Button::new(SharedString::from(format!(
                                 "toggle-member-description-{id}"
                             )))
+                            .when_some(self.inbox_member_focus(&id), |button, focus| {
+                                button.track_focus(focus)
+                            })
                             .custom(palette::subtle_icon_variant(cx))
                             .compact()
                             .xsmall()

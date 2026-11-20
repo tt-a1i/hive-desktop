@@ -288,12 +288,16 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
         options: modes.map(id => ({id, label: id})), description: 'Native Claude permission mode applies to this session. It does not constrain other agents.'};
     },
     reasoning,
-    async setReasoning(level) {
+    async setReasoning(level, guard) {
       check();if(active) throw new Error('Claude session is already processing a prompt');
-      if (!(await reasoning()).levels.includes(level)) throw new TypeError('当前 Claude 模型不支持此推理强度。');
+      const current = await reasoning();
+      if (!current.levels.includes(level)) throw new TypeError('当前 Claude 模型不支持此推理强度。');
       check();if(active) throw new Error('Claude session is already processing a prompt');
+      guard?.('before', current, currentModel ? {provider:'claude',id:currentModel} : undefined);
       await claudeDeadline(running.applyFlagSettings({effortLevel:level as EffortLevel}),'set reasoning');
-      return reasoning();
+      const applied = await reasoning();
+      guard?.('after', applied, currentModel ? {provider:'claude',id:currentModel} : undefined);
+      return applied;
     },
     async setModel(provider, id) { check(); if (active) throw new Error('Claude session is already processing a prompt'); if (provider !== 'claude') throw new Error('Unsupported Claude model provider'); await claudeDeadline(running.setModel(id), 'set model'); currentModel = id; },
   };

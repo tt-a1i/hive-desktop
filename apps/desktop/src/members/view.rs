@@ -28,24 +28,15 @@ impl HiveApp {
             let focus = self.member_search.read(cx).focus_handle(cx);
             window.on_next_frame(move |window, cx| focus.focus(window, cx));
         }
+        self.reveal_inbox_member(window, cx);
         let member_search = self.member_search.read(cx).value().trim().to_lowercase();
         let matching_members: Vec<_> = self
             .members
             .iter()
             .enumerate()
             .filter(|(_, member)| {
-                (self.member_status_filter == "all" || member.status == self.member_status_filter)
-                    && (member_search.is_empty()
-                        || format!(
-                            "{} {} {} {} {}",
-                            member.name,
-                            member.role,
-                            member.role_label(),
-                            member.backend_label(),
-                            member.description
-                        )
-                        .to_lowercase()
-                        .contains(&member_search))
+                member.matches_team_status(self.member_status_filter)
+                    && member.matches_team_search(&member_search)
             })
             .collect();
         let member_browsing = !member_search.is_empty() || self.member_status_filter != "all";

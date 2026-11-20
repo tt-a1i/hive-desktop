@@ -1203,6 +1203,11 @@
   "控制文件预览、工具 Diff 与原始补丁视图的等宽字体、字号和换行方式。": "Configure monospace font, size, and line wrapping for file preview, tool diffs, and patches.",
   "推理": "Reasoning",
   "推理强度": "Reasoning effort",
+  "提高推理强度": "Increase Reasoning Effort",
+  "降低推理强度": "Decrease Reasoning Effort",
+  "切换到当前会话的下一档推理强度": "Switch to the next reasoning effort for the current conversation",
+  "切换到当前会话的上一档推理强度": "Switch to the previous reasoning effort for the current conversation",
+  "无法切换推理强度": "Could not change reasoning effort",
   "推理强度必须是文本。": "Reasoning effort must be text.",
   "推理输出（输出子集）": "Reasoning output (subset of output)",
   "推送关系": "Push status",
@@ -1546,6 +1551,12 @@
   "构建标识": "Build revision",
   "构建类型": "Build type",
   "查找会话内容": "Find in conversation",
+  "在此文件中查找": "Find in this file",
+  "上一处匹配": "Previous match",
+  "下一处匹配": "Next match",
+  "关闭文件查找": "Close file find",
+  "未找到匹配项": "No matches",
+  "第 {current} 项，共 {total} 项": "{current} of {total}",
   "查找会话内容 · Ctrl+F": "Find in conversation · Ctrl+F",
   "查找会话内容 · ⌘F": "Find in conversation · ⌘F",
   "查找会话消息、思考和工具…": "Find messages, thinking and tools…",
@@ -2819,5 +2830,6 @@
   "重试只会准备新的工作树草稿。": "Retry to prepare the new worktree draft.",
   "请从当前项目的普通独立工作树会话开始新草稿。": "Start a new draft from a regular conversation in its own worktree in this project.",
   "这个新工作树草稿请求已用于其他会话。": "This new worktree draft request already belongs to a different conversation.",
-  "请从侧边栏手动打开新会话": "Start a new conversation from the sidebar."
+  "请从侧边栏手动打开新会话": "Start a new conversation from the sidebar.",
+  "无法打开团队成员": "Could not open the team member"
 }

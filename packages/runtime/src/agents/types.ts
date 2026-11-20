@@ -50,6 +50,8 @@ export interface PiSessionOptions {
 export interface NativeCommand { name: string; description?: string; source: 'extension' | 'prompt' | 'skill'; sourceInfo: import('@earendil-works/pi-coding-agent').SourceInfo }
 
 export interface ReasoningState { level: string; levels: string[]; description?: string }
+export type ReasoningWriteGuard = (phase: 'before' | 'after', state: ReasoningState,
+  model: {provider: string; id: string} | undefined) => void;
 export interface SavedReasoning {provider: string; modelId: string; level: string}
 export function isSavedReasoning(value: unknown): value is SavedReasoning {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -99,5 +101,5 @@ export interface PiSessionHandle {
   usage?(): import("../agent-usage.js").UsageSnapshot | Promise<import("../agent-usage.js").UsageSnapshot>;
   commands?(): NativeCommand[] | Promise<NativeCommand[]>;
   reasoning?(): ReasoningState | Promise<ReasoningState>;
-  setReasoning?(level: string): ReasoningState | Promise<ReasoningState>;
+  setReasoning?(level: string, guard?: ReasoningWriteGuard): ReasoningState | Promise<ReasoningState>;
 }

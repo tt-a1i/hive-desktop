@@ -22,8 +22,9 @@ use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
 use super::{
     ActionCenter, ArchiveInboxSession, Destination, Entry, InboxRowInteraction, MarkInboxRead,
-    Reminders, SNOOZE_CHANGED, activity_matches, inbox_open_button, inbox_row, inbox_status,
-    is_snoozed, read_action_center, session_inbox_activity, show_more_button, toggle_button,
+    OPEN_INBOX_MEMBER_FAILED, Reminders, SNOOZE_CHANGED, activity_matches, inbox_open_button,
+    inbox_row, inbox_status, is_snoozed, read_action_center, session_inbox_activity,
+    show_more_button, toggle_button, verify_inbox_member,
 };
 use crate::{
     app::HiveApp,
@@ -101,6 +102,8 @@ struct GlobalInbox {
     app: WeakEntity<HiveApp>,
     connection: u64,
     archive_revision: u64,
+    member_open_generation: u64,
+    member_open_error: bool,
     completed: Completed,
     projects: HashMap<String, ProjectInbox>,
     preferences: ViewPreferences,
@@ -505,6 +508,8 @@ impl HiveApp {
                 app: parent.downgrade(),
                 connection,
                 archive_revision: 0,
+                member_open_generation: 0,
+                member_open_error: false,
                 completed: Completed::default(),
                 projects: HashMap::new(),
                 preferences: saved.preferences,
@@ -582,15 +587,7 @@ impl HiveApp {
             Destination::Session(session) if session.workspace_id == workspace => {
                 self.navigate_to_session(session.clone(), window, cx);
             }
-            Destination::Session(_) => {}
-            Destination::Member(member) => {
-                if self.workspace.as_deref() != Some(workspace) {
-                    self.select_workspace(workspace.to_owned(), cx);
-                }
-                self.show_team(window, cx);
-                self.member_details_open
-                    .insert(member.clone(), ScrollHandle::new());
-            }
+            Destination::Session(_) | Destination::Member(_) => {}
             Destination::Dispatch(_) | Destination::DispatchMessage { .. } => {
                 // Open the actual workspace first. The dispatch detail then
                 // resolves its original execution session through Hive's existing route.
@@ -608,6 +605,55 @@ impl HiveApp {
 }
 
 impl GlobalInbox {
+    fn open_inbox_member(
+        &mut self,
+        workspace: String,
+        member: String,
+        row: RowId,
+        connection: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(parent) = self.app.upgrade() else {
+            return;
+        };
+        let app = parent.read(cx);
+        let (Some(origin), Some(runtime)) = (app.history_link_target(), app.runtime.clone()) else {
+            return;
+        };
+        self.member_open_generation += 1;
+        self.member_open_error = false;
+        let generation = self.member_open_generation;
+        cx.spawn_in(window, async move |this, cx| {
+            let roster = verify_inbox_member(&runtime, &workspace, &member).await;
+            let _ = cx.update(|window, cx| {
+                let _ = this.update(cx, |inbox, cx| {
+                    let app = parent.read(cx);
+                    if !inbox.is_current(connection, cx)
+                        || !origin.current(app)
+                        || inbox.member_open_generation != generation
+                        || !inbox.row_focus.contains_key(&row)
+                        || app.workspace_removing.as_deref() == Some(&workspace)
+                        || !app.workspaces.iter().any(|listed| listed.id == workspace)
+                    {
+                        return;
+                    }
+                    if let Some(roster) = roster {
+                        inbox.dismiss(cx);
+                        window.close_dialog(cx);
+                        parent.update(cx, |app, cx| {
+                            app.show_verified_inbox_member(&workspace, &member, roster, window, cx);
+                        });
+                    } else {
+                        inbox.member_open_error = true;
+                        cx.notify();
+                    }
+                });
+            });
+        })
+        .detach();
+    }
+
     fn completed_scope(&self, cx: &App) -> Option<CompletedScope> {
         if !self.completed.expanded
             || self.dismissed
@@ -1328,6 +1374,8 @@ impl GlobalInbox {
     }
 
     fn clear_filter_position(&mut self) {
+        self.member_open_generation += 1;
+        self.member_open_error = false;
         self.restore_position = None;
         self.reveal_more = None;
         if let Some(review) = self.reviewing_new.as_mut() {
@@ -2120,6 +2168,9 @@ impl Render for GlobalInbox {
         body = body.when_some(status, |body, status| {
             body.child(inbox_status(tr(status), cx))
         });
+        if self.member_open_error {
+            body = body.child(inbox_status(tr(OPEN_INBOX_MEMBER_FAILED), cx));
+        }
 
         // The scroll handle indexes direct children. Keep rows and headings in
         // the same sequence used to compute the saved reading position.
@@ -2232,6 +2283,17 @@ impl Render for GlobalInbox {
                             })
                         })
                     {
+                        return;
+                    }
+                    if let Destination::Member(member) = &target {
+                        this.open_inbox_member(
+                            button_workspace.clone(),
+                            member.clone(),
+                            open_id.clone(),
+                            connection,
+                            window,
+                            cx,
+                        );
                         return;
                     }
                     this.dismiss(cx);

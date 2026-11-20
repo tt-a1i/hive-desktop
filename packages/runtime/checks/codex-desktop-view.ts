@@ -75,7 +75,7 @@ function startRuntime() {
   };
 }
 
-type PeerRequest = { method: string; pid: number; threadId?: string; cwd?: string; input?: { type: string; text?: string }[]; additionalContext?: unknown; deferGoalContinuation?: boolean };
+type PeerRequest = { method: string; pid: number; threadId?: string; cwd?: string; input?: { type: string; text?: string }[]; additionalContext?: unknown; deferGoalContinuation?: boolean; effort?: string };
 async function requests(): Promise<PeerRequest[]> {
   const wire = await readFile(join(directory, 'wire.jsonl'), 'utf8').catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw error;
@@ -136,8 +136,39 @@ try {
   assert.equal(originalPeer.deferGoalContinuation, true);
   assert.deepEqual(await peers(), [originalPeer.pid]);
 
+  const stepA = (direction: 'increase' | 'decrease') => rpc('chat.stepReasoning', {sessionId:a, direction, viewRevision:1});
+  const effortWrites = async () => (await requests()).filter(row => row.method === 'thread/settings/update' && row.threadId === 'thread-a')
+    .flatMap(row => row.effort ? [row.effort] : []);
+  const otherChatReasoning = new ChatIndex(join(data, 'chats')).get(b).reasoning;
+  for (const [direction, expected] of [['increase','medium'], ['increase','high'], ['increase','low'], ['decrease','high'], ['increase','low']] as const) {
+    const state = await stepA(direction);
+    assert.equal(state.level, expected);
+    assert.deepEqual(state.levels, ['low','medium','high']);
+    assert.equal(state.model.id, 'gpt-6.1-terra');
+  }
+  assert.deepEqual(await effortWrites(), ['medium','high','low','high','low']);
+  assert.deepEqual(new ChatIndex(join(data, 'chats')).get(b).reasoning, otherChatReasoning);
+  assert.ok(!(await requests()).some(row => row.method === 'thread/settings/update' && row.threadId === 'thread-b'));
+  await writeFile(join(directory, 'thread-a.reported-model'), 'fixture-alternate');
+  await assert.rejects(stepA('increase'), /different model/);
+  await rm(join(directory, 'thread-a.reported-model'));
+  assert.deepEqual(await effortWrites(), ['medium','high','low','high','low']);
+
+  await writeFile(join(directory, 'thread-a.clamped-effort'), 'high');
+  assert.equal((await stepA('increase')).level, 'high');
+  await rm(join(directory, 'thread-a.clamped-effort'));
+  assert.equal(new ChatIndex(join(data, 'chats')).get(a).reasoning?.level, 'high', 'Only the applied level is saved');
+  assert.equal((await stepA('increase')).level, 'low');
+  const beforeStaleStep = await effortWrites();
+  assert.deepEqual(beforeStaleStep, ['medium','high','low','high','low','medium','low']);
+  await assert.rejects(rpc('chat.stepReasoning', {sessionId:a, direction:'sideways', viewRevision:1}));
+  await assert.rejects(rpc('chat.stepReasoning', {sessionId:a, direction:'increase', viewRevision:2}));
+  assert.equal((await peers()).length, 1, 'Rejected effort updates keep the existing native connection');
+
   await hold('thread-a', 'read');
   const beforeRead = (await requests()).length;
+  const stepping = stepA('increase').then(value => ({value}), error => ({error}));
+  await waitFor('in-flight reasoning step read', () => lastRequest('thread/read', 'thread-a', beforeRead));
   const reading = rpc('chat.reasoning', { sessionId: a, viewRevision: 1 }).then(value => ({ value }), error => ({ error }));
   await waitFor('in-flight reasoning read', () => lastRequest('thread/read', 'thread-a', beforeRead));
   await hold('thread-b', 'resume');
@@ -155,6 +186,8 @@ try {
   assert.deepEqual(reopened.historyMessageIds, first.historyMessageIds);
   assert.deepEqual(reopened.history, first.history);
   assert.ok('error' in await reading, 'The delayed reasoning reply belongs to the previous view');
+  assert.ok('error' in await stepping, 'The delayed step must not affect the previous view');
+  assert.deepEqual(await effortWrites(), beforeStaleStep);
   assert.ok('error' in await openingB, 'The delayed open belongs to the previous view');
   await waitFor('reaping the superseded B process', () => !alive(stalePeer.pid));
   const liveA = (await lastRequest('thread/resume', 'thread-a'))!;
@@ -182,6 +215,9 @@ try {
     historyAroundMessageId: historyIds('thread-a')[0], deferHistoryImages: true,
   });
   assert.equal(busy.busy, true);
+  const writesBeforeBusy = await effortWrites();
+  await assert.rejects(rpc('chat.stepReasoning', {sessionId:a, direction:'increase', viewRevision:6}), /running or queued work/);
+  assert.deepEqual(await effortWrites(), writesBeforeBusy);
   assert.ok(busy.runId);
   assert.ok(busy.pendingUserInputs.some((item: { text: string }) => item.text === 'Preserve this queued delivery.'));
   assert.deepEqual(busy.historyMessageIds, [historyIds('thread-a')[0]]);
@@ -261,6 +297,7 @@ try {
   assert.deepEqual((await rpc('chat.mode', {sessionId: b, viewRevision: revision})).options, []);
   assert.deepEqual((await rpc('chat.permissionMode', {sessionId: b, viewRevision: revision})).options, []);
   assert.deepEqual((await rpc('chat.reasoning', {sessionId: b, viewRevision: revision})).levels, []);
+  await assert.rejects(rpc('chat.stepReasoning', {sessionId:b, direction:'increase', viewRevision:revision}), /Connect to the Agent/);
   const query = {sessionId: b, viewRevision: revision, query: 'saved reply for thread-b'};
   assert.deepEqual((await rpc('chat.searchMessages', query)).matches, [{messageId: historyIds('thread-b')[1]}]);
   const requestId = runtime.nextRequestId();

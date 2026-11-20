@@ -1,4 +1,4 @@
-use crate::app::HiveApp;
+use crate::app::{ErrorNotice, HiveApp};
 mod view;
 pub(crate) use view::reasoning_level_label;
 use gpui_kit::*;
@@ -18,9 +18,72 @@ pub struct ReasoningPicker {
     state: Option<ReasoningState>,
     error: Option<String>,
 }
+
+#[derive(Clone, Copy)]
+pub(crate) enum EffortDirection {
+    Increase,
+    Decrease,
+}
+
+impl EffortDirection {
+    fn wire_name(self) -> &'static str {
+        match self {
+            Self::Increase => "increase",
+            Self::Decrease => "decrease",
+        }
+    }
+}
+
+enum ReasoningRequest {
+    Read,
+    Set(String),
+    Step(EffortDirection),
+}
+
+const STEP_FAILED: &str = "无法切换推理强度";
+
 impl HiveApp {
     pub(crate) fn load_reasoning(&mut self, level: Option<String>, cx: &mut Context<Self>) {
-        if self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) { return; }
+        self.request_reasoning(level.map_or(ReasoningRequest::Read, ReasoningRequest::Set), cx);
+    }
+
+    pub(crate) fn step_reasoning_shortcut(
+        &mut self,
+        direction: EffortDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.composer_key_is_focused(window, cx)
+            || self.command_picker.open
+            || !self.viewing_conversation()
+            || !self.workspace_writes_allowed()
+            || self.current_history_access().is_some_and(|access| access.saved_history_passive)
+            || self.input.update(cx, |input, cx| input.marked_text_range(window, cx).is_some())
+        {
+            return;
+        }
+        let Some(session) = &self.session else {
+            return;
+        };
+        if self.workspace.as_deref() != Some(session.workspace_id.as_str()) {
+            return;
+        }
+        cx.stop_propagation();
+        if self.busy.contains(&session.id) || self.inflight_inputs.contains_key(&session.id) {
+            self.error = Some(ErrorNotice::Detail(
+                STEP_FAILED,
+                "请在当前回复结束后调整推理强度。".into(),
+            ));
+            cx.notify();
+            return;
+        }
+        self.request_reasoning(ReasoningRequest::Step(direction), cx);
+    }
+
+    fn request_reasoning(&mut self, request: ReasoningRequest, cx: &mut Context<Self>) {
+        if self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) {
+            return;
+        }
         if self.current_history_access().is_some_and(|a| a.handoff_passive())
             || self.conversation_is_read_only()
             || self.reasoning_picker.loading
@@ -35,26 +98,31 @@ impl HiveApp {
             return;
         };
         let id = session.id.clone();
+        let workspace = session.workspace_id.clone();
         let connection = self.connection_generation;
         let open = self.open_request;
+        let stepping = matches!(request, ReasoningRequest::Step(_));
+        if stepping && matches!(self.error, Some(ErrorNotice::Detail(STEP_FAILED, _))) {
+            self.error = None;
+        }
         self.reasoning_picker.loading = true;
         self.reasoning_picker.error = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let mutation = level.is_some();
-            let result = if let Some(level) = level {
-                runtime
-                    .request("chat.setReasoning", json!({"sessionId":id,"level":level}))
-                    .await
-            } else {
-                runtime
-                    .request("chat.reasoning", json!({"sessionId":id,"viewRevision":open}))
-                    .await
+            let setting = matches!(request, ReasoningRequest::Set(_));
+            let (method, params) = match request {
+                ReasoningRequest::Read => ("chat.reasoning", json!({"sessionId":id,"viewRevision":open})),
+                ReasoningRequest::Set(level) => ("chat.setReasoning", json!({"sessionId":id,"level":level})),
+                ReasoningRequest::Step(direction) => ("chat.stepReasoning", json!({
+                    "sessionId": id, "viewRevision": open, "direction": direction.wire_name()
+                })),
             };
+            let result = runtime.request(method, params).await;
             let failure = result.as_ref().err().cloned();
-            // Native setters can reject after a storage error. Read the actual
-            // native state instead of leaving an optimistic selection visible.
-            let result = if failure.is_some() && mutation {
+            // The explicit picker can reconcile after a rejected setter. A
+            // shortcut retains the last confirmed effort and never reopens an
+            // agent after a failed step.
+            let result = if failure.is_some() && setting {
                 runtime
                     .request("chat.reasoning", json!({"sessionId":id,"viewRevision":open}))
                     .await
@@ -67,7 +135,7 @@ impl HiveApp {
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection
                     || this.open_request != open
-                    || !this.session.as_ref().is_some_and(|s| s.id == id)
+                    || !this.session.as_ref().is_some_and(|s| s.id == id && s.workspace_id == workspace)
                 {
                     return;
                 }
@@ -80,19 +148,24 @@ impl HiveApp {
                         this.reasoning_picker.state = Some(state);
                         if failure.is_none() {
                             this.reasoning_picker.error = None;
-                            if mutation && let Some(session) = &mut this.session {
+                            if (setting || stepping) && let Some(session) = &mut this.session {
                                 session.inherited_draft_reasoning = None;
                                 session.unavailable_reasoning = None;
                             }
                         }
                     }
                     Err(error) => {
-                        this.reasoning_picker.state = None;
+                        if !stepping {
+                            this.reasoning_picker.state = None;
+                        }
                         this.reasoning_picker.error = Some(error);
                     }
                 }
                 if let Some(error) = failure {
                     this.reasoning_picker.error = Some(error);
+                }
+                if stepping && let Some(error) = &this.reasoning_picker.error {
+                    this.error = Some(ErrorNotice::Detail(STEP_FAILED, error.clone()));
                 }
                 cx.notify();
             });

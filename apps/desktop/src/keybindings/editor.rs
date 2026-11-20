@@ -415,7 +415,7 @@ impl Render for Editor {
                                 .unwrap_or_else(|| tr("录制").to_owned());
                             let current_chord = draft.get(target);
                             let is_default =
-                                current_chord.as_deref() == Some(target.default(os));
+                                current_chord.as_deref() == target.default(os);
                             let is_dirty = current_chord != saved.get(target);
                             let is_highlighted = highlighted_target == Some(target);
                             let row_content = v_flex()
@@ -571,11 +571,7 @@ impl Render for Editor {
                                                                     .draft
                                                                     .set(
                                                                         target,
-                                                                        Some(
-                                                                            target
-                                                                                .default(os)
-                                                                                .to_owned(),
-                                                                        ),
+                                                                        target.default(os).map(str::to_owned),
                                                                     );
                                                                 cx.refresh_windows();
                                                             },

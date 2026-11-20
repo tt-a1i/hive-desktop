@@ -916,6 +916,16 @@ impl HiveApp {
                                             this.send_and_start_draft(window, cx);
                                         },
                                     ))
+                                    .capture_action(cx.listener(
+                                        |this, _: &crate::keybindings::IncreaseReasoningEffort, window, cx| {
+                                            this.step_reasoning_shortcut(crate::reasoning_picker::EffortDirection::Increase, window, cx);
+                                        },
+                                    ))
+                                    .capture_action(cx.listener(
+                                        |this, _: &crate::keybindings::DecreaseReasoningEffort, window, cx| {
+                                            this.step_reasoning_shortcut(crate::reasoning_picker::EffortDirection::Decrease, window, cx);
+                                        },
+                                    ))
                                     .capture_action(cx.listener(Self::composer_enter))
                                     .capture_action(cx.listener(Self::alternate_multiline_send))
                                     .capture_action(cx.listener(Self::edit_latest_queued_input))
