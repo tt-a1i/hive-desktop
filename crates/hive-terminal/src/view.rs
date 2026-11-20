@@ -51,8 +51,8 @@ impl Default for TerminalConfig {
             .into(),
             font_size: px(14.0),
             scrollback: 10000,
-            line_height_multiplier: 1.0,
-            padding: Edges::all(px(0.0)),
+            line_height_multiplier: 1.15,
+            padding: Edges::all(px(6.0)),
             colors: ColorPalette::default(),
         }
     }

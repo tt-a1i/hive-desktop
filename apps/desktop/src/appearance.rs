@@ -514,6 +514,43 @@ fn choose_preferences(preferences: Preferences, window: &mut Window, cx: &mut Ap
     cx.refresh_windows();
 }
 
+static TERMINAL_SF_MONO_AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Register the local SF Mono faces from Terminal.app when the system font list
+/// does not already include them.
+pub fn prepare_terminal_fonts(cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    TERMINAL_SF_MONO_AVAILABLE.get_or_init(|| {
+        let text_system = cx.text_system();
+        let available = || text_system.all_font_names().iter().any(|name| name == "SF Mono");
+        if available() {
+            return true;
+        }
+        let directory = Path::new(
+            "/System/Applications/Utilities/Terminal.app/Contents/Resources/Fonts",
+        );
+        let fonts: Option<Vec<_>> = [
+            "SF-Mono-Regular.otf",
+            "SF-Mono-Bold.otf",
+            "SF-Mono-RegularItalic.otf",
+            "SF-Mono-BoldItalic.otf",
+        ]
+        .into_iter()
+        .map(|name| {
+            fs::read(directory.join(name))
+                .ok()
+                .map(std::borrow::Cow::Owned)
+        })
+        .collect();
+        if let Some(fonts) = fonts {
+            let _ = text_system.add_fonts(fonts);
+        }
+        available()
+    });
+    #[cfg(not(target_os = "macos"))]
+    let _ = cx;
+}
+
 pub fn sync_terminal(view: &gpui_kit::Entity<hive_terminal::TerminalView>, cx: &mut App) {
     let (family, size) = {
         let state = cx.global::<Appearance>();
@@ -525,6 +562,13 @@ pub fn sync_terminal(view: &gpui_kit::Entity<hive_terminal::TerminalView>, cx: &
             px(f32::from(state.terminal_font_size())),
         )
     };
+    let family = family.or_else(|| {
+        TERMINAL_SF_MONO_AVAILABLE
+            .get()
+            .copied()
+            .unwrap_or(false)
+            .then(|| "SF Mono".to_owned())
+    });
     view.update(cx, |view, cx| view.set_typography(family, size, cx));
 }
 

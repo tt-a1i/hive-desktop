@@ -136,6 +136,7 @@ fn main() {
         .run(|cx| {
             cx.set_app_identity("com.hive.desktop.dev", "Hive Desktop");
             gpui_kit::init(cx);
+            appearance::prepare_terminal_fonts(cx);
             cx.set_global(local_notifications::Preferences::default());
             cx.set_global(appearance::Appearance::default());
             general::init(cx);

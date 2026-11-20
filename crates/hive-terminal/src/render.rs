@@ -13,6 +13,23 @@ use gpui_kit::{
 };
 use std::ops::Range;
 
+#[cfg(test)]
+mod typography_tests {
+    use super::*;
+
+    #[test]
+    fn cell_metrics_align_to_device_pixels_and_can_shrink() {
+        let mut renderer =
+            TerminalRenderer::new("Menlo".into(), px(14.0), 1.15, ColorPalette::default());
+        renderer.set_cell_metrics(px(8.1), px(16.0), 2.0);
+        assert_eq!(renderer.cell_width, px(8.5));
+        assert_eq!(renderer.cell_height, px(18.5));
+        renderer.set_cell_metrics(px(7.1), px(12.0), 2.0);
+        assert_eq!(renderer.cell_width, px(7.5));
+        assert_eq!(renderer.cell_height, px(14.0));
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BatchedTextRun {
     pub text: String,
@@ -104,12 +121,22 @@ impl TerminalRenderer {
         let shaped = window
             .text_system()
             .shape_line("M".into(), self.font_size, &[text_run], None);
-        self.set_cell_metrics(shaped.width, shaped.ascent + shaped.descent);
+        self.set_cell_metrics(
+            shaped.width,
+            shaped.ascent + shaped.descent,
+            window.scale_factor(),
+        );
     }
 
-    fn set_cell_metrics(&mut self, advance: Pixels, line_height: Pixels) {
-        self.cell_width = advance.max(px(1.0));
-        self.cell_height = (line_height * self.line_height_multiplier).max(px(1.0));
+    fn set_cell_metrics(&mut self, advance: Pixels, line_height: Pixels, scale: f32) {
+        // Keep every cell on the same physical-pixel grid. Otherwise fractional
+        // advances can make identical glyphs look heavier in alternating columns.
+        let align = |value: Pixels| {
+            let value: f32 = value.into();
+            px(((value * scale).ceil() / scale).max(1.0))
+        };
+        self.cell_width = align(advance);
+        self.cell_height = align(line_height * self.line_height_multiplier);
     }
 
     fn cell_colors(&self, cell: &Cell, colors: &Colors) -> (Hsla, Hsla) {
