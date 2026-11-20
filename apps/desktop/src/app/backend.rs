@@ -227,6 +227,10 @@ impl HiveApp {
         self.pinned_sessions.dirty = false;
         self.refreshing_models = false;
         self.settings_loading = false;
+        self.readiness_loading = false;
+        self.readiness = None;
+        self.readiness_error = None;
+        self.welcome_setup.adding = false;
         self.agent_diagnostic = None;
         self.program_checks.clear();
         self.codex_account = Default::default();

@@ -21,6 +21,8 @@ use serde::Deserialize;
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
 
+mod browser;
+
 enum FileError {
     Owned(&'static str),
     Request(String),

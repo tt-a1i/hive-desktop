@@ -27,38 +27,21 @@ pub(crate) fn live_state_dot(state: &str, cx: &App) -> Rgba {
 
 impl HiveApp {
     /// Subtle live team status pill shown in the main chat topbar ONLY when at
-    /// least one worker is actively executing, waiting for user interaction,
-    /// stopped with error, or has a pending report. Keeps single-agent chat serene.
+    /// least one worker is active or the inbox contains conversation activity.
     pub(crate) fn render_topbar_team_status_pill(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let mut working = 0usize;
         let mut waiting = 0usize;
         let mut errored = 0usize;
-        let mut urgent_session: Option<String> = None;
         for m in self.members.iter().filter(|m| !m.is_lead()) {
             match m.live_state() {
-                "waiting_interaction" => {
-                    waiting += 1;
-                    if urgent_session.is_none() {
-                        urgent_session = self.member_session_id(&m.id);
-                    }
-                }
-                "error" => {
-                    errored += 1;
-                    if urgent_session.is_none() {
-                        urgent_session = self.member_session_id(&m.id);
-                    }
-                }
+                "waiting_interaction" => waiting += 1,
+                "error" => errored += 1,
                 "working" => working += 1,
                 _ => {}
             }
         }
-        let pending_reports = self
-            .collaboration
-            .dispatches
-            .iter()
-            .filter(|d| d.state == "submitted")
-            .count();
-        if working == 0 && waiting == 0 && errored == 0 && pending_reports == 0 {
+        let inbox_count = self.inbox_session_count();
+        if working == 0 && waiting == 0 && errored == 0 && inbox_count == 0 {
             return None;
         }
         let mut parts = Vec::new();
@@ -83,22 +66,25 @@ impl HiveApp {
                 format!("{errored} 异常")
             });
         }
-        if pending_reports > 0 {
+        if inbox_count > 0 {
             parts.push(if english() {
-                format!("{pending_reports} report")
+                if inbox_count == 1 {
+                    "1 conversation needs attention".to_owned()
+                } else {
+                    format!("{inbox_count} conversations need attention")
+                }
             } else {
-                format!("{pending_reports} 待阅汇报")
+                format!("{inbox_count} 个会话待关注")
             });
         }
         let label = parts.join(" · ");
-        let dot_color = if waiting > 0 || pending_reports > 0 {
+        let dot_color = if waiting > 0 || inbox_count > 0 {
             crate::chrome::attention_dot(cx)
         } else if errored > 0 {
             Color::Error.get(cx)
         } else {
             Color::Accent.get(cx)
         };
-        let jump_target = urgent_session;
         Some(
             Button::new("topbar-live-team-pill")
                 .custom(palette::quiet_icon_variant(cx))
@@ -107,11 +93,7 @@ impl HiveApp {
                 .h(px(24.))
                 .px_2()
                 .rounded_full()
-                .tooltip(if jump_target.is_some() {
-                    tr("点击直达需要关注的成员会话")
-                } else {
-                    tr("打开团队实时态势驾驶舱")
-                })
+                .tooltip(tr("协作收件箱"))
                 .accessibility_label(format!("{}: {label}", tr("团队实时态势")))
                 .child(
                     h_flex()
@@ -128,12 +110,8 @@ impl HiveApp {
                                 .child(label),
                         ),
                 )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if let Some(sid) = jump_target.clone() {
-                        this.open_member_session(sid, window, cx);
-                    } else {
-                        this.open_collaboration(cx);
-                    }
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.open_collaboration(cx);
                 }))
                 .into_any_element(),
         )
@@ -160,13 +138,6 @@ impl HiveApp {
                 unread_reports += a.pending_report_count as usize;
             }
         }
-        let submitted_dispatches = self
-            .collaboration
-            .dispatches
-            .iter()
-            .filter(|d| d.state == "submitted")
-            .count();
-        let pending_reports_total = unread_reports.max(submitted_dispatches);
 
         // Sort Lead first, then active/waiting/errored workers, then idle/stopped.
         let mut ordered: Vec<&Member> = self.members.iter().collect();
@@ -209,13 +180,13 @@ impl HiveApp {
                     cx,
                 ))
             })
-            .when(pending_reports_total > 0, |row| {
+            .when(unread_reports > 0, |row| {
                 row.child(self.cockpit_stat_pill(
                     crate::chrome::attention_dot(cx),
                     if english() {
-                        format!("{pending_reports_total} reports pending")
+                        format!("{unread_reports} reports pending")
                     } else {
-                        format!("{pending_reports_total} 份待阅汇报")
+                        format!("{unread_reports} 份待处理汇报")
                     },
                     cx,
                 ))
@@ -245,7 +216,7 @@ impl HiveApp {
             .when(
                 working == 0
                     && waiting == 0
-                    && pending_reports_total == 0
+                    && unread_reports == 0
                     && queued == 0
                     && errored == 0,
                 |row| {
@@ -373,12 +344,6 @@ impl HiveApp {
                                     "failed" | "error" | "cancelled" => Color::Error.get(cx),
                                     _ => Color::Accent.get(cx),
                                 };
-                                let worker_session = self
-                                    .members
-                                    .iter()
-                                    .find(|m| m.id == d.to_agent_id)
-                                    .and_then(|m| m.desktop_activity.as_ref())
-                                    .and_then(|a| a.session_id.clone());
                                 let task_preview: String = d.text.lines().next().unwrap_or("").chars().take(120).collect();
                                 let report_preview = d.report_text.as_deref().map(|r| {
                                     r.lines().next().unwrap_or("").chars().take(120).collect::<String>()
@@ -469,22 +434,7 @@ impl HiveApp {
                                                     }),
                                             ),
                                     )
-                                    .when_some(worker_session, |row, sid| {
-                                        row.child(
-                                            Button::new(("timeline-split-peek", i))
-                                                .custom(palette::subtle_icon_variant(cx))
-                                                .compact()
-                                                .xsmall()
-                                                .h(px(22.))
-                                                .px_2()
-                                                .rounded_sm()
-                                                .label(tr("分屏查看"))
-                                                .accessibility_label(tr("分屏查看"))
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.open_split_peek_session(sid.clone(), cx);
-                                                })),
-                                        )
-                                    })
+                                    .child(self.dispatch_session_button(("timeline-split-peek", i), d, true, cx))
                             }),
                     ),
             )
@@ -852,12 +802,7 @@ impl HiveApp {
             .filter(|b| !b.is_empty())
             .map(str::to_owned);
         let worktree_removed = activity.is_some_and(|a| a.worktree_removed);
-        let has_submitted = self
-            .collaboration
-            .dispatches
-            .iter()
-            .any(|d| d.to_agent_id == member.id && d.state == "submitted");
-        let highlight_report = pending_reports > 0 || has_submitted;
+        let highlight_report = pending_reports > 0;
 
         let monogram = palette::project_monogram(&member.name);
         let is_lead = member.is_lead();
@@ -986,7 +931,7 @@ impl HiveApp {
                                         .text_size(px(10.5))
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(crate::chrome::attention_dot(cx))
-                                        .child(tr("待阅汇报").to_owned()),
+                                        .child(tr("待处理的汇报")),
                                 )
                             }),
                     )

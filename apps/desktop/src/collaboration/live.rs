@@ -39,6 +39,7 @@ impl HiveApp {
                             } else {
                                 this.refresh_dispatches(cx);
                                 this.refresh_task_document(cx);
+                                this.refresh_collaboration_inbox(cx);
                             }
                         }
                     })

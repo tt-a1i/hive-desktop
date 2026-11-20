@@ -70,6 +70,7 @@ impl WireFailure {
 struct CancelSearch<'a> {
     runtime: &'a Runtime,
     request_id: u64,
+    method: &'static str,
 }
 
 impl Drop for CancelSearch<'_> {
@@ -80,7 +81,7 @@ impl Drop for CancelSearch<'_> {
             let id = runtime.next.fetch_add(1, Ordering::Relaxed);
             let _ = runtime.tx.send(json!({
                 "id": id,
-                "method": "chat.search.cancel",
+                "method": self.method,
                 "params": {"requestId": self.request_id},
             }));
         }
@@ -396,8 +397,15 @@ impl Runtime {
         })
     }
     pub async fn search(&self, params: Value) -> Reply {
-        let (request_id, reply) = self.enqueue_request("chat.search", params)?;
-        let _cancel = CancelSearch { runtime: self, request_id };
+        self.cancellable_search("chat.search", "chat.search.cancel", params).await
+    }
+    pub(crate) async fn search_project_files(&self, contents: bool, params: Value) -> Reply {
+        let method = if contents { "project.files.searchContent" } else { "project.files.search" };
+        self.cancellable_search(method, "project.files.search.cancel", params).await
+    }
+    async fn cancellable_search(&self, method: &str, cancel: &'static str, params: Value) -> Reply {
+        let (request_id, reply) = self.enqueue_request(method, params)?;
+        let _cancel = CancelSearch { runtime: self, request_id, method: cancel };
         await_reply(reply).await
     }
     /// Enqueue in caller order; the existing writer remains the only wire writer.

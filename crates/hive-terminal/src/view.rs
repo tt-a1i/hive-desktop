@@ -430,8 +430,9 @@ impl TerminalView {
         _window: &mut Window,
         _cx: &mut Context<PopupMenu>,
     ) -> PopupMenu {
+        let english = gpui_kit::component::locale().starts_with("en");
         menu.item(
-            PopupMenuItem::new("复制")
+            PopupMenuItem::new(if english { "Copy" } else { "复制" })
                 .disabled(!has_selection)
                 .on_click({
                     let view = view.clone();
@@ -442,15 +443,37 @@ impl TerminalView {
                     }
                 }),
         )
-        .item(PopupMenuItem::new("粘贴").on_click({
-            let view = view.clone();
-            move |_, _, cx| {
-                let _ = view.update(cx, |this, cx| {
-                    let _ = this.paste_from_clipboard(cx);
-                    cx.notify();
-                });
-            }
-        }))
+        .item(
+            PopupMenuItem::new(if english {
+                "Add selection to chat"
+            } else {
+                "将选中内容添加到对话"
+            })
+            .disabled(!has_selection)
+            .on_click({
+                let view = view.clone();
+                move |_, _, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        if let Some(text) =
+                            this.state.selection_text().filter(|text| !text.is_empty())
+                        {
+                            cx.emit(TerminalEvent::AddSelectionToChat(text));
+                        }
+                    });
+                }
+            }),
+        )
+        .item(
+            PopupMenuItem::new(if english { "Paste" } else { "粘贴" }).on_click({
+                let view = view.clone();
+                move |_, _, cx| {
+                    let _ = view.update(cx, |this, cx| {
+                        let _ = this.paste_from_clipboard(cx);
+                        cx.notify();
+                    });
+                }
+            }),
+        )
     }
 }
 

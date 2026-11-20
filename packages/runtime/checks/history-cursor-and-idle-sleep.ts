@@ -25,16 +25,44 @@ assert.deepEqual(initial.historyPage, {
   hasOlder: true,
   nextBeforeIndex: 1380,
   nextBeforeMessageId: 'm-1380',
+  hasNewer: false,
 });
 
-// 2. Search jump / reading anchor restore includes target message + preceding context through tail.
+// 2. Old search and reading anchors load a bounded page with both cursors.
 const anchored = sliceHistoryWindow(history, ids, { limit: 120, aroundMessageId: 'm-420' });
-assert.equal(anchored.historyMessageIds[0], 'm-400');
-assert.ok(anchored.historyMessageIds.includes('m-420'));
-assert.equal(anchored.historyMessageIds.at(-1), 'm-1499');
-assert.equal(anchored.historyPage.hasOlder, true);
-assert.equal(anchored.historyPage.nextBeforeIndex, 400);
-assert.equal(anchored.historyPage.nextBeforeMessageId, 'm-400');
+assert.deepEqual(anchored.historyMessageIds, ids.slice(400, 520));
+assert.deepEqual(anchored.historyPage, {
+  totalCount: 1500,
+  startIndex: 400,
+  hasOlder: true,
+  nextBeforeIndex: 400,
+  nextBeforeMessageId: 'm-400',
+  hasNewer: true,
+  nextAfterIndex: 519,
+  nextAfterMessageId: 'm-519',
+});
+assert.deepEqual(sliceHistoryWindow(history, ids, {limit: 1, aroundMessageId: 'm-420'}).historyMessageIds, ['m-420']);
+assert.deepEqual(sliceHistoryWindow(history, ids, {limit: 3, aroundMessageId: 'm-0'}).historyMessageIds, ids.slice(0, 3));
+assert.deepEqual(sliceHistoryWindow(history, ids, {limit: 120, aroundMessageId: 'm-1480'}), initial);
+assert.deepEqual(sliceHistoryWindow(history, ids, {limit: 120, aroundMessageId: 'missing'}), initial);
+const deliveries = history.map((item, index) => index === 420
+  ? {...item, presentation: {deliveryId: 'delivery-target'}} : item);
+assert.deepEqual(sliceHistoryWindow(deliveries, ids, {limit: 1, aroundMessageId: 'delivery-target'}).historyMessageIds, ['m-420']);
+
+const focusedWalk = [...anchored.historyMessageIds];
+let newer = anchored.historyPage;
+while (newer.nextAfterIndex !== undefined) {
+  const next = sliceHistoryWindow(history, ids, {
+    limit: 120,
+    afterIndex: newer.nextAfterIndex,
+    afterMessageId: newer.nextAfterMessageId,
+  });
+  assert.ok(next.history.length <= 120);
+  focusedWalk.push(...next.historyMessageIds);
+  newer = next.historyPage;
+}
+assert.equal(newer.hasNewer, false);
+assert.deepEqual(focusedWalk, ids.slice(400));
 
 // 3. Backward pagination walks to index 0 with zero gaps or duplicates.
 const collected: string[] = [...initial.historyMessageIds];
@@ -62,6 +90,12 @@ const reanchored = sliceHistoryWindow(shiftedHistory, shiftedIds, {
 });
 assert.equal(reanchored.historyMessageIds.at(-1), 'm-1379');
 assert.ok(!reanchored.historyMessageIds.includes('m-1380'));
+const shiftedForward = sliceHistoryWindow(shiftedHistory, shiftedIds, {
+  limit: 10,
+  afterIndex: anchored.historyPage.nextAfterIndex,
+  afterMessageId: anchored.historyPage.nextAfterMessageId,
+});
+assert.deepEqual(shiftedForward.historyMessageIds, ids.slice(520, 530));
 
 // 5. Oversized toolResult output is bounded on paginated reads while user/assistant messages stay untouched.
 const hugeTool = {
@@ -132,4 +166,4 @@ try {
   rmSync(tmp, { recursive: true, force: true });
 }
 
-console.log('HISTORY_CURSOR_OK: bounded open, anchored search/reading restore, full backward walk, shifted-ID reanchor, UTF-8 byte-window streaming, and reverse chunked JSONL tail reader verified.');
+console.log('HISTORY_CURSOR_OK: bounded tail and focused opens, full walks in both directions, shifted-ID reanchoring, UTF-8 byte windows, and reverse JSONL reads verified.');

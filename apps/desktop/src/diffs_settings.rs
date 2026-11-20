@@ -314,7 +314,7 @@ fn normalized_code(line: &str) -> Vec<&str> {
     line.split_whitespace().collect()
 }
 
-fn parse_hunk_coords(header: &str) -> Option<(usize, usize, usize, usize, &str)> {
+pub(crate) fn parse_hunk_coords(header: &str) -> Option<(usize, usize, usize, usize, &str)> {
     let rest = header.strip_prefix("@@ -")?;
     let (coords, tail) = match rest.find(" @@") {
         Some(pos) => (&rest[..pos], &rest[pos + 3..]),

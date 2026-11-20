@@ -4,6 +4,7 @@ pub(crate) mod cockpit;
 mod live;
 mod tasks;
 mod empty;
+mod inbox;
 pub(crate) use tasks::SavedTaskDraft;
 
 use crate::{app::HiveApp, language::tr};
@@ -75,6 +76,8 @@ pub struct Collaboration {
     pub list_error: Option<(&'static str, String)>,
     pub list_generation: u64,
     pub selected: Option<Dispatch>,
+    pub(crate) missing_session_source: Option<String>,
+    inbox: inbox::Inbox,
     pub chat_origin: Option<String>,
     pub workflow_origin: bool,
     pub detail_scroll: ScrollHandle,
@@ -114,6 +117,8 @@ impl Collaboration {
             list_error: None,
             list_generation: 0,
             selected: None,
+            missing_session_source: None,
+            inbox: Default::default(),
             chat_origin: None,
             workflow_origin: false,
             detail_scroll: ScrollHandle::new(),
@@ -145,6 +150,7 @@ impl HiveApp {
         self.collaboration.detail_generation += 1;
         self.collaboration.list_generation += 1;
         self.collaboration.message_generation += 1;
+        self.collaboration.inbox.invalidate();
     }
     pub fn open_collaboration(&mut self, cx: &mut Context<Self>) {
         self.close_workflows();
@@ -162,12 +168,14 @@ impl HiveApp {
         self.collaboration.chat_origin = None;
         self.collaboration.offset = 0;
         self.collaboration.selected = None;
+        self.collaboration.missing_session_source = None;
         self.collaboration.messages.clear();
         self.collaboration.responsibilities.clear();
         self.collaboration.next_message = None;
         self.collaboration.message_generation += 1;
         self.load_tasks(cx);
         self.load_dispatches(cx);
+        self.refresh_collaboration_inbox(cx);
     }
     pub(crate) fn load_tasks(&mut self, cx: &mut Context<Self>) {
         let (Some(workspace), Some(runtime)) = (self.workspace.clone(), self.runtime.clone())
@@ -308,6 +316,7 @@ impl HiveApp {
         let c = &mut self.collaboration;
         c.detail_scroll = ScrollHandle::new();
         c.detail_error = None;
+        c.missing_session_source = None;
         c.selected = Some(item);
         c.focus_navigation = true;
         c.detail_loading = false;

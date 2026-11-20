@@ -437,7 +437,7 @@ impl HiveApp {
             .tooltip(tr("更多工作区功能"))
             .accessibility_label(tr("更多工作区功能"))
             .selected(filter_active)
-            .dropdown_menu(move |mut menu, _, _| {
+            .dropdown_menu(move |mut menu, window, cx| {
                 if workspaces.len() > 1 {
                     let all_state = filter_ws.clone();
                     let weak_all = weak.clone();
@@ -525,27 +525,10 @@ impl HiveApp {
                 }
                 if let Some(ws_id) = active_workspace.clone() {
                     menu = menu.separator();
-                    for (target, label) in [
-                        (
-                            "finder",
-                            if cfg!(target_os = "macos") {
-                                tr("访达")
-                            } else {
-                                tr("文件管理器")
-                            },
-                        ),
-                        ("vscode", "Visual Studio Code"),
-                        ("cursor", "Cursor"),
-                        ("zed", "Zed"),
-                    ] {
-                        let weak = weak.clone();
-                        let id = ws_id.clone();
-                        menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                this.open_workspace_target(id.clone(), target, cx)
-                            });
-                        }));
-                    }
+                    let owner = weak.clone();
+                    menu = menu.submenu(tr("打开方式"), window, cx, move |menu, _, cx| {
+                        crate::open_targets::workspace_menu(menu, owner.clone(), ws_id.clone(), None, cx)
+                    });
                     let weak = weak.clone();
                     menu =
                         menu.separator()
@@ -1176,6 +1159,9 @@ impl HiveApp {
                                 this.toggle_git_workspace(window, cx);
                             })),
                     )
+                    .when(self.workspace.is_some(), |row| {
+                        row.child(self.project_file_browser_button("sidebar-project-files", cx))
+                    })
                     .child(div().flex_1())
                     .when(!self.pending_reports.is_empty(), |row| {
                         row.child(

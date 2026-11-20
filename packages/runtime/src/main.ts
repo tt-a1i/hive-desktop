@@ -25,7 +25,7 @@ import { remoteCommands } from './remote-commands.js';
 import { captureRuntimeInfo } from './runtime-info.js';
 import { DesktopUpdates } from './desktop-updates.js';
 import { desktopHistoryMessage } from './desktop-history.js';
-import { boundOversizedToolOutput, sliceHistoryWindow } from './history-cursor.js';
+import { boundOversizedToolOutput, clampHistoryLimit, sliceHistoryWindow } from './history-cursor.js';
 import { collectReadinessReport } from './readiness.js';
 import { collectSkillsAndRules } from './skills-rules.js';
 import {
@@ -75,10 +75,17 @@ const updates = new DesktopUpdates(dataDir, new URL('../../desktop-update-channe
 const { hive, chats, profiles, settings, agentModels, terminal, piAuth } = runtime;
 let closing: Promise<void> | undefined;
 let closingInstallerId: string | undefined;
-const historySearches = new Map<number | string, AbortController>();
+const searches = new Map<number | string, AbortController>();
+async function runSearch<T>(requestId: number | string, search: (signal: AbortSignal) => Promise<T>) {
+  if (searches.has(requestId)) throw new Error('Search request id is already in use');
+  const controller = new AbortController();
+  searches.set(requestId, controller);
+  try { return await search(controller.signal); }
+  finally { searches.delete(requestId); }
+}
 const close = (installerId?: string) => {
   if (!closing) {
-    for (const search of historySearches.values()) search.abort();
+    for (const search of searches.values()) search.abort();
     closingInstallerId = installerId;
     closing = Promise.allSettled([updates.close(installerId), runtime.close()]).then(([update, sidecar]) => {
       if (sidecar.status === 'rejected') throw sidecar.reason;
@@ -476,31 +483,44 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'git.remotes': return chats.gitRemotes(text(params, 'workspaceId'), params.sessionId);
     case 'git.push.preview': return chats.gitPushPreview(text(params, 'workspaceId'), params.remote, params.branch, params.sessionId);
     case 'git.push.apply': return chats.gitPushApply(text(params, 'workspaceId'), params.remote, params.branch, params.expectedVersion, params.sessionId);
+    case 'git.pr.review.preview': {
+      exact(params, ['workspaceId', 'remote', 'reference']);
+      return chats.gitPrReviewPreview(text(params, 'workspaceId'), text(params, 'remote'), text(params, 'reference'));
+    }
+    case 'git.pr.review.open': {
+      exact(params, ['workspaceId', 'remote', 'reference', 'expectedVersion', 'checkout', 'backend', 'profile']);
+      const {checkout, backend} = params;
+      if (checkout !== 'current' && checkout !== 'worktree') throw new Error('Unsupported PR checkout');
+      if (backend !== 'pi' && backend !== 'codex' && backend !== 'pi-rpc' && backend !== 'claude' && backend !== 'acp')
+        throw new Error('Unsupported chat backend');
+      return chats.openGithubPrReview(text(params, 'workspaceId'), {checkout, backend, ...optionalProfile(params),
+        remote: text(params, 'remote'), reference: text(params, 'reference'), expectedVersion: text(params, 'expectedVersion')},
+      () => terminal.hasAnyActiveShell());
+    }
     case 'git.pr.preview': return chats.gitPrPreview(text(params, 'workspaceId'), params);
     case 'git.pr.create': return chats.gitPrApply(text(params, 'workspaceId'), 'create', params);
     case 'git.pr.update': return chats.gitPrApply(text(params, 'workspaceId'), 'update', params);
-    case 'project.files.search': return chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId);
+    case 'project.files.list': return chats.projectFilesList(text(params, 'workspaceId'), params.directory, params.offset, params.sessionId);
+    case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal));
+    case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal));
+    case 'project.files.preview': return chats.projectFilesPreview(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.status': return chats.projectFileStatus(text(params, 'workspaceId'), text(params, 'id'));
     case 'chat.search': {
       if (params.navigationOnly !== undefined && typeof params.navigationOnly !== 'boolean')
         throw new TypeError('navigationOnly must be boolean');
-      if (historySearches.has(requestId)) throw new Error('Search request id is already in use');
-      const search = new AbortController();
-      historySearches.set(requestId, search);
-      try {
-        const page = await chats.search(params.query, params.archived, params.offset, params.workspaceId, search.signal);
+      return runSearch(requestId, async signal => {
+        const page = await chats.search(params.query, params.archived, params.offset, params.workspaceId, signal);
         if (!params.navigationOnly) return page;
         return {...page, matches: page.matches.map(hit => ({...hit, session: navigationSearchSession(hit.session)}))};
-      } finally {
-        historySearches.delete(requestId);
-      }
+      });
     }
-    case 'chat.search.cancel': {
+    case 'chat.search.cancel':
+    case 'project.files.search.cancel': {
       exact(params, ['requestId']);
       const target = params.requestId;
       if (typeof target !== 'number' && typeof target !== 'string') throw new Error('Search request id is required');
-      const search = historySearches.get(target);
+      const search = searches.get(target);
       search?.abort();
       return {cancelled: search !== undefined};
     }
@@ -557,7 +577,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       }
       const id = text(params, 'sessionId');
       const tailLimit = params.historyLimit !== undefined && !params.historyAroundMessageId && params.includeLiveHistory !== false
-        ? params.historyLimit
+        ? clampHistoryLimit(params.historyLimit)
         : undefined;
       const snapshot = await (params.viewRevision === undefined
         ? chats.open(id, params.includeLiveHistory, false, tailLimit)
@@ -594,24 +614,39 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       )} : paged;
     }
     case 'chat.historyPage': {
-      exact(params, ['sessionId', 'beforeIndex', 'beforeMessageId', 'limit', 'deferHistoryImages']);
-      if (typeof params.beforeIndex !== 'number' || !Number.isSafeInteger(params.beforeIndex) || params.beforeIndex < 0) {
-        throw new TypeError('beforeIndex must be a nonnegative integer');
+      exact(params, ['sessionId', 'beforeIndex', 'beforeMessageId', 'afterIndex', 'afterMessageId', 'limit', 'deferHistoryImages', 'viewRevision']);
+      const before = params.beforeIndex !== undefined;
+      const after = params.afterIndex !== undefined;
+      if (before === after || (!before && params.beforeMessageId !== undefined) || (!after && params.afterMessageId !== undefined)) {
+        throw new TypeError('Provide either a before or an after history cursor');
       }
-      if (params.beforeMessageId !== undefined && typeof params.beforeMessageId !== 'string') {
-        throw new TypeError('beforeMessageId must be a string');
+      const indexName = before ? 'beforeIndex' : 'afterIndex';
+      const idName = before ? 'beforeMessageId' : 'afterMessageId';
+      const index = params[indexName];
+      const messageId = params[idName];
+      if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0) {
+        throw new TypeError(`${indexName} must be a nonnegative integer`);
       }
-      if (params.limit !== undefined && (typeof params.limit !== 'number' || !Number.isSafeInteger(params.limit) || params.limit <= 0)) {
+      if (messageId !== undefined && typeof messageId !== 'string') {
+        throw new TypeError(`${idName} must be a string`);
+      }
+      const limit = params.limit;
+      if (limit !== undefined && (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit <= 0)) {
         throw new TypeError('limit must be a positive integer');
       }
       if (params.deferHistoryImages !== undefined && typeof params.deferHistoryImages !== 'boolean') {
         throw new TypeError('deferHistoryImages must be a boolean');
       }
-      const page = await chats.historyPage(text(params, 'sessionId'), {
-        beforeIndex: params.beforeIndex,
-        ...(params.beforeMessageId ? { beforeMessageId: params.beforeMessageId } : {}),
-        ...(params.limit !== undefined ? { limit: params.limit } : {}),
+      const id = text(params, 'sessionId');
+      const read = () => chats.historyPage(id, {
+        ...(before
+          ? { beforeIndex: index, ...(messageId && { beforeMessageId: messageId }) }
+          : { afterIndex: index, ...(messageId && { afterMessageId: messageId }) }),
+        ...(limit !== undefined && { limit }),
       });
+      const page = await (params.viewRevision === undefined
+        ? read()
+        : chats.readDesktopView(id, viewRevision(params.viewRevision), read));
       const boundedHistory = page.history.map(m => boundOversizedToolOutput(m));
       return params.deferHistoryImages ? {
         ...page,
@@ -729,7 +764,7 @@ input.on('line', line => {
         return;
       }
       await writeFrame({ id, error: {
-        code: method === 'chat.search' && error instanceof Error && error.name === 'AbortError' ? 'SEARCH_CANCELLED'
+        code: (method === 'chat.search' || method === 'project.files.search' || method === 'project.files.searchContent') && error instanceof Error && error.name === 'AbortError' ? 'SEARCH_CANCELLED'
           : error instanceof ProjectCopyChangedError ? 'PROJECT_COPY_CHANGED' : error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError || error instanceof GitWorktreeError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),

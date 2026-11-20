@@ -280,13 +280,13 @@ pub struct BackendReadiness {
     pub backend: String,
     pub level: String,
     #[serde(default)]
+    pub credential_state: String,
+    #[serde(default)]
     pub executable: Option<String>,
     #[serde(default)]
     pub config_error: Option<String>,
     #[serde(default)]
     pub remediation_key: String,
-    #[serde(default)]
-    pub mcp_count: usize,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -465,6 +465,27 @@ pub struct HistoryPageMeta {
     pub next_before_index: Option<usize>,
     #[serde(default)]
     pub next_before_message_id: Option<String>,
+    #[serde(default)]
+    pub has_newer: bool,
+    #[serde(default)]
+    pub next_after_index: Option<usize>,
+    #[serde(default)]
+    pub next_after_message_id: Option<String>,
+}
+
+impl HistoryPageMeta {
+    pub(crate) fn extend(&mut self, page: Self, newer: bool) {
+        if newer {
+            self.has_newer = page.has_newer;
+            self.next_after_index = page.next_after_index;
+            self.next_after_message_id = page.next_after_message_id;
+        } else {
+            self.start_index = page.start_index;
+            self.has_older = page.has_older;
+            self.next_before_index = page.next_before_index;
+            self.next_before_message_id = page.next_before_message_id;
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -478,12 +499,19 @@ pub struct HistoryPageResponse {
 }
 
 #[derive(Deserialize)]
+pub struct PrReviewDraft {
+    pub prompt: String,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenSession {
     #[serde(default)]
     pub history_page: Option<HistoryPageMeta>,
     #[serde(default)]
     pub fork_draft: Option<Value>,
+    #[serde(default)]
+    pub pr_review: Option<PrReviewDraft>,
     #[serde(default)]
     pub handoff_snapshot: Option<Value>,
     #[serde(default)]
@@ -757,6 +785,33 @@ pub enum TerminalFrame {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn extending_focused_history_keeps_the_opposite_cursor() {
+        let mut window: HistoryPageMeta = serde_json::from_value(json!({
+            "startIndex": 50, "hasOlder": true, "nextBeforeIndex": 50,
+            "nextBeforeMessageId": "m50", "hasNewer": true,
+            "nextAfterIndex": 149, "nextAfterMessageId": "m149"
+        })).unwrap();
+        let older: HistoryPageMeta = serde_json::from_value(json!({
+            "startIndex": 0, "hasOlder": false, "hasNewer": true,
+            "nextAfterIndex": 49, "nextAfterMessageId": "m49"
+        })).unwrap();
+        window.extend(older, false);
+        assert!(!window.has_older);
+        assert_eq!(window.next_before_index, None);
+        assert_eq!(window.next_after_message_id.as_deref(), Some("m149"));
+
+        let newer: HistoryPageMeta = serde_json::from_value(json!({
+            "startIndex": 150, "hasOlder": true, "nextBeforeIndex": 150,
+            "nextBeforeMessageId": "m150", "hasNewer": false
+        })).unwrap();
+        window.extend(newer, true);
+        assert_eq!(window.start_index, 0);
+        assert_eq!(window.next_before_message_id, None);
+        assert!(!window.has_newer);
+        assert_eq!(window.next_after_index, None);
+    }
 
     #[test]
     fn initialization_wire_fields_preserve_script_and_recovery_actions() {

@@ -2,6 +2,18 @@ use crate::{app::{HiveApp,ErrorNotice},language::tr};
 use gpui_kit::*;
 use serde_json::json;
 
+pub(crate) fn workspace_add_params(path: &str) -> serde_json::Value {
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_else(|| tr("项目"));
+    json!({
+        "method": "POST",
+        "path": "/api/workspaces",
+        "body": { "path": path, "name": name, "autostart_orchestrator": false },
+    })
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkspaceRemovalOutcome {
@@ -24,7 +36,7 @@ struct WorkspaceRemovalDetails {
 
 impl HiveApp {
     pub fn choose_workspace_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.connected {
+        if !self.connected || self.welcome_setup.adding {
             return;
         }
         let receiver = cx.prompt_for_paths(PathPromptOptions {
@@ -35,6 +47,7 @@ impl HiveApp {
         });
         let window = window.window_handle();
         let connection = self.connection_generation;
+        let for_setup = self.showing_welcome_guide;
         cx.spawn(async move |this, cx| {
             let result = receiver.await;
             let _ = window.update(cx, |_, window, cx| {
@@ -51,10 +64,13 @@ impl HiveApp {
                                 if this.connection_generation != connection {
                                     return;
                                 }
-                                if this.connected {
-                                    this.folder
-                                        .update(cx, |input, cx| input.set_value(path, window, cx));
-                                    this.add_workspace(window, cx);
+                                if this.connected && this.showing_welcome_guide == for_setup {
+                                    if for_setup {
+                                        this.add_welcome_project(path.into(), cx);
+                                    } else {
+                                        this.folder.update(cx, |input, cx| input.set_value(path, window, cx));
+                                        this.add_workspace(window, cx);
+                                    }
                                 }
                             });
                         });
@@ -91,31 +107,6 @@ impl HiveApp {
             }
         })
         .detach();
-    }
-
-    pub fn open_workspace_target(
-        &mut self,
-        workspace: String,
-        target: &'static str,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.connected {
-            return;
-        }
-        let Some(runtime) = self.runtime.clone() else {
-            return;
-        };
-        let connection = self.connection_generation;
-        cx.spawn(async move |this, cx| {
-            let result = runtime.request("hive.request", json!({"method":"POST", "path":format!("/api/workspaces/{workspace}/open"), "body":{"target_id":target}})).await;
-            let _ = this.update(cx, |this, cx| {
-                if this.connection_generation != connection { return; }
-                if this.workspace.as_ref() == Some(&workspace) {
-                    if let Err(error) = result { this.error = Some(ErrorNotice::Detail("无法打开项目，请确认目标应用已安装",format!("{target}: {error}"))); }
-                    cx.notify();
-                }
-            });
-        }).detach();
     }
 }
 

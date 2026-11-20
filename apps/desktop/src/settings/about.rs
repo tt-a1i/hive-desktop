@@ -719,7 +719,7 @@ impl HiveApp {
                                                         div()
                                                             .text_xs()
                                                             .text_color(Color::Muted.get(cx))
-                                                            .child(tr("重新打开欢迎引导视图，集中查看本机 Agent 就绪状态与常用快捷键。")),
+                                                            .child(tr("查看本机 Agent 状态并添加项目文件夹。")),
                                                     ),
                                             )
                                             .child(Reveal::new(
@@ -733,10 +733,9 @@ impl HiveApp {
                                                     .rounded_lg()
                                                     .label(tr("重新查看欢迎引导"))
                                                     .on_click(cx.listener(|this, _, window, cx| {
-                                                        this.showing_welcome_guide = true;
                                                         this.leave_preferences(window, cx);
                                                         window.close_dialog(cx);
-                                                        cx.notify();
+                                                        this.open_welcome_setup(cx);
                                                     })),
                                             )),
                                     )

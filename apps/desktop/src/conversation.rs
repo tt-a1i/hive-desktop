@@ -38,13 +38,7 @@ impl HiveApp {
             .into_iter()
             .flat_map(|message| message.images)
             .collect::<Vec<_>>();
-        if !images.is_empty() {
-            cx.defer(move |cx| {
-                for image in images {
-                    cx.drop_image(image, None);
-                }
-            });
-        }
+        release_conversation_images(images, cx);
     }
 
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -368,6 +362,14 @@ impl HiveApp {
         }
     }
     pub(crate) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
+        if self.history_navigation.live_start.is_some()
+            && let Some(session) = self.session.as_ref()
+        {
+            if self.connected && !self.closing {
+                self.show_latest_session(session.id.clone(), cx);
+            }
+            return;
+        }
         self.conversation_find = None;
         self.conversation_list.pending_anchor = None;
         // Update the header action now, then pin to the final offset after layout.
@@ -380,7 +382,8 @@ impl HiveApp {
     }
 
     pub(crate) fn reading_above_latest(&self) -> bool {
-        !self.conversation_list.state.is_following_tail()
+        self.history_navigation.live_start.is_some()
+            || !self.conversation_list.state.is_following_tail()
     }
 
     pub(crate) fn message_index(&self, id: &str) -> Option<usize> {
@@ -468,19 +471,74 @@ impl HiveApp {
         if message_ids.is_empty() {
             return;
         }
+        let live_start = self.history_navigation.live_start.take();
         let existing_messages = std::mem::take(&mut self.messages);
         let existing_indices = std::mem::take(&mut self.message_indices);
         self.restore_conversation_history(message_ids, history, cx);
+        let mut duplicate_images = Vec::new();
+        self.messages.retain_mut(|message| {
+            if existing_indices.contains_key(&message.id) {
+                duplicate_images.append(&mut message.images);
+                return false;
+            }
+            true
+        });
+        self.message_indices = self.messages.iter().enumerate()
+            .map(|(index, message)| (message.id.clone(), index))
+            .collect();
         let prepended_len = self.messages.len();
         self.messages.extend(existing_messages);
         for (id, idx) in existing_indices {
-            self.message_indices
-                .entry(id)
-                .or_insert(idx + prepended_len);
+            self.message_indices.insert(id, idx + prepended_len);
         }
+        self.history_navigation.live_start = live_start.map(|index| index + prepended_len);
+        release_conversation_images(duplicate_images, cx);
         self.conversation_list.state.pause_following_tail();
-        self.sync_conversation_list(cx);
-        cx.notify();
+    }
+
+    pub(crate) fn append_conversation_history(
+        &mut self,
+        message_ids: Vec<String>,
+        history: Vec<Value>,
+        has_newer: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(live_start) = self.history_navigation.live_start.take() else {
+            return;
+        };
+        let was_at_gap = self.conversation_list.anchor().is_none_or(|anchor| {
+            use crate::conversation_list::RowKey;
+            matches!(anchor.key, RowKey::LoadNewer | RowKey::Tail)
+        });
+        let live = self.messages.split_off(live_start);
+        for message in &live {
+            self.message_indices.remove(&message.id);
+        }
+        self.restore_conversation_history(message_ids, history, cx);
+        let new_live_start = self.messages.len();
+        self.history_navigation.live_start = has_newer.then_some(new_live_start);
+        let mut duplicate_images = Vec::new();
+        for mut message in live {
+            if let Some(index) = self.message_index(&message.id) {
+                // A live update can race the page read. Keep the state already
+                // delivered to this view, at the position the saved page supplies.
+                message.layout_revision =
+                    message.layout_revision.max(self.messages[index].layout_revision) + 1;
+                let mut duplicate = std::mem::replace(&mut self.messages[index], message);
+                duplicate_images.append(&mut duplicate.images);
+            } else {
+                self.message_indices.insert(message.id.clone(), self.messages.len());
+                self.messages.push(message);
+            }
+        }
+        release_conversation_images(duplicate_images, cx);
+        self.conversation_list.state.pause_following_tail();
+        if was_at_gap && let Some(message) = self.messages.get(live_start) {
+            self.conversation_list.pending_anchor = Some(crate::conversation_list::ReadingAnchor {
+                key: crate::conversation_list::RowKey::Message(message.id.clone()),
+                offset: px(0.),
+            });
+        }
     }
 
     // Both snapshots and live events use the same provenance contract. Never infer
@@ -698,18 +756,17 @@ impl HiveApp {
         {
             if let Some(index) = index {
                 let message = self.messages.remove(index);
+                if let Some(live_start) = &mut self.history_navigation.live_start
+                    && index < *live_start
+                {
+                    *live_start -= 1;
+                }
                 self.message_indices.remove(&id);
                 for (offset, shifted) in self.messages[index..].iter().enumerate() {
                     *self.message_indices.get_mut(&shifted.id).unwrap() = index + offset;
                 }
                 self.conversation_list.markdown.remove(&id);
-                if !message.images.is_empty() {
-                    cx.defer(move |cx| {
-                        for image in message.images {
-                            cx.drop_image(image, None);
-                        }
-                    });
-                }
+                release_conversation_images(message.images, cx);
             }
             self.refresh_conversation_find(&id, cx);
             return;
@@ -908,6 +965,20 @@ impl HiveApp {
         }
     }
 }
+
+fn release_conversation_images(
+    images: Vec<std::sync::Arc<RenderImage>>,
+    cx: &mut Context<HiveApp>,
+) {
+    if !images.is_empty() {
+        cx.defer(move |cx| {
+            for image in images {
+                cx.drop_image(image, None);
+            }
+        });
+    }
+}
+
 pub(crate) fn message_text(message: &Value) -> String {
     let content = &message["content"];
     if let Some(text) = content.as_str() {

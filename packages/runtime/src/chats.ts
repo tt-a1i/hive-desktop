@@ -1,3 +1,4 @@
+import { checkoutGithubPrReview, prepareGithubPrReview, previewGithubPrReview } from './github-pr-review.js';
 import { AcpHistory } from './agents/acp-history.js';
 import {SteerDispositions,type SteerIdentity,type SteerDisposition} from './steer-dispositions.js';
 import { unavailableAcpMode } from './agents/acp-modes.js';
@@ -22,7 +23,7 @@ import { ProjectFileReferences } from './project-file-references.js';
 import { DispatchExecutionOrigins, DispatchOriginError } from './dispatch-execution-origins.js';
 import { artifactSourceRequest, ArtifactSourceError, resolveArtifactFile, type ArtifactSourceRequest, type ResolvedArtifact } from './artifact-files.js';
 import { savedHtmlPathPreview, snapshotHtmlArtifact } from './html-artifacts.js';
-import { searchProjectFiles, readProjectFile } from './project-files.js';
+import { listProjectDirectory, previewProjectFile, searchProjectContents, searchProjectFiles, readProjectFile } from './project-files.js';
 import { ChatAttachments, attachmentIds, encodeImageInput, decodeImageInput } from './image-attachments.js';
 import { promptImages } from './prompt-images.js';
 import { isDeliveryPresentation, restoreHistoricalReport } from './delivery-presentation.js';
@@ -61,7 +62,7 @@ import type { HiveHost } from './hive-host.js';
 import type { HiveAgentRuntime, WorkspaceSummary } from './hive-runtime-contract.js';
 import type { StructuredSessionPort, StructuredSessionHandle } from './structured-runtime.js';
 import { createTeamTool, createTeamCommand } from './team-tool.js';
-import { readToolOutputByteWindow, sliceHistoryWindow, type HistoryPageMeta, type ToolOutputByteWindow } from './history-cursor.js';
+import { readToolOutputByteWindow, sliceHistoryWindow, type HistorySliceResult, type HistoryWindowOptions, type ToolOutputByteWindow } from './history-cursor.js';
 import {
   checkoutGitBranch,
   discardGitFile,
@@ -403,10 +404,14 @@ export class Chats implements StructuredSessionPort {
   private async withGitOperation<T>(operation: () => Promise<T>): Promise<T> {
     if (this.closing) throw new Error('Chat runtime is closing');
     const release = this.executionMutations?.begin('git');
+    try { return await this.trackGitOperation(operation); }
+    finally { release?.(); }
+  }
+  private async trackGitOperation<T>(operation: () => Promise<T>): Promise<T> {
     const action = Promise.resolve().then(operation);
     this.gitOperations.add(action);
     try { return await action; }
-    finally { this.gitOperations.delete(action); release?.(); }
+    finally { this.gitOperations.delete(action); }
   }
   async drainGitOperations(): Promise<void> { await Promise.allSettled(this.gitOperations); }
 
@@ -481,7 +486,8 @@ export class Chats implements StructuredSessionPort {
       const {record: owned, creation} = await readWorktreeIntent(this.dataDir, record.id);
       if (creation && (creation.workspaceId !== record.workspaceId || creation.backend !== record.backend
         || creation.profile && (creation.profile.id !== record.profile?.id || creation.profile.revision !== record.profile?.revision)
-        || creation.originAgentId && creation.originAgentId !== record.originAgentId))
+        || creation.originAgentId && creation.originAgentId !== record.originAgentId
+        || creation.prReview && !isDeepStrictEqual(creation.prReview, record.prReview)))
         throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Worktree creation provenance and conversation identity disagree.');
       const original = await realpath(workspace.path);
       if (owned.projectRoot !== original || owned.executionPath !== record.execution.path || owned.branch !== record.execution.branch) {
@@ -623,7 +629,8 @@ export class Chats implements StructuredSessionPort {
       await this.initializeProfiles();
       const recoveredProfile = creation?.profile ?? await this.profiles.legacyRef(creation?.backend ?? backend ?? 'pi');
       if (profile && (profile.id !== recoveredProfile.id || profile.revision !== recoveredProfile.revision)) throw new SessionIdentityError('SESSION_PROFILE_CONFLICT', 'Recovery must use the exact worktree creation profile.');
-      const record: ChatRecord = {id, workspaceId, backend: creation?.backend ?? backend ?? 'pi', profile: recoveredProfile, ...(!creation?.profile && {legacyConfiguration: true as const}), title: '新会话', sessionFile: null, updatedAt: Date.now(),
+      const record: ChatRecord = {id, workspaceId, backend: creation?.backend ?? backend ?? 'pi', profile: recoveredProfile, ...(!creation?.profile && {legacyConfiguration: true as const}), title: creation?.prReview?.title ?? '新会话', sessionFile: null, updatedAt: Date.now(),
+        ...(creation?.prReview && {prReview: creation.prReview, customTitle: true}),
         ...(creation?.profile && {profile: creation.profile}), ...(creation?.legacyConfiguration && {legacyConfiguration: true}),
         identityState: creation?.identityState ?? 'new', ...(creation?.originAgentId && {originAgentId: creation.originAgentId}), ...(creation?.model && {model: creation.model}),
         execution: {kind: 'worktree', path: recovered.executionPath, branch: recovered.branch}};
@@ -661,40 +668,46 @@ export class Chats implements StructuredSessionPort {
     }
   }
   async gitCheckoutBranch(workspaceId: string, branch: string, create = false, startPoint?: string, sessionId?: unknown) {
-    this.assertWorkspaceAvailable(workspaceId);
-    const directory = await this.executionDirectory(workspaceId, sessionId);
-    try {
-      const result = await checkoutGitBranch(directory, { branch, create, ...(startPoint ? { startPoint } : {}) });
+    return this.withGitOperation(async () => {
       this.assertWorkspaceAvailable(workspaceId);
-      return result;
-    } catch (error) {
-      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
-      throw error;
-    }
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        const result = await checkoutGitBranch(directory, { branch, create, ...(startPoint ? { startPoint } : {}) });
+        this.assertWorkspaceAvailable(workspaceId);
+        return result;
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+        throw error;
+      }
+    });
   }
   async gitFetch(workspaceId: string, remote?: string, prune = true, sessionId?: unknown) {
-    this.assertWorkspaceAvailable(workspaceId);
-    const directory = await this.executionDirectory(workspaceId, sessionId);
-    try {
-      const result = await fetchGitRemote(directory, { ...(remote ? { remote } : {}), prune });
+    return this.withGitOperation(async () => {
       this.assertWorkspaceAvailable(workspaceId);
-      return result;
-    } catch (error) {
-      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
-      throw error;
-    }
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        const result = await fetchGitRemote(directory, { ...(remote ? { remote } : {}), prune });
+        this.assertWorkspaceAvailable(workspaceId);
+        return result;
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+        throw error;
+      }
+    });
   }
   async gitPull(workspaceId: string, rebase = false, sessionId?: unknown) {
-    this.assertWorkspaceAvailable(workspaceId);
-    const directory = await this.executionDirectory(workspaceId, sessionId);
-    try {
-      const result = await pullGitBranch(directory, { rebase });
+    return this.withGitOperation(async () => {
       this.assertWorkspaceAvailable(workspaceId);
-      return result;
-    } catch (error) {
-      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
-      throw error;
-    }
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        const result = await pullGitBranch(directory, { rebase });
+        this.assertWorkspaceAvailable(workspaceId);
+        return result;
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+        throw error;
+      }
+    });
   }
   async gitStashList(workspaceId: string, sessionId?: unknown) {
     this.assertWorkspaceAvailable(workspaceId);
@@ -709,52 +722,60 @@ export class Chats implements StructuredSessionPort {
     }
   }
   async gitStashPush(workspaceId: string, message?: string, includeUntracked = true, sessionId?: unknown) {
-    this.assertWorkspaceAvailable(workspaceId);
-    const directory = await this.executionDirectory(workspaceId, sessionId);
-    try {
-      const result = await pushGitStash(directory, { ...(message ? { message } : {}), includeUntracked });
+    return this.withGitOperation(async () => {
       this.assertWorkspaceAvailable(workspaceId);
-      return result;
-    } catch (error) {
-      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
-      throw error;
-    }
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        const result = await pushGitStash(directory, { ...(message ? { message } : {}), includeUntracked });
+        this.assertWorkspaceAvailable(workspaceId);
+        return result;
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+        throw error;
+      }
+    });
   }
   async gitStashPop(workspaceId: string, ref: string, sessionId?: unknown) {
-    this.assertWorkspaceAvailable(workspaceId);
-    const directory = await this.executionDirectory(workspaceId, sessionId);
-    try {
-      const result = await popGitStash(directory, { ref });
+    return this.withGitOperation(async () => {
       this.assertWorkspaceAvailable(workspaceId);
-      return result;
-    } catch (error) {
-      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
-      throw error;
-    }
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        const result = await popGitStash(directory, { ref });
+        this.assertWorkspaceAvailable(workspaceId);
+        return result;
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+        throw error;
+      }
+    });
   }
   async gitStashDrop(workspaceId: string, ref: string, sessionId?: unknown) {
-    this.assertWorkspaceAvailable(workspaceId);
-    const directory = await this.executionDirectory(workspaceId, sessionId);
-    try {
-      const result = await dropGitStash(directory, { ref });
+    return this.withGitOperation(async () => {
       this.assertWorkspaceAvailable(workspaceId);
-      return result;
-    } catch (error) {
-      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
-      throw error;
-    }
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        const result = await dropGitStash(directory, { ref });
+        this.assertWorkspaceAvailable(workspaceId);
+        return result;
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+        throw error;
+      }
+    });
   }
   async gitDiscardFile(workspaceId: string, path: string, sessionId?: unknown) {
-    this.assertWorkspaceAvailable(workspaceId);
-    const directory = await this.executionDirectory(workspaceId, sessionId);
-    try {
-      const result = await discardGitFile(directory, { path });
+    return this.withGitOperation(async () => {
       this.assertWorkspaceAvailable(workspaceId);
-      return result;
-    } catch (error) {
-      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
-      throw error;
-    }
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        const result = await discardGitFile(directory, { path });
+        this.assertWorkspaceAvailable(workspaceId);
+        return result;
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+        throw error;
+      }
+    });
   }
   async gitLog(workspaceId: string, limit?: number, sessionId?: unknown) {
     this.assertWorkspaceAvailable(workspaceId);
@@ -909,6 +930,82 @@ export class Chats implements StructuredSessionPort {
       }
     });
   }
+  async gitPrReviewPreview(workspaceId: string, remote: string, reference: string) {
+    return this.withGitOperation(async () => {
+      try {
+        const preview = await previewGithubPrReview(await this.executionDirectory(workspaceId), {remote, reference});
+        this.assertWorkspaceAvailable(workspaceId);
+        return {ok: true as const, preview};
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return {ok: false as const, error: {code: error.code, message: error.message}};
+        throw error;
+      }
+    });
+  }
+  async openGithubPrReview(workspaceId: string, target: {
+    remote: string; reference: string; expectedVersion: string; checkout: 'current' | 'worktree';
+    backend: ChatBackend; profile?: AgentProfileRef;
+  }, hasAnyShell: () => Promise<boolean>) {
+    const assertAvailable = () => {
+      this.assertWorkspaceAvailable(workspaceId);
+      if (this.closing) throw new Error('Chat runtime is closing');
+    };
+    try {
+      const workspace = await this.workspace(workspaceId);
+      const selected = await this.selectedProfile(target.backend, target.profile);
+      const review = await this.withGitOperation(async () => {
+        assertAvailable();
+        return prepareGithubPrReview(workspace.path, target);
+      });
+      const id = randomUUID();
+      const record: ChatRecord = {id, workspaceId, backend: target.backend, profile: selected.ref,
+        title: review.seed.title, customTitle: true, prReview: review.seed, sessionFile: null,
+        updatedAt: Date.now(), identityState: 'new'};
+      const branch = `hive/pr-${review.preview.number}-${id}`;
+      if (target.checkout === 'worktree') {
+        const session = await this.withWorkspace(workspaceId, async () => {
+          assertAvailable();
+          return this.saveNewRecord(workspace, record, {isolation: 'worktree', branch, skipSetup: true,
+            prStart: {oid: review.preview.headOid, commonDir: review.context.workspace.commonDir}});
+        });
+        return {ok: true as const, session};
+      }
+
+      let release: (() => void) | undefined;
+      try { release = this.executionMutations?.acquire(workspaceId); }
+      catch (error) {
+        throw new GitWorkspaceError('CHECKOUT_BUSY', 'Hive is working in a checkout. Wait for active operations or use an independent worktree.');
+      }
+      try {
+        return await this.trackGitOperation(() => this.hive.withWorkspaceWorkflowIdle(workspaceId, async () => {
+          assertAvailable();
+          // An already checked-out head needs no switch, so it can be opened without disturbing another run.
+          if (review.context.workspace.headOid !== review.preview.headOid) {
+            const runs = await this.hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspaceId)}/runs`) as {status: string}[];
+            if (!Array.isArray(runs) || runs.some(run => ['starting', 'running'].includes(run.status)) || await hasAnyShell()
+              || this.opening.size || this.preparingInteractions.size || this.startingForInput.size) {
+              throw new GitWorkspaceError('CHECKOUT_BUSY', 'Stop active agents and terminals before switching the project checkout, or use an independent worktree.');
+            }
+          }
+          assertAvailable();
+          await checkoutGithubPrReview(workspace.path, review, branch);
+          // Save after Git succeeds even if shutdown started during the switch.
+          try { this.index.save(record); }
+          catch (error) {
+            if (review.context.workspace.headOid !== review.preview.headOid) {
+              throw new GitWorkspaceError('CHECKOUT_SESSION_SAVE_FAILED', 'The project was switched to the PR branch, but the conversation could not be saved. Check the local branch and reopen it.');
+            }
+            throw error;
+          }
+          return {ok: true as const, session: record};
+        }));
+      } finally { release?.(); }
+    } catch (error) {
+      if (error instanceof GitWorkspaceError || error instanceof GitWorktreeError)
+        return {ok: false as const, error: {code: error.code, message: error.message}};
+      throw error;
+    }
+  }
   async gitPrPreview(workspaceId: string, params: Record<string, unknown>) {
     return this.withGitOperation(async () => {
       const directory = await this.executionDirectory(workspaceId, params.sessionId);
@@ -943,11 +1040,27 @@ export class Chats implements StructuredSessionPort {
       }
     });
   }
-  async projectFilesSearch(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown) {
-    this.assertWorkspaceAvailable(workspaceId);
+  async projectFilesSearch(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal) {
     if (typeof query !== 'string' || typeof offset !== 'number') throw new TypeError('Invalid project file search');
     const directory = await this.executionDirectory(workspaceId, sessionId);
-    return searchProjectFiles(directory, query, offset);
+    return searchProjectFiles(directory, query, offset, signal);
+  }
+  async projectFilesList(workspaceId: string, directory: unknown, offset: unknown = 0, sessionId?: unknown) {
+    if (typeof directory !== 'string' || typeof offset !== 'number') throw new TypeError('Invalid project file search');
+    const root = await this.executionDirectory(workspaceId, sessionId);
+    return listProjectDirectory(root, directory, offset);
+  }
+  async projectFilesSearchContent(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal) {
+    if (typeof query !== 'string' || typeof offset !== 'number') throw new TypeError('Invalid project file search');
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    return searchProjectContents(directory, query, offset, signal);
+  }
+  async projectFilesPreview(workspaceId: string, relativePath: unknown, sessionId?: unknown) {
+    if (typeof relativePath !== 'string') throw new TypeError('Invalid project file path');
+    const root = await this.executionDirectory(workspaceId, sessionId);
+    const preview = await previewProjectFile(root, relativePath);
+    if (await this.executionDirectory(workspaceId, sessionId) !== root) throw new Error('Session execution directory changed during preview');
+    return preview;
   }
   async projectFilesAttach(workspaceId: string, relativePath: unknown, sessionId?: unknown) {
     this.assertWorkspaceAvailable(workspaceId);
@@ -1693,8 +1806,8 @@ export class Chats implements StructuredSessionPort {
 
   async historyPage(
     id: string,
-    options: { beforeIndex: number; beforeMessageId?: string; limit?: number },
-  ): Promise<{ history: unknown[]; historyMessageIds: string[]; historyPage: HistoryPageMeta }> {
+    options: HistoryWindowOptions,
+  ): Promise<HistorySliceResult<unknown>> {
     const record = this.index.peek(id);
     const live = this.live.get(id);
     if (!live && record?.sessionFile && this.historyPageCache?.sessionId === id && this.historyPageCache.sessionFile === record.sessionFile) {
@@ -1950,13 +2063,14 @@ export class Chats implements StructuredSessionPort {
     this.handoffDeliveries.reconcileQueue(record.id,queue.pending.filter(item=>!canceled.has(item.id)).map(item=>item.id));
     queue.prepareNextUserContext();
   }
-  private async saveNewRecord(workspace: WorkspaceSummary, record: ChatRecord, options: {profile?: AgentProfileRef; isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string}) {
+  private async saveNewRecord(workspace: WorkspaceSummary, record: ChatRecord, options: {profile?: AgentProfileRef; isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string; prStart?: {oid: string; commonDir: string}}) {
     if (options.isolation === 'worktree') {
       const setup = await this.initialization?.capture(record.workspaceId, options.skipSetup, options.expectedSetupRevision);
       const creation: WorktreeCreation = {version: setup ? 2 : 1, ...(setup && {setup}), workspaceId: record.workspaceId, backend: record.backend, ...(record.profile && {profile: record.profile}), ...(record.legacyConfiguration && {legacyConfiguration: true as const}),
-        identityState: record.originAgentId ? 'known' : 'new', ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.model && {model: record.model})};
+        identityState: record.originAgentId ? 'known' : 'new', ...(record.prReview && {prReview: record.prReview}), ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.model && {model: record.model})};
       const owned = await createManagedWorktree({projectRoot: workspace.path, dataRoot: this.dataDir, chatId: record.id, creation,
-        ...(options.branch !== undefined && {branch: options.branch})});
+        ...(options.branch !== undefined && {branch: options.branch}),
+        ...(options.prStart && {startOid: options.prStart.oid, expectedCommonDir: options.prStart.commonDir})});
       record.execution = {kind: 'worktree', path: owned.executionPath, branch: owned.branch};
       this.assertWorkspaceAvailable(record.workspaceId);
       if (this.closing) throw new Error(`会话创建已停止；工作树仍保留，可按会话 ${record.id} 恢复。`);

@@ -33,6 +33,14 @@ try {
   assert.equal((await readFile(unicodeRef.filePath!)).toString(), 'Unicode path in the first worktree');
   await writeFile(join(aDir, name), 'one'); await writeFile(join(bDir, name), 'two');
   await writeFile(join(aDir, 'only-one.txt'), 'x'); await writeFile(join(bDir, 'only-two.txt'), 'x');
+  assert.deepEqual(await runtime.chats.projectFilesPreview(ws.id, name), {text: 'main'});
+  assert.deepEqual(await runtime.chats.projectFilesPreview(ws.id, name, a.id), {text: 'one'});
+  assert.deepEqual(await runtime.chats.projectFilesPreview(ws.id, name, b.id), {text: 'two'});
+  assert((await runtime.chats.projectFilesList(ws.id, '', 0, a.id)).entries.some(entry => entry.path === 'only-one.txt'));
+  assert(!(await runtime.chats.projectFilesList(ws.id, '', 0, b.id)).entries.some(entry => entry.path === 'only-one.txt'));
+  assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, 'one', 0, a.id)).matches, [{path: name, line: 1}]);
+  assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, 'one', 0, b.id)).matches, []);
+  await assert.rejects(runtime.chats.projectFilesPreview(otherWs.id, name, a.id));
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, a.id)).paths, ['only-one.txt']);
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, b.id)).paths, ['only-two.txt']);
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-')).paths, []);

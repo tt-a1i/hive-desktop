@@ -173,11 +173,34 @@ try {
   await rpc('chat.prompt', { sessionId: a, text: 'Keep the running turn while browsing another conversation.' });
   await waitFor('first native turn', () => lastRequest('turn/start', 'thread-a'));
   await rpc('chat.prompt', { sessionId: a, text: 'Preserve this queued delivery.' });
-  const busy = await open(a, 6);
+  const busy = await rpc('chat.open', {
+    sessionId: a, viewRevision: 6, historyLimit: 1,
+    historyAroundMessageId: historyIds('thread-a')[0], deferHistoryImages: true,
+  });
   assert.equal(busy.busy, true);
   assert.ok(busy.runId);
   assert.ok(busy.pendingUserInputs.some((item: { text: string }) => item.text === 'Preserve this queued delivery.'));
+  assert.deepEqual(busy.historyMessageIds, [historyIds('thread-a')[0]]);
+  assert.equal(busy.historyPage.hasNewer, true);
+  const nextParams = {
+    sessionId: a, viewRevision: 6, limit: 1,
+    afterIndex: busy.historyPage.nextAfterIndex,
+    afterMessageId: busy.historyPage.nextAfterMessageId,
+  };
+  const next = await rpc('chat.historyPage', nextParams);
+  assert.deepEqual(next.historyMessageIds, [historyIds('thread-a')[1]]);
+  assert.equal(next.historyPage.hasOlder, true);
+  const previous = await rpc('chat.historyPage', {
+    sessionId: a, viewRevision: 6, limit: 1,
+    beforeIndex: next.historyPage.nextBeforeIndex,
+    beforeMessageId: next.historyPage.nextBeforeMessageId,
+    deferHistoryImages: true,
+  });
+  assert.deepEqual(previous.historyMessageIds, busy.historyMessageIds);
+  assert.deepEqual(previous.history, busy.history);
+  await assert.rejects(rpc('chat.historyPage', {...nextParams, beforeIndex: 0}), /either a before or an after/);
   await open(b, 7);
+  await assert.rejects(rpc('chat.historyPage', nextParams), /Stale desktop conversation view/);
   const activeB = (await lastRequest('thread/resume', 'thread-b'))!;
   await clear(8);
   await waitFor('reaping B without affecting A', () => !alive(activeB.pid));

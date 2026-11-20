@@ -292,6 +292,54 @@ impl HiveApp {
         Ok(())
     }
 
+    pub(crate) fn restore_pr_review_draft(
+        &mut self,
+        session_id: &str,
+        prompt: String,
+        cx: &mut Context<Self>,
+    ) {
+        let key = format!("session:{session_id}");
+        // Use the same durable one-time import marker as an edited history fork.
+        let source = "github-pr-review";
+        if self
+            .draft_store
+            .as_ref()
+            .is_some_and(|store| store.fork_imported(&key, source))
+        {
+            return;
+        }
+        self.capture_editor(cx);
+        let existing =
+            self.drafts.contains_key(&key) || !self.attachments.refs(Some(&key)).is_empty();
+        let result = (|| -> io::Result<()> {
+            if existing {
+                self.flush_drafts(cx)?;
+            }
+            let store = self
+                .draft_store
+                .as_mut()
+                .ok_or_else(|| io::Error::other("Draft store unavailable"))?;
+            if existing {
+                store.mark_existing_fork(&key, source)
+            } else {
+                store.import_fork(&key, source, prompt.clone(), vec![])
+            }
+        })();
+        match result {
+            Ok(()) if !existing => {
+                self.drafts.insert(key, prompt);
+                self.draft_owner = None;
+            }
+            Ok(()) => {}
+            Err(error) => {
+                self.error = Some(crate::app::ErrorNotice::Detail(
+                    "无法恢复 PR 评审草稿",
+                    error.to_string(),
+                ));
+            }
+        }
+    }
+
     pub(crate) fn schedule_draft_save(&mut self, cx: &mut Context<Self>) {
         if self.draft_store.is_none() && !self.pi_models.has_draft_root() {
             return;

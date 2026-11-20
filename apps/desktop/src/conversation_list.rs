@@ -1,7 +1,7 @@
 mod markdown;
 mod view;
 pub(crate) const CHAT_COLUMN_WIDTH: f32 = 736.;
-use crate::app::HiveApp;
+use crate::{app::HiveApp, history_navigation::HistoryDirection};
 use gpui_kit::{component::v_flex, prelude::FluentBuilder, *};
 use std::{
     cell::{Cell, RefCell},
@@ -12,6 +12,7 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum RowKey {
     LoadOlder,
+    LoadNewer,
     Message(String),
     Group(String),
     Tail,
@@ -23,9 +24,10 @@ pub struct ReadingAnchor {
 }
 #[derive(Clone, PartialEq, Eq)]
 enum Kind {
-    LoadOlder {
-        remaining: usize,
-        loading: bool,
+    LoadHistory {
+        direction: HistoryDirection,
+        remaining: Option<usize>,
+        loading: Option<HistoryDirection>,
     },
     Message {
         index: usize,
@@ -90,24 +92,40 @@ impl ConversationList {
 }
 
 impl HiveApp {
+    fn conversation_message_groups(&self) -> impl Iterator<Item = &[crate::app::Message]> {
+        let (history, live) = self.messages.split_at(
+            self.history_navigation.live_start.unwrap_or(self.messages.len()),
+        );
+        history.chunk_by(|a, b| a.completed_tool() && b.completed_tool())
+            .chain(live.chunk_by(|a, b| a.completed_tool() && b.completed_tool()))
+    }
+
     pub(crate) fn sync_conversation_list(&mut self, cx: &App) {
-        let mut rows = Vec::with_capacity(self.messages.len() + 2);
-        if let Some(page) = self.history_page.as_ref().filter(|p| p.has_older && p.start_index > 0) {
+        let mut rows = Vec::with_capacity(self.messages.len() + 3);
+        let loading = self.history_navigation.loading_page;
+        if let Some(page) = self.history_page.as_ref().filter(|page| page.has_older) {
             rows.push(Row {
                 key: RowKey::LoadOlder,
-                kind: Kind::LoadOlder {
-                    remaining: page.start_index,
-                    loading: self.loading_older_history,
+                kind: Kind::LoadHistory {
+                    direction: HistoryDirection::Older,
+                    remaining: (page.start_index > 0).then_some(page.start_index),
+                    loading,
                 },
-                revision: page.start_index as u64 * 2 + u64::from(self.loading_older_history),
+                revision: 0,
                 expanded: false,
             });
         }
+        let mut gap = self.history_navigation.live_start.map(|_| Row {
+            key: RowKey::LoadNewer,
+            kind: Kind::LoadHistory { direction: HistoryDirection::Newer, remaining: None, loading },
+            revision: 0,
+            expanded: false,
+        });
         let mut offset = 0;
-        for group in self
-            .messages
-            .chunk_by(|a, b| a.completed_tool() && b.completed_tool())
-        {
+        for group in self.conversation_message_groups() {
+            if self.history_navigation.live_start == Some(offset) && let Some(row) = gap.take() {
+                rows.push(row);
+            }
             let grouped = group.len() > 1
                 && cx.global::<crate::composer::ComposerPreferences>().settings.tool_activity
                     == crate::composer::ToolActivity::Grouped;
@@ -154,6 +172,7 @@ impl HiveApp {
             }
             offset += group.len();
         }
+        rows.extend(gap);
         // Pending reports and native interaction forms remain at the end of the
         // same scroll area. Invalidate this small dynamic row on each view update.
         rows.push(Row {
@@ -252,9 +271,11 @@ impl HiveApp {
     }
 
     pub(crate) fn reveal_conversation_tool_group(&mut self, id: &str) {
-        if let Some(group) = self.messages.chunk_by(|a, b| a.completed_tool() && b.completed_tool())
-            .find(|group| group.len() > 1 && group.iter().any(|message| message.id == id)) {
-            self.expanded_tool_groups.insert(group[0].id.clone());
+        let group = self.conversation_message_groups()
+            .find(|group| group.len() > 1 && group.iter().any(|message| message.id == id))
+            .map(|group| group[0].id.clone());
+        if let Some(id) = group {
+            self.expanded_tool_groups.insert(id);
         }
     }
 
@@ -293,33 +314,39 @@ impl HiveApp {
                     return div().into_any_element();
                 };
                 let content = match row.kind {
-                    Kind::LoadOlder { remaining, loading } => {
+                    Kind::LoadHistory { direction, remaining, loading } => {
                         use crate::language::{english, tr};
                         use gpui_kit::component::{Disableable, Sizable, button::Button, h_flex};
-                        let label = if loading {
+                        let newer = direction == HistoryDirection::Newer;
+                        let loading_here = loading == Some(direction);
+                        let label = if newer {
+                            tr(if loading_here { "正在加载更新历史…" } else { "加载更新历史" }).to_owned()
+                        } else if loading_here {
                             tr("正在加载更早历史…").to_owned()
-                        } else if english() {
-                            format!("Load earlier history ({remaining} more)")
                         } else {
-                            format!("加载更早历史（还有 {remaining} 条）")
+                            match remaining {
+                                Some(remaining) if english() => format!("Load earlier history ({remaining} more)"),
+                                Some(remaining) => format!("加载更早历史（还有 {remaining} 条）"),
+                                None => tr("加载更早历史").to_owned(),
+                            }
                         };
                         h_flex()
                             .w_full()
                             .justify_center()
                             .py_2()
                             .child(
-                                Button::new("load-older-history")
+                                Button::new(if newer { "load-newer-history" } else { "load-older-history" })
                                     .outline()
                                     .compact()
                                     .xsmall()
                                     .h(px(28.))
                                     .px_3()
                                     .rounded_full()
-                                    .icon(gpui_kit::assets::IconName::ChevronUp)
+                                    .icon(if newer { gpui_kit::assets::IconName::ChevronDown } else { gpui_kit::assets::IconName::ChevronUp })
                                     .label(label)
-                                    .disabled(loading || !this.connected)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.load_older_history(cx);
+                                    .disabled(loading.is_some() || !this.connected)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.load_history_page(direction, cx);
                                     })),
                             )
                             .into_any_element()

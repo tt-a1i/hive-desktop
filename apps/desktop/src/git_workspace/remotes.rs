@@ -1,4 +1,5 @@
 mod model;
+mod review;
 use super::{Fault, git_params};
 use crate::{app::HiveApp, language::tr, palette::Color, transport::Runtime};
 use gpui_kit::{
@@ -45,6 +46,7 @@ pub(super) struct RemotePanel {
     session: Option<String>,
     connection: u64,
     open_request: u64,
+    in_drawer: bool,
     list: Option<RemoteList>,
     remote: Option<String>,
     branch: Entity<InputState>,
@@ -53,6 +55,7 @@ pub(super) struct RemotePanel {
     title: Entity<InputState>,
     body: Entity<TextareaState>,
     draft: bool,
+    review: review::PrReviewPanel,
     defaults_set: bool,
     generation: u64,
     pub busy: bool,
@@ -74,6 +77,7 @@ impl RemotePanel {
         session: Option<String>,
         connection: u64,
         open_request: u64,
+        in_drawer: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -86,6 +90,7 @@ impl RemotePanel {
             input.set_value(default_base, window, cx);
             input
         });
+        let review = review::PrReviewPanel::new(window, cx);
         let title = cx.new(|cx| InputState::new(window, cx));
         let body = cx.new(|cx| TextareaState::new(window, cx).auto_grow(3, 8));
         for input in [&branch, &head, &base, &title] {
@@ -118,6 +123,7 @@ impl RemotePanel {
             session,
             connection,
             open_request,
+            in_drawer,
             list: None,
             remote: None,
             branch,
@@ -126,6 +132,7 @@ impl RemotePanel {
             title,
             body,
             draft: default_draft,
+            review,
             defaults_set: false,
             generation: 0,
             busy: false,
@@ -580,10 +587,10 @@ impl Render for RemotePanel {
                 div()
                     .text_xs()
                     .text_color(Color::Secondary.get(cx))
-                    .child(tr("远端列表只读取本地配置。只有点击联网预览、确认推送或确认 PR 写入才会访问网络。")),
+                    .child(tr("远端列表只读取本地配置。查找、评审和预览需要联网，推送和写入 PR 会另行确认。")),
             )
             .when(!current,|view|view.child(status("remote-context-changed", tr("项目、会话或后台连接已变化；旧预览不能再使用，请关闭后重新打开。").into()).p_2p5().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_color(Color::Error.get(cx))))
-            .when(self.busy,|view|view.child(status("remote-busy", if self.writing {tr("正在执行远端写操作，请等待结果，勿重复提交。")} else {tr("正在读取预览，请等待…")}.into()).p_2().rounded_lg().bg(Color::Inset.get(cx)).text_color(Color::Secondary.get(cx))))
+            .when(self.busy,|view|view.child(status("remote-busy", if self.review.opening() {tr("正在准备 PR 评审会话…")} else if self.writing {tr("正在执行远端写操作，请等待结果，勿重复提交。")} else {tr("正在读取预览，请等待…")}.into()).p_2().rounded_lg().bg(Color::Inset.get(cx)).text_color(Color::Secondary.get(cx))))
             .when(self.uncertain,|view|view.child(status("remote-outcome-uncertain", tr("操作结果需要核对。请检查远端或 GitHub；保留的预览仅供检查，重新预览后才可再次提交。").into()).p_2p5().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_color(Color::Error.get(cx))))
             .when_some(self.error.as_ref(),|view,error|view.child(status("remote-error", fault(error)).p_2p5().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_color(Color::Error.get(cx))))
             .child(
@@ -602,6 +609,10 @@ impl Render for RemotePanel {
                         .children(list.remotes.iter().enumerate().map(|(index,remote)|{let name=remote.name.clone();Button::new(("select-git-remote",index)).outline().xsmall().h_auto().py_1().px_2p5().rounded_lg().justify_start()
                             .label(format!("{} · {}",remote.name,remote.url.as_deref().or(remote.error.as_deref()).unwrap_or("—"))).selected(self.remote.as_ref()==Some(&remote.name))
                             .disabled(!enabled||remote.url.is_none()||remote.error.is_some()).on_click(cx.listener(move|this,_,_,cx|{this.remote=Some(name.clone());this.invalidate(cx);} ))}))),
+            )
+            .child(
+                panel_card(cx)
+                    .child(self.render_pr_review(cx)),
             )
             .child(
                 panel_card(cx)

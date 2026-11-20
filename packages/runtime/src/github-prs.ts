@@ -23,14 +23,14 @@ export function githubRepositoryFromRemote(value: string): GithubRepository {
  const owner = match[1]!, name = match[2]!, fullName = owner + '/' + name;
  return {host: 'github.com', owner, name, fullName, url: 'https://github.com/' + fullName};
 }
-function prUrl(value: unknown, repository: GithubRepository): {url: string; number: number} {
+export function prUrl(value: unknown, repository: GithubRepository): {url: string; number: number} {
  if (typeof value !== 'string') throw remoteError('INVALID_GITHUB_RESPONSE', 'GitHub did not return a pull request URL');
  let url: URL; try {url = new URL(value.trim());} catch {throw remoteError('INVALID_GITHUB_RESPONSE', 'GitHub did not return a valid pull request URL');}
  const match = url.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/([1-9]\d*)$/);
  if (url.protocol !== 'https:' || url.hostname !== repository.host || url.port || url.username || url.password || url.search || url.hash || !match || `${match[1]}/${match[2]}`.toLowerCase() !== repository.fullName.toLowerCase() || !Number.isSafeInteger(Number(match[3]))) throw remoteError('WRONG_GITHUB_REPOSITORY', 'The returned pull request URL does not belong to the selected repository');
  return {url: url.href, number: Number(match[3])};
 }
-function parseJson(text: string): any {try {return JSON.parse(text);} catch {throw remoteError('INVALID_GITHUB_RESPONSE', 'GitHub CLI returned invalid JSON');}}
+export function parseJson(text: string): any {try {return JSON.parse(text);} catch {throw remoteError('INVALID_GITHUB_RESPONSE', 'GitHub CLI returned invalid JSON');}}
 function validatePr(value: any, repository: GithubRepository, head: string, base: string): GithubPullRequest {
  const identity = prUrl(value?.url, repository);
  if (identity.number !== value.number || value.headRefName !== head || value.baseRefName !== base || value.isCrossRepository !== false || value.headRepositoryOwner?.login?.toLowerCase() !== repository.owner.toLowerCase() || value.headRepository?.name?.toLowerCase() !== repository.name.toLowerCase() || typeof value.title !== 'string' || typeof value.body !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.headRefOid ?? '')) throw remoteError('WRONG_GITHUB_REPOSITORY', 'Pull request repository or branch identity does not match this preview');
@@ -39,7 +39,7 @@ function validatePr(value: any, repository: GithubRepository, head: string, base
 }
 const fields = 'number,url,title,body,headRefName,baseRefName,headRefOid,headRepositoryOwner,headRepository,isCrossRepository,isDraft';
 const prListLimit = 100;
-async function withGh<T>(projectRoot: string, options: GithubPrOptions, operation: (gh: string, cwd: string) => Promise<T>): Promise<T> {
+export async function withGh<T>(projectRoot: string, options: GithubPrOptions, operation: (gh: string, cwd: string) => Promise<T>): Promise<T> {
  const gh = await resolveRemoteExecutable('gh', projectRoot, options.ghExecutable);
  // No repository discovery or relative attachment lookup can route gh through the project.
  const directory = await mkdtemp(join(tmpdir(), 'hive-github-pr-'));

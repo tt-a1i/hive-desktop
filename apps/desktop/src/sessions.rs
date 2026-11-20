@@ -4,9 +4,16 @@ mod pinning;
 pub(crate) mod reading_position;
 pub(crate) use pinning::PinnedSessions;
 pub(crate) mod search;
-use crate::{app::HiveApp, protocol::*};
+use crate::{app::HiveApp, history_navigation::HistoryDirection, protocol::*};
 use gpui_kit::*;
 use serde_json::json;
+
+enum ConversationOpen {
+    Resume,
+    Focus(String),
+    Latest,
+}
+
 impl HiveApp {
     fn remember_conversation_position(&mut self, cx: &App) {
         self.flush_reading_positions();
@@ -48,7 +55,7 @@ impl HiveApp {
         );
     }
 
-    fn restore_conversation_position(&mut self, id: &str, cx: &App) {
+    fn restore_conversation_position(&mut self, id: &str, restore_anchor: bool, cx: &App) {
         let position = self.positions.get(id);
         if let Some(position) = position {
             self.expanded_tool_groups
@@ -80,11 +87,11 @@ impl HiveApp {
                 }
             }
         }
-        let anchor = self.workspace.as_deref()
+        let anchor = self.workspace.as_deref().filter(|_| restore_anchor)
             .and_then(|workspace| self.reading_positions.anchor(workspace, id))
             .filter(|anchor| match &anchor.key {
                 crate::conversation_list::RowKey::Message(id) | crate::conversation_list::RowKey::Group(id) => self.message_indices.contains_key(id),
-                crate::conversation_list::RowKey::Tail | crate::conversation_list::RowKey::LoadOlder => false,
+                _ => false,
             });
         if let Some(crate::conversation_list::ReadingAnchor {
             key: crate::conversation_list::RowKey::Message(id),
@@ -132,6 +139,7 @@ impl HiveApp {
             |this, value, cx| match serde_json::from_value::<Vec<Workspace>>(value) {
                 Ok(workspaces) => {
                     this.workspaces = workspaces;
+                    this.maybe_open_first_run_welcome(cx);
                     if let Err(error) = crate::desktop_update::report_startup() {
                         eprintln!("Could not report updated desktop startup: {error}");
                     }
@@ -175,13 +183,8 @@ impl HiveApp {
         if path.is_empty() {
             return;
         }
-        let name = std::path::Path::new(&path)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or_else(|| crate::language::tr("项目"))
-            .to_string();
         let window = window.window_handle();
-        self.request("hive.request", json!({"method":"POST","path":"/api/workspaces","body":{"path":path,"name":name,"autostart_orchestrator":false}}), cx, move |this, value, cx| {
+        self.request("hive.request", crate::workspace_actions::workspace_add_params(&path), cx, move |this, value, cx| {
             match serde_json::from_value::<Workspace>(value) {
                 Ok(workspace) => {
                     let folder = this.folder.clone();
@@ -219,8 +222,8 @@ impl HiveApp {
     fn reset_conversation_view(&mut self, cx: &mut Context<Self>) {
         self.conversation_ready = false;
         self.history_navigation.invalidate();
+        self.history_page = None;
         self.conversation_find = None;
-        self.search_target = None;
         self.conversation_list.reset(None);
         self.clear_conversation_messages(cx);
         self.tool_inputs = Default::default();
@@ -704,6 +707,16 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.navigate_to_session_at(session, ConversationOpen::Resume, window, cx)
+    }
+
+    fn navigate_to_session_at(
+        &mut self,
+        session: Session,
+        target: ConversationOpen,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if !self.connected
             || self.closing
             || self.removed_sessions.contains(&session.id)
@@ -738,7 +751,8 @@ impl HiveApp {
         } else if !self.sessions.iter().any(|item| item.id == session.id) {
             self.sessions.push(session.clone());
         }
-        self.open_session(session.id, cx);
+        self.conversation_sources.clear();
+        self.show_session_at(session.id, target, cx);
         self.nav_suppress_record = prev_suppress;
         true
     }
@@ -749,15 +763,10 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let session_id = hit.session.id.clone();
-        let message_id = hit.body_match.map(|body| body.message_id);
-        if !self.navigate_to_session(hit.session, window, cx) {
-            return false;
-        }
-        if let Some(message_id) = message_id {
-            self.search_target = Some((self.open_request, session_id, message_id));
-        }
-        true
+        let target = hit.body_match.map_or(ConversationOpen::Resume, |body| {
+            ConversationOpen::Focus(body.message_id)
+        });
+        self.navigate_to_session_at(hit.session, target, window, cx)
     }
 
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
@@ -848,6 +857,14 @@ impl HiveApp {
     }
 
     pub(crate) fn show_session(&mut self, id: String, cx: &mut Context<Self>) {
+        self.show_session_at(id, ConversationOpen::Resume, cx);
+    }
+
+    pub(crate) fn show_latest_session(&mut self, id: String, cx: &mut Context<Self>) {
+        self.show_session_at(id, ConversationOpen::Latest, cx);
+    }
+
+    fn show_session_at(&mut self, id: String, target: ConversationOpen, cx: &mut Context<Self>) {
         let Some(request_workspace) = self.workspace.clone() else {
             return;
         };
@@ -880,25 +897,19 @@ impl HiveApp {
         }
         self.sync_git_workspace(cx);
         self.loading = true;
-        self.history_page = None;
-        self.loading_older_history = false;
         if self.connected && !self.closing {
             self.status = "正在打开会话…".into();
         }
-        let around_message_id = self
-            .search_target
-            .as_ref()
-            .filter(|(_, target_session, _)| target_session == &id)
-            .map(|(_, _, msg_id)| msg_id.clone())
-            .or_else(|| {
-                self.reading_positions
-                    .anchor(&request_workspace, &id)
-                    .and_then(|anchor| match anchor.key {
-                        crate::conversation_list::RowKey::Message(mid)
-                        | crate::conversation_list::RowKey::Group(mid) => Some(mid),
-                        _ => None,
-                    })
-            });
+        let around_message_id = match &target {
+            ConversationOpen::Focus(id) => Some(id.clone()),
+            ConversationOpen::Latest => None,
+            ConversationOpen::Resume => self.reading_positions.anchor(&request_workspace, &id)
+                .and_then(|anchor| match anchor.key {
+                    crate::conversation_list::RowKey::Message(mid)
+                    | crate::conversation_list::RowKey::Group(mid) => Some(mid),
+                    _ => None,
+                }),
+        };
         let mut open_params = json!({
             "sessionId": id,
             "deferHistoryImages": true,
@@ -922,17 +933,18 @@ impl HiveApp {
                 match serde_json::from_value::<OpenSession>(value) {
                     Ok(open) => {
                         if !crate::history_navigation::open_session_identity_matches(&open.session, &id, &request_workspace) {
-                            this.search_target = None;
                             this.error = Some(crate::app::ErrorNotice::Conversation(Box::new("打开响应中的会话身份不匹配".into())));
                             return;
                         }
                         if open.history_message_ids.len() != open.history.len() {
-                            this.search_target = None;
                             this.error = Some(crate::app::ErrorNotice::Conversation(Box::new("会话快照中的消息身份数量不匹配".into())));
                             return;
                         }
                         if let (Some(draft), Some(operation)) = (open.fork_draft.clone(), open.lineage.as_ref().and_then(|v| v["operationId"].as_str()).map(str::to_owned)) {
                             this.restore_fork_draft(id.clone(), request_workspace.clone(), operation, draft, cx);
+                        }
+                        if let Some(review) = &open.pr_review {
+                            this.restore_pr_review_draft(&id, review.prompt.clone(), cx);
                         }
                         this.history_navigation.access = crate::history_navigation::HistoryAccess::snapshot(&open);
                         this.conversation_ready = true;
@@ -970,6 +982,9 @@ impl HiveApp {
                         this.event_sequence = open.event_sequence;
                         this.history_page = open.history_page;
                         this.restore_conversation_history(open.history_message_ids, open.history, cx);
+                        if this.history_page.as_ref().is_some_and(|page| page.has_newer) {
+                            this.history_navigation.live_start = Some(this.messages.len());
+                        }
                         if let Some(active) = open.active_message {
                             this.receive_message(active.message_id.clone(), &active.message, cx);
                             this.sync_thinking(&active.message_id, &active.message, true, cx);
@@ -977,9 +992,9 @@ impl HiveApp {
                         for event in std::mem::take(&mut this.pending_events) {
                             this.agent_event(event, cx);
                         }
-                        this.restore_conversation_position(&id, cx);
-                        if let Some((target_request, target_session, message_id)) = this.search_target.take() {
-                            if target_request == request && target_session == id {
+                        this.restore_conversation_position(&id, matches!(&target, ConversationOpen::Resume), cx);
+                        match target {
+                            ConversationOpen::Focus(message_id) => {
                                 if let Some(message) = this.message_mut(&message_id)
                                     && let Some(failure) = &mut message.failure
                                     && !failure.expanded
@@ -999,10 +1014,11 @@ impl HiveApp {
                                     )));
                                 }
                             }
+                            ConversationOpen::Latest => this.schedule_reading_position_save(cx),
+                            ConversationOpen::Resume => {}
                         }
                     }
                     Err(error) => {
-                        this.search_target = None;
                         this.error = Some(crate::app::ErrorNotice::Conversation(Box::new(crate::app::ErrorNotice::Detail("打开会话响应错误",error.to_string()))));
                     }
                 }
@@ -1011,63 +1027,88 @@ impl HiveApp {
         cx.notify();
     }
 
-    pub(crate) fn load_older_history(&mut self, cx: &mut Context<Self>) {
-        if self.loading_older_history || !self.connected {
+    pub(crate) fn load_history_page(&mut self, direction: HistoryDirection, cx: &mut Context<Self>) {
+        if self.history_navigation.loading_page.is_some() || !self.connected || self.closing {
             return;
         }
         let (Some(session), Some(page)) = (self.session.as_ref(), self.history_page.as_ref()) else {
             return;
         };
-        if !page.has_older {
-            return;
-        }
-        let Some(before_index) = page.next_before_index else {
+        let (index_key, id_key, index, anchor) = match direction {
+            HistoryDirection::Newer => (
+                "afterIndex", "afterMessageId", page.next_after_index, &page.next_after_message_id,
+            ),
+            HistoryDirection::Older => (
+                "beforeIndex", "beforeMessageId", page.next_before_index, &page.next_before_message_id,
+            ),
+        };
+        let (Some(runtime), Some(index)) = (self.runtime.clone(), index) else {
             return;
         };
         let session_id = session.id.clone();
         let request = self.open_request;
+        let connection = self.connection_generation;
         let mut params = json!({
             "sessionId": session_id,
-            "beforeIndex": before_index,
+            "viewRevision": request,
             "limit": 120,
             "deferHistoryImages": true
         });
-        if let Some(before_id) = &page.next_before_message_id {
-            params["beforeMessageId"] = json!(before_id);
+        params[index_key] = json!(index);
+        if let Some(anchor) = anchor {
+            params[id_key] = json!(anchor);
         }
-        self.loading_older_history = true;
+        self.history_navigation.loading_page = Some(direction);
         self.sync_conversation_list(cx);
         cx.notify();
-        self.request("chat.historyPage", params, cx, move |this, value, cx| {
-            if this.open_request != request
-                || this.session.as_ref().map(|s| &s.id) != Some(&session_id)
-            {
-                return;
-            }
-            this.loading_older_history = false;
-            match serde_json::from_value::<crate::protocol::HistoryPageResponse>(value) {
-                Ok(resp) if resp.history.len() == resp.history_message_ids.len() => {
-                    this.history_page = Some(resp.history_page);
-                    this.prepend_conversation_history(
-                        resp.history_message_ids,
-                        resp.history,
-                        cx,
-                    );
+        cx.spawn(async move |this, cx| {
+            let result = runtime.request("chat.historyPage", params).await
+                .map_err(|error| error.to_string())
+                .and_then(|value| serde_json::from_value::<HistoryPageResponse>(value).map_err(|error| error.to_string()))
+                .and_then(|page| {
+                    if page.history.len() == page.history_message_ids.len() {
+                        Ok(page)
+                    } else {
+                        Err(crate::language::tr("会话快照中的消息身份数量不匹配").to_owned())
+                    }
+                });
+            let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection || this.open_request != request
+                    || this.session.as_ref().map(|s| &s.id) != Some(&session_id)
+                {
+                    return;
                 }
-                Ok(_) => {
-                    this.sync_conversation_list(cx);
-                    cx.notify();
+                this.history_navigation.loading_page = None;
+                let newer = direction == HistoryDirection::Newer;
+                match result {
+                    Ok(resp) => {
+                        if let Some(current) = &mut this.history_page {
+                            current.extend(resp.history_page, newer);
+                            let has_newer = current.has_newer;
+                            let find = this.conversation_find.take();
+                            if newer {
+                                this.append_conversation_history(
+                                    resp.history_message_ids, resp.history, has_newer, cx,
+                                );
+                            } else {
+                                this.prepend_conversation_history(resp.history_message_ids, resp.history, cx);
+                            }
+                            this.conversation_find = find;
+                            this.refresh_loaded_conversation_find();
+                        }
+                        this.schedule_reading_position_save(cx);
+                    }
+                    Err(error) => {
+                        this.error = Some(crate::app::ErrorNotice::Detail(
+                            if newer { "读取更新历史失败" } else { "读取更早历史失败" },
+                            error,
+                        ));
+                    }
                 }
-                Err(error) => {
-                    this.error = Some(crate::app::ErrorNotice::Detail(
-                        "读取更早历史失败",
-                        error.to_string(),
-                    ));
-                    this.sync_conversation_list(cx);
-                    cx.notify();
-                }
-            }
-        });
+                this.sync_conversation_list(cx);
+                cx.notify();
+            });
+        }).detach();
     }
 
     pub(crate) fn refresh_handoff_target_state(&mut self, id: String, cx: &mut Context<Self>) {

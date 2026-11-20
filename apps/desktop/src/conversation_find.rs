@@ -125,16 +125,26 @@ impl HiveApp {
             return;
         };
         find.query = fold(find.input.read(cx).value().trim()).into_owned();
+        find.selected = None;
+        self.refresh_loaded_conversation_find();
+        self.reveal_conversation_match(cx);
+        self.schedule_reading_position_save(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn refresh_loaded_conversation_find(&mut self) {
+        let Some(find) = &mut self.conversation_find else {
+            return;
+        };
         find.hits = self
             .messages
             .iter()
             .filter(|m| matches(m, self.tool_inputs.get(&m.id), &find.query))
             .map(|m| m.id.clone())
             .collect();
-        find.selected = find.hits.first().cloned();
-        self.reveal_conversation_match(cx);
-        self.schedule_reading_position_save(cx);
-        cx.notify();
+        if find.selected.as_ref().is_none_or(|id| !find.hits.contains(id)) {
+            find.selected = find.hits.first().cloned();
+        }
     }
 
     pub fn move_conversation_find(

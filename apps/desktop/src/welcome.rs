@@ -22,6 +22,9 @@ use std::{
 };
 
 pub(crate) mod agents;
+mod projects;
+mod setup;
+pub(crate) use setup::Setup;
 
 const GIT_BRANCH_TTL: Duration = Duration::from_secs(3);
 
@@ -641,11 +644,8 @@ impl HiveApp {
                                 cx,
                             )),
                     )
-                    .when(!self.showing_welcome_guide && active_project.is_none(), |col| {
+                    .when(active_project.is_none(), |col| {
                         col.children(self.render_agent_setup_link(cx))
-                    })
-                    .when(self.showing_welcome_guide, |col| {
-                        col.child(self.render_welcome_guide_panel(cx))
                     }),
             )
     }

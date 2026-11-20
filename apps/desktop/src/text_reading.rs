@@ -107,6 +107,44 @@ impl TextPages {
         self.visible = SharedString::from(&self.full[start..self.boundaries[page + 1].0]);
         true
     }
+
+    pub fn show_line(&mut self, line: usize) {
+        // The final boundary is the end of the text, not the start of a page.
+        let page =
+            self.boundaries[..self.count()].partition_point(|&(_, first_line)| first_line < line);
+        if self
+            .boundaries
+            .get(page)
+            .is_some_and(|&(_, first_line)| first_line == line)
+            && page < self.count()
+        {
+            self.show(page);
+            return;
+        }
+        let previous = page.saturating_sub(1);
+        let (start, first_line) = self.boundaries[previous];
+        let end = self.boundaries[previous + 1].0;
+        let Some(before_match) = line
+            .checked_sub(first_line)
+            .and_then(|distance| distance.checked_sub(1))
+        else {
+            return;
+        };
+        if let Some((index, _)) = self.full.as_bytes()[start..end]
+            .iter()
+            .enumerate()
+            .filter(|&(_, byte)| *byte == b'\n')
+            .nth(before_match)
+            .filter(|&(index, _)| start + index + 1 < end)
+        {
+            let offset = start + index + 1;
+            self.boundaries.insert(page, (offset, line));
+            self.page += usize::from(self.page >= page);
+            self.show(page);
+        } else {
+            self.show(previous);
+        }
+    }
 }
 
 fn page_boundaries(text: &str) -> Vec<(usize, usize)> {
@@ -190,5 +228,17 @@ mod tests {
         assert_eq!(pages.visible.as_ref(), "row\n");
         assert!(pages.show(0));
         assert_eq!(pages.first_line, 1);
+    }
+
+    #[test]
+    fn showing_a_match_starts_at_its_line_and_preserves_earlier_content() {
+        let original = "one\n二\nthree\n";
+        let mut pages = TextPages::new(original.into());
+        pages.show_line(2);
+        assert_eq!(pages.first_line, 2);
+        assert_eq!(pages.visible.as_ref(), "二\nthree\n");
+        assert!(pages.show(0));
+        assert_eq!(pages.visible.as_ref(), "one\n");
+        assert_eq!(pages.full.as_ref(), original);
     }
 }

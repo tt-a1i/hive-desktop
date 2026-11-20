@@ -7,6 +7,7 @@ pub enum TerminalEvent {
     Input { bytes: Vec<u8>, user_input: bool },
     Resize { cols: usize, rows: usize },
     Title(String),
+    AddSelectionToChat(String),
     Bell,
 }
 

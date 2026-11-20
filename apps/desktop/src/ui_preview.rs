@@ -104,6 +104,7 @@ fn apply_screen(
                 has_older: true,
                 next_before_index: Some(1380),
                 next_before_message_id: Some("preview-m-1380".into()),
+                ..Default::default()
             });
             app.upsert_tool(
                 "preview-large-tool".into(),

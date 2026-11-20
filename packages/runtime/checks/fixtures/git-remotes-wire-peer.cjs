@@ -14,6 +14,13 @@ if (kind === 'git') {
   if (state.remoteOid) {console.log(state.remoteOid + '\trefs/heads/session-pr'); process.exit(0);}
   process.exit(2);
  }
+ if (args.includes('fetch') && args.includes('github') && state.reviewBare) {
+  if (!args.includes('--no-write-fetch-head') || !args.includes('--refmap=') ||
+      !args.some(arg => /^refs\/pull\/17\/head:refs\/hive\/pr-review\/[a-f0-9-]+$/.test(arg))) fail('unsafe PR fetch arguments');
+  const redirected = args.map(arg => arg === 'github' ? state.reviewBare : arg);
+  const result = cp.spawnSync(state.git, ['-c', 'protocol.file.allow=always', ...redirected], {stdio: 'inherit'});
+  process.exit(result.status ?? 1);
+ }
  if ((args.includes('push') || args.includes('fetch')) && args.includes('github')) fail('fixture forbids real hosted writes');
  const result = cp.spawnSync(state.git, args, {stdio: 'inherit'}); process.exit(result.status ?? 1);
 }
@@ -28,6 +35,15 @@ if (args[0] === 'repo' && args[1] === 'view') {
  if (args[2] !== 'https://github.com/fixture-owner/fixture-repo') fail('wrong repo view route');
  console.log(JSON.stringify({nameWithOwner: 'fixture-owner/fixture-repo', url: args[2]}));
 } else if (args[0] === 'api') {
+ if (flag('--hostname') === 'github.com' && flag('--method') === 'GET' && args.at(-1) === 'repos/fixture-owner/fixture-repo/pulls/17') {
+  console.log(JSON.stringify({
+   number: 17, html_url: 'https://github.com/fixture-owner/fixture-repo/pull/17',
+   title: 'Review the fixture', state: 'open', merged: false,
+   base: {ref: 'main', sha: state.baseOid, repo: {full_name: 'fixture-owner/fixture-repo'}},
+   head: {ref: 'fork-branch', sha: state.remoteOid, repo: {full_name: 'author/fork'}},
+  }));
+  process.exit(0);
+ }
  if (flag('--hostname') !== 'github.com' || args.at(-1) !== 'repos/fixture-owner/fixture-repo/git/ref/heads/main') fail('wrong API route');
  console.log(JSON.stringify({ref: 'refs/heads/main', object: {sha: state.baseOid}}));
 } else if (args[0] === 'pr') {

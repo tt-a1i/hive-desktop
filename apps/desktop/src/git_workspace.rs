@@ -1,5 +1,6 @@
 pub(crate) mod patch_reader;
 mod remotes;
+mod review;
 use patch_reader::PatchReader;
 use crate::{
     app::HiveApp,
@@ -14,8 +15,8 @@ use gpui_kit::{
         button::{Button, ButtonCustomVariant, ButtonVariants},
         checkbox::Checkbox,
         diff::{
-            Diff, DiffChangeIndicator, DiffFile, DiffHoverHighlight, DiffHunkSeparator, DiffMode,
-            DiffState,
+            Diff, DiffChangeIndicator, DiffFile, DiffHoverHighlight, DiffHunkSeparator,
+            DiffLineRange, DiffMode, DiffSide, DiffState,
         },
         input::{Textarea, TextareaState},
         scroll::ScrollableElement,
@@ -431,6 +432,17 @@ impl Comparison {
         }
     }
 }
+
+struct DiffReview {
+    comment: Entity<gpui_kit::component::input::InputState>,
+    selection: Option<Result<ReviewedLines, review::ReviewError>>,
+}
+
+struct ReviewedLines {
+    location: String,
+    patch: String,
+}
+
 pub(crate) struct GitWorkspace {
     app: WeakEntity<HiveApp>,
     runtime: Option<Arc<Runtime>>,
@@ -487,8 +499,7 @@ pub(crate) struct GitWorkspace {
     selected_commit_loading: bool,
     discard_confirm_path: Option<String>,
     review_open: bool,
-    review_lines_input: Entity<gpui_kit::component::input::InputState>,
-    review_comment_input: Entity<gpui_kit::component::input::InputState>,
+    diff_review: Option<DiffReview>,
     branch_panel_open: bool,
     stash_panel_open: bool,
     new_branch_input: Entity<gpui_kit::component::input::InputState>,
@@ -550,6 +561,7 @@ impl HiveApp {
                         session.clone(),
                         connection,
                         open_request,
+                        in_drawer,
                         window,
                         cx,
                     )
@@ -625,14 +637,7 @@ impl HiveApp {
                 selected_commit_loading: false,
                 discard_confirm_path: None,
                 review_open: false,
-                review_lines_input: cx.new(|cx| {
-                    gpui_kit::component::input::InputState::new(window, cx)
-                        .placeholder(tr("可选行号范围，如 L42-L58"))
-                }),
-                review_comment_input: cx.new(|cx| {
-                    gpui_kit::component::input::InputState::new(window, cx)
-                        .placeholder(tr("输入评审意见，一键发给当前 Agent 修改…"))
-                }),
+                diff_review: None,
                 branch_panel_open: false,
                 stash_panel_open: false,
                 new_branch_input: cx.new(|cx| {
@@ -1034,6 +1039,8 @@ impl GitWorkspace {
     fn clear_file_diff(&mut self, cx: &mut Context<Self>) {
         self.diff_generation += 1;
         self.diff = None;
+        self.review_open = false;
+        self.diff_review = None;
         if std::mem::take(&mut self.diff_has_structured) {
             self.diff_state.update(cx, |state, cx| state.set_files([], cx));
         }
@@ -1971,56 +1978,126 @@ impl GitWorkspace {
         .detach();
     }
 
+    fn open_diff_review(
+        &mut self,
+        range: Option<DiffLineRange>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.preview_mock || !self.current(cx) || self.diff_loading {
+            return;
+        }
+        let selection = range.as_ref().map(|range| self.reviewed_lines(range, cx));
+        let draft = self.diff_review.get_or_insert_with(|| DiffReview {
+            comment: cx.new(|cx| {
+                gpui_kit::component::input::InputState::new(window, cx)
+                    .placeholder(tr("输入评审意见，一键发给当前 Agent 修改…"))
+            }),
+            selection: None,
+        });
+        draft.selection = selection;
+        self.review_open = true;
+        self.ops_notice = None;
+        let focus = draft.comment.read(cx).focus_handle(cx);
+        window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        cx.notify();
+    }
+
+    fn reviewed_lines(
+        &self,
+        range: &DiffLineRange,
+        cx: &App,
+    ) -> Result<ReviewedLines, review::ReviewError> {
+        let [file] = self.diff_state.read(cx).files() else {
+            return Err(review::ReviewError::Unavailable);
+        };
+        if file.path() != range.path() {
+            return Err(review::ReviewError::Unavailable);
+        }
+        let diff = self.diff.as_ref().ok_or(review::ReviewError::Unavailable)?;
+        let patch = diff.patch.as_deref().ok_or(review::ReviewError::Unavailable)?;
+        let path_on = |side| match side {
+            DiffSide::Original => diff.before_path.as_deref().unwrap_or(&diff.path),
+            DiffSide::Modified => diff.after_path.as_deref().unwrap_or(&diff.path),
+        };
+        let side_label = |side| match side {
+            DiffSide::Original => tr("原始侧"),
+            DiffSide::Modified => tr("修改侧"),
+        };
+        let location = if range.side() == range.end_side() {
+            let start = range.start().min(range.end());
+            let end = range.start().max(range.end());
+            let lines = if start == end {
+                format!("L{start}")
+            } else {
+                format!("L{start}–L{end}")
+            };
+            format!("{} {:?}:{lines}", side_label(range.side()), path_on(range.side()))
+        } else {
+            format!(
+                "{} {:?}:L{} ↔ {} {:?}:L{}",
+                side_label(range.side()), path_on(range.side()), range.start(),
+                side_label(range.end_side()), path_on(range.end_side()), range.end(),
+            )
+        };
+        Ok(ReviewedLines { location, patch: review::focused_patch(patch, range)? })
+    }
+
     fn send_diff_review_to_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(change) = self.selected_change().cloned() else {
+        if !self.current(cx) || !self.review_open || self.diff_loading {
+            return;
+        }
+        let (Some(change), Some(draft)) = (self.selected_change(), &self.diff_review) else {
             return;
         };
-        let lines = self.review_lines_input.read(cx).value().trim().to_owned();
-        let comment = self.review_comment_input.read(cx).value().trim().to_owned();
+        let comment = draft.comment.read(cx).value();
+        let comment = comment.trim();
         if comment.is_empty() {
             self.ops_notice = Some((true, tr("请先输入评审意见").to_owned()));
             cx.notify();
             return;
         }
-        let loc = if lines.is_empty() {
-            change.path.clone()
-        } else {
-            format!("{} ({})", change.path, lines)
+        let comparison = self.comparison.label();
+        let file = format!("{:?}", change.path);
+        let mut prompt = format!("{} {file} · {comparison}", tr("[Diff 评审]"));
+        let (patch, abbreviated) = match &draft.selection {
+            Some(Ok(lines)) => {
+                prompt.push_str(&format!("\n{}", lines.location));
+                (lines.patch.as_str(), false)
+            }
+            Some(Err(_)) => return,
+            None => review::file_excerpt(
+                self.diff.as_ref().and_then(|diff| diff.patch.as_deref()).unwrap_or_default(),
+            ),
         };
-        let excerpt: String = self
-            .diff
-            .as_ref()
-            .and_then(|d| d.patch.as_deref())
-            .map(|p| {
-                p.lines()
-                    .take(24)
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default();
-        let prompt = if excerpt.is_empty() {
-            format!("[Diff 评审] {loc}\n{comment}")
-        } else {
-            format!("[Diff 评审] {loc}\n{comment}\n\n```diff\n{excerpt}\n```")
+        prompt.push_str(&format!("\n{comment}"));
+        if !patch.is_empty() {
+            prompt.push_str(&format!("\n\n{}", review::fenced_patch(patch)));
+        }
+        if abbreviated {
+            prompt.push_str(&format!("\n{}", tr("文件补丁预览已截断。")));
+        }
+        let Ok(focus) = self.app.update(cx, |this, cx| {
+            this.input.update(cx, |state, cx| {
+                let end = state.value().len();
+                if end != 0 {
+                    prompt.insert_str(0, "\n\n");
+                }
+                state.set_selected_range(end..end, cx);
+                state.insert(prompt, window, cx);
+            });
+            cx.notify();
+            this.input.read(cx).focus_handle(cx)
+        }) else {
+            return;
         };
-        self.review_lines_input.update(cx, |s, cx| s.set_value("", window, cx));
-        self.review_comment_input.update(cx, |s, cx| s.set_value("", window, cx));
+        self.diff_review = None;
         self.review_open = false;
         self.ops_notice = Some((false, tr("已将 Diff 评审意见插入对话输入框").to_owned()));
-        let app = self.app.clone();
-        let _ = app.update(cx, |this, cx| {
-            let existing = this.input.read(cx).value().to_string();
-            let next = if existing.trim().is_empty() {
-                prompt
-            } else {
-                format!("{existing}\n\n{prompt}")
-            };
-            let input = this.input.clone();
-            input.update(cx, |state, cx| state.set_value(next, window, cx));
-            let focus = this.input.read(cx).focus_handle(cx);
-            window.on_next_frame(move |window, cx| focus.focus(window, cx));
-            cx.notify();
-        });
+        if !self.in_drawer {
+            window.close_dialog(cx);
+        }
+        window.on_next_frame(move |window, cx| focus.focus(window, cx));
         cx.notify();
     }
 
@@ -2040,8 +2117,6 @@ impl GitWorkspace {
             && change.worktree_status != " "
             && !self.ops_busy;
         let confirming = self.discard_confirm_path.as_deref() == Some(change.path.as_str());
-        let review_lines = self.review_lines_input.clone();
-        let review_comment = self.review_comment_input.clone();
 
         v_flex()
             .w_full()
@@ -2083,9 +2158,19 @@ impl GitWorkspace {
                                     .rounded_sm()
                                     .label(tr("评审批注 → Agent"))
                                     .accessibility_label(tr("评审批注 → Agent"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.review_open = !this.review_open;
-                                        cx.notify();
+                                    .disabled(self.diff_loading)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        if this.review_open {
+                                            this.review_open = false;
+                                            cx.notify();
+                                        } else {
+                                            let range = if this.diff_raw {
+                                                None
+                                            } else {
+                                                this.diff_state.read(cx).selected_lines()
+                                            };
+                                            this.open_diff_review(range, window, cx);
+                                        }
                                     })),
                             )
                             .when(can_discard && !confirming, |row| {
@@ -2144,9 +2229,19 @@ impl GitWorkspace {
                             }),
                     ),
             )
-            .when(self.review_open, |col| {
+            .when_some(self.diff_review.as_ref().filter(|_| self.review_open), |col, draft| {
+                let (location, invalid) = match &draft.selection {
+                    Some(Ok(selection)) => (selection.location.as_str(), false),
+                    Some(Err(review::ReviewError::Unavailable)) => (
+                        tr("所选行无法在当前补丁中定位，请重新选择。"), true,
+                    ),
+                    Some(Err(review::ReviewError::TooLarge)) => (
+                        tr("所选行超出评审上下文上限，请缩小范围。"), true,
+                    ),
+                    None => (tr("文件级评审"), false),
+                };
                 col.child(
-                    v_flex()
+                    Reveal::new("git-diff-review-form", &self.body_scroll, v_flex()
                         .w_full()
                         .gap_1p5()
                         .p_2p5()
@@ -2157,19 +2252,41 @@ impl GitWorkspace {
                         .shadow(crate::palette::card_shadow(cx))
                         .child(
                             h_flex()
+                                .gap_1p5()
+                                .flex_wrap()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .id("git-diff-review-location")
+                                        .role(Role::Status)
+                                        .aria_label(location.to_owned())
+                                        .text_xs()
+                                        .text_color(if invalid { Color::Error.get(cx) } else { Color::Secondary.get(cx) })
+                                        .child(location.to_owned()),
+                                )
+                                .when(draft.selection.is_some(), |row| {
+                                    row.child(
+                                        Button::new("git-diff-review-whole-file")
+                                            .ghost()
+                                            .compact()
+                                            .xsmall()
+                                            .label(tr("评审整个文件"))
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.open_diff_review(None, window, cx);
+                                            })),
+                                    )
+                                }),
+                        )
+                        .child(
+                            h_flex()
                                 .w_full()
                                 .items_center()
                                 .gap_1p5()
                                 .child(
                                     div()
-                                        .w(px(140.))
-                                        .child(gpui_kit::component::input::Input::new(&review_lines).small()),
-                                )
-                                .child(
-                                    div()
                                         .flex_1()
                                         .min_w_0()
-                                        .child(gpui_kit::component::input::Input::new(&review_comment).small()),
+                                        .child(gpui_kit::component::input::Input::new(&draft.comment).small()),
                                 )
                                 .child(
                                     Button::new("git-diff-review-send")
@@ -2181,11 +2298,13 @@ impl GitWorkspace {
                                         .rounded_md()
                                         .label(tr("插入到输入框"))
                                         .accessibility_label(tr("插入到输入框"))
+                                        .disabled(invalid)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.send_diff_review_to_agent(window, cx);
                                         })),
                                 ),
                         ),
+                    ),
                 )
             })
             .into_any_element()
@@ -3488,7 +3607,18 @@ impl Render for GitWorkspace {
                                                 ),
                                         )
                                     })
+                                    .when(show_structured && current && !self.preview_mock, |view| {
+                                        view.child(
+                                            div()
+                                                .px_2()
+                                                .text_xs()
+                                                .text_color(Color::Secondary.get(cx))
+                                                .child(tr("点击行旁的 + 添加批注。可拖动行号或按住 Shift 点击以选择多行。")),
+                                        )
+                                    })
                                     .child(if show_structured {
+                                        let workspace = cx.weak_entity();
+                                        let generation = self.diff_generation;
                                         div()
                                             .h(diff_height)
                                             .min_w_0()
@@ -3500,6 +3630,15 @@ impl Render for GitWorkspace {
                                                     .hover_highlight(DiffHoverHighlight::Both)
                                                     .change_indicator(DiffChangeIndicator::Signs)
                                                     .hunk_separator(DiffHunkSeparator::Metadata)
+                                                    .when(current && !self.preview_mock, |diff| {
+                                                        diff.on_add_annotation(move |range, window, cx| {
+                                                            let _ = workspace.update(cx, |this, cx| {
+                                                                if this.diff_generation == generation {
+                                                                    this.open_diff_review(Some(range.clone()), window, cx);
+                                                                }
+                                                            });
+                                                        })
+                                                    })
                                                     .overflow_hidden()
                                                     .border_color(gpui::rgba(0)),
                                             )

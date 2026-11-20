@@ -297,13 +297,16 @@ export async function listGitBranches(
 export async function checkoutGitBranch(
   projectRoot: string,
   request: { branch: string; create?: boolean; startPoint?: string },
-  options: GitReadOptions = {},
+  options: GitReadOptions & { expectedWorkspace?: GitWorkspaceVersion } = {},
 ): Promise<GitBranchActionResult> {
   const branch = request.branch.trim();
   if (!branch || branch.startsWith('-') || branch.length > 255) {
     throw new GitWorkspaceError('INVALID_ARGUMENT', '分支名称无效');
   }
   const workspace = await getGitWorkspaceVersion(projectRoot, options);
+  if (options.expectedWorkspace && JSON.stringify(workspace) !== JSON.stringify(options.expectedWorkspace)) {
+    throw new GitWorkspaceError('STALE_PREVIEW', 'The checkout changed before switching branches. Preview it again.');
+  }
   // Validate branch name syntax via Git itself
   await runGit(workspace, ['check-ref-format', '--branch', branch], options);
 
@@ -312,13 +315,17 @@ export async function checkoutGitBranch(
     if (startPoint && startPoint.startsWith('-')) {
       throw new GitWorkspaceError('INVALID_ARGUMENT', '起始提交引用无效');
     }
-    const args = ['switch', '-c', branch, ...(startPoint ? [startPoint] : [])];
+    const args = ['switch', ...(options.expectedWorkspace ? ['--no-overwrite-ignore', '--no-recurse-submodules', '--no-track'] : []),
+      '-c', branch, ...(startPoint ? [startPoint] : [])];
     await runGit(workspace, args, options);
   } else {
     await runGit(workspace, ['switch', branch], options);
   }
 
   const updated = await getGitWorkspaceVersion(projectRoot, options);
+  if (options.expectedWorkspace && updated.branch !== branch) {
+    throw new GitWorkspaceError('CHECKOUT_CHANGED', 'The branch changed during checkout. Verify the project branch before retrying.');
+  }
   return {
     ok: true,
     branch,

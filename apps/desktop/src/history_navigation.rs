@@ -1,5 +1,6 @@
 use crate::{
     app::HiveApp,
+    collaboration::Dispatch,
     language::tr,
     protocol::{Initialization, Session},
 };
@@ -7,12 +8,21 @@ use gpui_kit::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HistoryDirection {
+    Older,
+    Newer,
+}
+
 #[derive(Default)]
 pub(crate) struct HistoryNavigation {
     generation: u64,
     initialization_request: u64,
     handoff_state_request: u64,
     pub(crate) loading: bool,
+    pub(crate) loading_page: Option<HistoryDirection>,
+    // Live messages can arrive while a focused page is still missing newer history.
+    pub(crate) live_start: Option<usize>,
     pub(crate) access: HistoryAccess,
     pub(crate) initialization: Option<Initialization>,
 }
@@ -20,6 +30,8 @@ impl HistoryNavigation {
     pub(crate) fn invalidate(&mut self) {
         self.generation += 1;
         self.loading = false;
+        self.loading_page = None;
+        self.live_start = None;
         self.access = Default::default();
         self.initialization = None;
     }
@@ -113,6 +125,14 @@ struct DispatchSessionResponse {
     session: Session,
     source_session_id: String,
     source_agent_id: String,
+}
+enum HistoricalSessionDestination {
+    Conversation,
+    Dispatch { record: Dispatch, split: bool },
+}
+
+fn dispatch_source_missing(error: &str) -> bool {
+    error.starts_with("[DISPATCH_SOURCE_UNKNOWN] ")
 }
 fn validated_session(
     response: DispatchSessionResponse,
@@ -296,6 +316,39 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.resolve_historical_member_session(
+            dispatch,
+            agent,
+            HistoricalSessionDestination::Conversation,
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn open_historical_dispatch_session(
+        &mut self,
+        record: Dispatch,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.resolve_historical_member_session(
+            Some(record.id.clone()),
+            Some(record.to_agent_id.clone()),
+            HistoricalSessionDestination::Dispatch { record, split },
+            window,
+            cx,
+        );
+    }
+
+    fn resolve_historical_member_session(
+        &mut self,
+        dispatch: Option<String>,
+        agent: Option<String>,
+        destination: HistoricalSessionDestination,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.history_navigation.generation += 1;
         self.history_navigation.loading = false;
         let generation = self.history_navigation.generation;
@@ -359,9 +412,12 @@ impl HiveApp {
                             {
                                 return;
                             }
-                            match result {
-                                Ok(session) => {
+                            match (result, destination) {
+                                (Ok(session), destination) => {
                                     let id = session.id.clone();
+                                    if this.collaboration.missing_session_source.as_ref() == Some(&request.dispatch_id) {
+                                        this.collaboration.missing_session_source = None;
+                                    }
                                     if let Some(existing) =
                                         this.sessions.iter_mut().find(|existing| existing.id == id)
                                     {
@@ -369,9 +425,31 @@ impl HiveApp {
                                     } else {
                                         this.sessions.push(session);
                                     }
-                                    this.open_member_session(id, window, cx);
+                                    match destination {
+                                        HistoricalSessionDestination::Dispatch { split: true, .. } => {
+                                            this.open_split_peek_session(id, cx);
+                                        }
+                                        HistoricalSessionDestination::Dispatch { record, .. } => {
+                                            if this.collaboration.selected.as_ref().is_none_or(|selected| selected.id != record.id) {
+                                                this.select_dispatch(record, cx);
+                                            }
+                                            this.open_member_session(id, window, cx);
+                                        }
+                                        HistoricalSessionDestination::Conversation => {
+                                            this.open_member_session(id, window, cx);
+                                        }
+                                    }
                                 }
-                                Err(error) => {
+                                (Err(error), HistoricalSessionDestination::Dispatch { record, .. })
+                                    if dispatch_source_missing(&error) =>
+                                {
+                                    let id = record.id.clone();
+                                    if this.collaboration.selected.as_ref().is_none_or(|selected| selected.id != id) {
+                                        this.select_dispatch(record, cx);
+                                    }
+                                    this.collaboration.missing_session_source = Some(id);
+                                }
+                                (Err(error), _) => {
                                     this.error = Some(crate::app::ErrorNotice::Detail(
                                         "无法打开原成员会话",
                                         error,
@@ -389,8 +467,15 @@ impl HiveApp {
 }
 #[cfg(test)]
 mod tests {
-    use super::{DispatchSessionRequest, DispatchSessionResponse, validated_session};
+    use super::{DispatchSessionRequest, DispatchSessionResponse, dispatch_source_missing, validated_session};
     use serde_json::json;
+    #[test]
+    fn only_missing_provenance_enables_the_legacy_action() {
+        assert!(dispatch_source_missing("[DISPATCH_SOURCE_UNKNOWN] No origin"));
+        assert!(!dispatch_source_missing("[DISPATCH_SOURCE_MISMATCH] Wrong member"));
+        assert!(!dispatch_source_missing("[DISPATCH_ORIGIN_UNREADABLE] Damaged record"));
+        assert!(!dispatch_source_missing("Transport closed"));
+    }
     #[test]
     fn dispatch_navigation_accepts_historical_unbound_session_and_rejects_wrong_identity() {
         let request = DispatchSessionRequest {

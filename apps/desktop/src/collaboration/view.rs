@@ -234,15 +234,20 @@ impl HiveApp {
                                                 self.agent_name(&item.to_agent_id)
                                             )),
                                     )
-                                    .when_some(
-                                        self.history_member_session_link(
-                                            &item.id,
-                                            Some(&item.id),
-                                            Some(&item.to_agent_id),
-                                            tr("负责人的会话"),
-                                            cx,
-                                        ),
-                                        |row, link| row.child(link),
+                                    .child(self.dispatch_session_button(
+                                        "dispatch-original-member-session", item, false, cx,
+                                    ))
+                                    .when(
+                                        self.collaboration.missing_session_source.as_ref() == Some(&item.id),
+                                        |row| {
+                                            row.child(
+                                                div().text_xs().text_color(Color::Muted.get(cx))
+                                                    .child(tr("这条派单未记录原成员会话。")),
+                                            )
+                                            .when_some(self.current_dispatch_session_button(item, cx), |row, button| {
+                                                row.child(button)
+                                            })
+                                        },
                                     )
                                     .child(div().flex_1())
                                     .child(
@@ -778,6 +783,7 @@ impl HiveApp {
                             .max_w(px(760.))
                             .mx_auto()
                             .gap_4()
+                            .child(self.render_collaboration_inbox(detail_scroll, cx))
                             .child(self.render_team_cockpit(cx))
                             .child(self.render_tasks(detail_scroll, cx)),
                     ),
@@ -862,6 +868,7 @@ impl HiveApp {
                             .min_w_0()
                             .flex_shrink_0()
                             .gap_2p5()
+                            .when(narrow_overview, |view| view.child(self.render_collaboration_inbox(left_scroll, cx)))
                             .when(self.collaboration.list_loading, |view| {
                                 view.child(
                                     div()

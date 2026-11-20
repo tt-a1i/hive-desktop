@@ -130,6 +130,34 @@ impl HiveApp {
                 self.terminal.title = title.clone();
                 cx.notify();
             }
+            TerminalEvent::AddSelectionToChat(text) => {
+                if !self.terminal.visible
+                    || !self.terminal_scope_current()
+                    || self.terminal.source_unavailable.is_some()
+                    || self.terminal.attachment.is_none()
+                    || text.is_empty()
+                {
+                    return;
+                }
+                let Some(window) = self.terminal.window else {
+                    return;
+                };
+                let existing = self.input.read(cx).value().to_string();
+                let next = if existing.is_empty() {
+                    text.clone()
+                } else if existing.ends_with('\n') {
+                    format!("{existing}{text}")
+                } else {
+                    format!("{existing}\n{text}")
+                };
+                let input = self.input.clone();
+                let _ = window.update(cx, |_, window, cx| {
+                    input.update(cx, |state, cx| state.set_value(next, window, cx));
+                    let focus = input.read(cx).focus_handle(cx);
+                    window.on_next_frame(move |window, cx| focus.focus(window, cx));
+                });
+                cx.notify();
+            }
             TerminalEvent::Bell => {}
         }
     }

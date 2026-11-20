@@ -578,6 +578,9 @@ impl HiveApp {
         self.close_roles();
         self.preferences_modal_open = false;
         self.preferences_search_open = false;
+        if self.showing_welcome_guide {
+            self.refresh_readiness(cx);
+        }
         if let Some(focus) = self.preferences_return_focus.take() {
             window.on_next_frame(move |window, cx| focus.focus(window, cx));
         }

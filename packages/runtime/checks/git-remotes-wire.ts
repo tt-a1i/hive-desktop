@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
-import { access, chmod, mkdir, mkdtemp, readFile, realpath, rename, rmdir, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -31,7 +31,15 @@ let peerState: any = {git: gitPath, log, baseOid: rootHead, remoteOid: null, exi
 const savePeer = () => writeFile(statePath, JSON.stringify(peerState)); const readPeer = async () => {peerState = JSON.parse(await readFile(statePath, 'utf8'));}; await savePeer(); await writeFile(log, '');
 const peer = fileURLToPath(new URL('./fixtures/git-remotes-wire-peer.cjs', import.meta.url));
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-for (const name of ['git', 'gh']) {const wrapper = join(bin, name); await writeFile(wrapper, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(peer)} ${name} "$@"\n`); await chmod(wrapper, 0o700);}
+for (const name of ['git', 'gh']) {
+ const wrapper = join(bin, name);
+ const runPeer = `exec ${quote(process.execPath)} ${quote(peer)} ${name} "$@"`;
+ const body = name === 'git'
+  ? `for arg do\n case "$arg" in fetch|push|ls-remote) ${runPeer} ;; esac\ndone\nexec ${quote(gitPath)} "$@"`
+  : runPeer;
+ await writeFile(wrapper, `#!/bin/sh\n${body}\n`);
+ await chmod(wrapper, 0o700);
+}
 const forbidden = join(directory, 'FORBIDDEN_PAYLOAD_PROGRAM_RAN'), badProgram = join(directory, 'payload-program');
 await writeFile(badProgram, `#!/bin/sh\nprintf wrong > ${quote(forbidden)}\nexit 1\n`); await chmod(badProgram, 0o700);
 // Hive checks npm updates at startup; block outbound Node traffic in this test
@@ -69,7 +77,9 @@ try {
  const workspace = await rpc('hive.request', {method: 'POST', path: '/api/workspaces', body: {path: repo, name: 'Remote wire fixture', autostart_orchestrator: false}});
  const otherWorkspace = await rpc('hive.request', {method: 'POST', path: '/api/workspaces', body: {path: outside, name: 'Unrelated workspace', autostart_orchestrator: false}});
  const session = await rpc('chat.createRecord', {workspaceId: workspace.id, backend: 'codex', isolation: 'worktree'}), worktree = session.execution.path;
- await writeFile(join(worktree, 'file.txt'), 'session change'); git(worktree, 'add', 'file.txt'); git(worktree, 'commit', '-m', 'session only');
+ await writeFile(join(worktree, 'file.txt'), 'session change');
+ await writeFile(join(worktree, 'ignored-collision.txt'), 'PR content');
+ git(worktree, 'add', 'file.txt', 'ignored-collision.txt'); git(worktree, 'commit', '-m', 'session only');
  const scope = {workspaceId: workspace.id, sessionId: session.id, ...overrides};
  const listed = await rpc('git.remotes', scope); assert.equal(listed.ok, true); assert.equal(listed.workspace.projectRoot, await realpath(worktree)); assert.ok(listed.remotes.some((item: any) => item.name === 'origin'));
  assert.ok(!JSON.stringify(listed).includes('wire-private')); assert.ok(!JSON.stringify(listed).includes('tail-secret'));
@@ -145,6 +155,62 @@ try {
  const uncertain = await rpc('git.pr.create', {...prTarget, expectedVersion: prPreview.preview.version, title, body}); assert.equal(uncertain.ok, false); assert.equal(uncertain.applied, 'unknown'); assert.equal(uncertain.operation, 'create');
  assert.equal((await callLog()).filter(call => call.kind === 'gh' && call.args[0] === 'pr' && call.args[1] === 'create').length, beforeMutations + 1, 'A partial remote write must not be retried automatically');
  assert.equal(await exists(forbidden), false); assert.equal(git(repo, 'rev-parse', 'HEAD'), rootHead); assert.deepEqual(await readFile(join(repo, '.git/index')), rootIndex);
+ const reviewTarget = {workspaceId: workspace.id, remote: 'github', reference: '#17'};
+ const reviewParams = {...reviewTarget, backend: 'pi'};
+ peerState.mode = 'normal'; peerState.reviewBare = bare; await savePeer();
+ git(worktree, 'push', bare, 'HEAD:refs/pull/17/head');
+ const wrongReview = await rpc('git.pr.review.preview', {...reviewTarget, reference: 'https://github.com/someone/else/pull/17'});
+ assert.equal(wrongReview.error.code, 'WRONG_GITHUB_REPOSITORY');
+ const exactReview = await rpc('git.pr.review.preview', {...reviewTarget, reference: 'https://github.com/fixture-owner/fixture-repo/pull/17/files'});
+ assert.equal(exactReview.ok, true);
+ assert.equal(exactReview.preview.headOid, sessionHead);
+ assert.equal(exactReview.preview.baseOid, rootHead);
+ assert.equal(exactReview.preview.headBranch, 'fork-branch');
+ assert.equal(exactReview.preview.currentClean, true);
+ git(bare, 'update-ref', 'refs/pull/17/head', rootHead);
+ const staleReview = await rpc('git.pr.review.open', {...reviewParams, checkout: 'worktree', expectedVersion: exactReview.preview.version});
+ assert.equal(staleReview.error.code, 'STALE_PREVIEW');
+ assert.equal(git(repo, 'for-each-ref', 'refs/hive/pr-review'), '');
+ git(bare, 'update-ref', 'refs/pull/17/head', sessionHead);
+ const localChange = join(repo, 'unsaved.txt');
+ await writeFile(localChange, 'must stay');
+ const dirtyReview = await rpc('git.pr.review.preview', reviewTarget);
+ assert.equal(dirtyReview.preview.currentClean, false);
+ const refusedReview = await rpc('git.pr.review.open', {...reviewParams, checkout: 'current', expectedVersion: dirtyReview.preview.version});
+ assert.equal(refusedReview.error.code, 'DIRTY_CHECKOUT');
+ const reviewed = await rpc('git.pr.review.open', {...reviewParams, checkout: 'worktree', expectedVersion: dirtyReview.preview.version});
+ assert.equal(reviewed.ok, true, JSON.stringify(reviewed));
+ assert.equal(git(reviewed.session.execution.path, 'rev-parse', 'HEAD'), sessionHead);
+ assert.equal(git(repo, 'rev-parse', 'HEAD'), rootHead);
+ assert.equal(await readFile(localChange, 'utf8'), 'must stay');
+ assert.equal(git(repo, 'for-each-ref', 'refs/hive/pr-review'), '');
+ const reviewConversation = await rpc('chat.open', {sessionId: reviewed.session.id, viewRevision: 1});
+ assert.equal(reviewConversation.title, 'PR #17 · Review the fixture');
+ assert.equal(reviewConversation.pending, 0);
+ assert.ok(!JSON.stringify(reviewConversation.history).includes('Review GitHub pull request #17'), 'Review prompt must stay unsent');
+ assert.match(reviewConversation.prReview.prompt, /Review GitHub pull request #17/);
+ assert.ok(reviewConversation.prReview.prompt.includes(sessionHead));
+ assert.ok(reviewConversation.prReview.prompt.includes(rootHead));
+ await rm(localChange);
+ const ignoredChange = join(repo, 'ignored-collision.txt');
+ await mkdir(join(repo, '.git/info'), {recursive: true});
+ await writeFile(join(repo, '.git/info/exclude'), 'ignored-collision.txt\n');
+ await writeFile(ignoredChange, 'keep ignored local content');
+ const ignoredPreview = await rpc('git.pr.review.preview', reviewTarget);
+ assert.equal(ignoredPreview.preview.currentClean, true);
+ const ignoredReview = await rpc('git.pr.review.open', {...reviewParams, checkout: 'current', expectedVersion: ignoredPreview.preview.version});
+ assert.equal(ignoredReview.ok, false, 'Git must refuse to switch over ignored files');
+ assert.equal(await readFile(ignoredChange, 'utf8'), 'keep ignored local content');
+ assert.equal(git(repo, 'rev-parse', 'HEAD'), rootHead);
+ await rm(ignoredChange);
+ const currentPreview = await rpc('git.pr.review.preview', reviewTarget);
+ const currentReview = await rpc('git.pr.review.open', {...reviewParams, checkout: 'current', expectedVersion: currentPreview.preview.version});
+ assert.equal(currentReview.ok, true, JSON.stringify(currentReview));
+ assert.equal(currentReview.session.execution, undefined);
+ assert.match(git(repo, 'branch', '--show-current'), /^hive\/pr-17-/);
+ assert.equal(git(repo, 'rev-parse', 'HEAD'), sessionHead);
+ git(repo, 'switch', 'main');
+ assert.equal(git(repo, 'rev-parse', 'HEAD'), rootHead);
  // A real pre-push hook gates the native mutation while shutdown must wait.
  await mkdir(join(repo, '.git/hooks'), {recursive: true}); await writeFile(join(repo, '.git/hooks/pre-push'), `#!/bin/sh\nprintf entered > ${quote(entered)}\nwhile [ ! -e ${quote(release)} ]; do sleep 0.05; done\nprintf finished > ${quote(finished)}\n`); await chmod(join(repo, '.git/hooks/pre-push'), 0o700);
  const closingTarget = {...scope, remote: 'origin', branch: 'closing-push'}, closingPreview = await rpc('git.push.preview', closingTarget);
@@ -159,6 +225,9 @@ try {
  ({child, exited, reader} = connectRuntime());
  shuttingDown = false;
  await rpc('initialize');
+ const reopenedReview = await rpc('chat.open', {sessionId: reviewed.session.id, viewRevision: 1});
+ assert.deepEqual(reopenedReview.prReview, reviewConversation.prReview);
+ assert.equal(reopenedReview.execution.path, reviewed.session.execution.path);
  const coldRemoval = await rpc('chat.worktrees.removal.preview', removalScope);
  assert.deepEqual(coldRemoval.verifiedRemote, {remote: 'origin', branch: 'closing-push'});
  assert.equal((await rpc('chat.worktrees.removal.apply', {...removalScope, expectedVersion: coldRemoval.version})).ok, true);
@@ -168,7 +237,7 @@ try {
  shuttingDown = true;
  await rpc('shutdown');
  assert.equal((await exited)[0], 0, diagnostics);
- await writeFile(join(directory, 'receipt.json'), JSON.stringify({pass: true, actualJsonl: true, runtimeEntry: entry, realLocalBareGit: true, controlledGithubOnly: true, noHostedAccountOrModel: true, outboundNodeNetworkBlocked: true, payloadPathsAndProgramsIgnored: true, worktreeAndRootIsolation: true, missingAndForeignSourceRejected: true, stalePreconditionsNotApplied: true, prCreateUpdateAndUnknown: true, privateBodyFile: true, shutdownWaitsForRealPush: true, alternateBranchPushAllowsColdRemoval: true, removedRemoteChangedTransportNewTipRejected: true, verifiedPushSurvivesReceiptWriteFailure: true, windowsNativeValidated: false}, null, 2));
+ await writeFile(join(directory, 'receipt.json'), JSON.stringify({pass: true, actualJsonl: true, runtimeEntry: entry, realLocalBareGit: true, controlledGithubOnly: true, noHostedAccountOrModel: true, outboundNodeNetworkBlocked: true, payloadPathsAndProgramsIgnored: true, worktreeAndRootIsolation: true, missingAndForeignSourceRejected: true, stalePreconditionsNotApplied: true, prCreateUpdateAndUnknown: true, forkPrReviewWithExactCommits: true, reviewCheckoutDirtyGuard: true, prReviewContextSurvivesRestart: true, privateBodyFile: true, shutdownWaitsForRealPush: true, alternateBranchPushAllowsColdRemoval: true, removedRemoteChangedTransportNewTipRejected: true, verifiedPushSurvivesReceiptWriteFailure: true, windowsNativeValidated: false}, null, 2));
  console.log('GIT_REMOTES_WIRE_OK', directory);
 } catch (error) {await writeFile(join(directory, 'failure.json'), JSON.stringify({error: String(error), stack: (error as Error).stack, diagnostics}, null, 2)); throw error;}
 finally {

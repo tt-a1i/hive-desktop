@@ -1,3 +1,4 @@
+import { isGithubPrReviewSeed, type GithubPrReviewSeed } from './github-pr-review.js';
 import type { AgentProfileRef } from './agent-profiles.js';
 import { readGitRemote, remoteBranchOid, remoteVersion, type VerifiedGitPush } from './git-remotes.js';
 import { getGitWorkspaceStatus } from './git-workspace.js';
@@ -34,6 +35,7 @@ export interface WorktreeCreation {
   identityState: 'new' | 'known';
   originAgentId?: string;
   model?: {provider: string; id: string; name: string};
+  prReview?: GithubPrReviewSeed;
   forkOperationId?: string;
   handoffOperationId?: string;
 }
@@ -64,6 +66,7 @@ function validateCreation(creation: WorktreeCreation | undefined): void {
     || (creation.identityState === 'known' ? !text(creation.originAgentId) : creation.originAgentId !== undefined)
     || (creation.model !== undefined && (!creation.model || !text(creation.model.provider) || !text(creation.model.id) || !text(creation.model.name))))
     throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree creation identity is invalid; it cannot be replaced with caller identity');
+  if (creation.prReview !== undefined && !isGithubPrReviewSeed(creation.prReview)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid PR review provenance');
   if (creation.forkOperationId !== undefined && !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(creation.forkOperationId)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid fork operation identity');
   if (creation.handoffOperationId !== undefined && (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(creation.handoffOperationId) || creation.forkOperationId !== undefined)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid handoff operation identity');
   if (creation.version === 2) validateInitializationPlan(creation.setup);
@@ -161,21 +164,21 @@ function ownerDir(dataRoot: string, chatId: string): string {
   return join(dataRoot, 'worktrees', chatId);
 }
 /** Explicit checkout: Git may invoke the user's configured checkout filters or hooks. */
-export async function createManagedWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation?: WorktreeCreation }): Promise<ManagedWorktree> {
+export async function createManagedWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation?: WorktreeCreation; startOid?: string; expectedCommonDir?: string }): Promise<ManagedWorktree> {
   if (input.creation?.forkOperationId || input.creation?.handoffOperationId) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Snapshot worktrees require their dedicated creation path');
-  return createWorktree(input);
+  return createWorktree(input, input.startOid);
 }
 export async function createForkWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation: WorktreeCreation; operationId: string; baseOid: string }): Promise<ManagedWorktree> {
   if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(input.baseOid) || input.creation.forkOperationId !== input.operationId) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Fork provenance is invalid');
-  return createWorktree(input, input.baseOid);
+  return createWorktree(input, input.baseOid, true);
 }
 /** A new backend conversation owns its own code snapshot; this is not a native history fork. */
 export async function createHandoffWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; creation: WorktreeCreation; operationId: string; baseOid: string }): Promise<ManagedWorktree> {
   if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(input.baseOid) || input.creation.handoffOperationId !== input.operationId || input.creation.forkOperationId)
     throw new GitWorktreeError('IDENTITY_MISMATCH', 'Handoff provenance is invalid');
-  return createWorktree(input, input.baseOid);
+  return createWorktree(input, input.baseOid, true);
 }
-async function createWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation?: WorktreeCreation }, forkBase?: string): Promise<ManagedWorktree> {
+async function createWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation?: WorktreeCreation; expectedCommonDir?: string }, startOid?: string, snapshot = false): Promise<ManagedWorktree> {
   if (!chatIdValid(input.chatId)) throw new TypeError('Invalid chat ID');
   validateCreation(input.creation);
   const project = await realpath(input.projectRoot);
@@ -183,9 +186,13 @@ async function createWorktree(input: { projectRoot: string; dataRoot: string; ch
   const prefix = relative(repository, project);
   if (prefix && !contained(repository, project)) throw new Error('Project is outside repository');
   const common = await commonDir(project);
-  const baseOid = await git(project, 'rev-parse', '--verify', `${forkBase ?? 'HEAD'}^{commit}`);
-  if (forkBase && baseOid !== forkBase) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Fork base commit changed');
-  if (forkBase && prefix) throw new GitWorktreeError('UNSUPPORTED_PROJECT_PREFIX', 'Fork materialization requires the repository root');
+  if (input.expectedCommonDir !== undefined && common !== input.expectedCommonDir)
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'The original repository changed before creating the worktree');
+  if (startOid !== undefined && !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(startOid))
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid worktree base commit');
+  const baseOid = await git(project, 'rev-parse', '--verify', `${startOid ?? 'HEAD'}^{commit}`);
+  if (startOid !== undefined && baseOid !== startOid) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree base commit changed');
+  if (snapshot && prefix) throw new GitWorktreeError('UNSUPPORTED_PROJECT_PREFIX', 'Fork materialization requires the repository root');
   if (prefix) {
     try {
       const gitPath = prefix.split(sep).join('/');
@@ -219,7 +226,8 @@ async function createWorktree(input: { projectRoot: string; dataRoot: string; ch
     }
     throw new GitWorktreeError('METADATA_WRITE_FAILED', 'Could not save worktree creation intent', { cause: error });
   }
-  await git(project, 'worktree', 'add', ...(forkBase ? ['--no-checkout'] : []), '-b', branch, '--', worktree, baseOid);
+  const checkoutConfig = !snapshot && startOid ? ['-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`] : [];
+  await git(project, ...checkoutConfig, 'worktree', 'add', ...(snapshot ? ['--no-checkout'] : []), '-b', branch, '--', worktree, baseOid);
   try {
     const gitDir = await worktreeGitDir(worktree, common);
     const marker = await open(join(gitDir, 'hive-desktop-owner.json'), 'wx', 0o600);
@@ -231,7 +239,7 @@ async function createWorktree(input: { projectRoot: string; dataRoot: string; ch
   }
   try { await writeIntent(dir, { state: 'ready', record, ...(input.creation && {creation: input.creation}) }, creating); }
   catch (error) { throw new GitWorktreeError('METADATA_WRITE_FAILED', 'Worktree created but ownership publication failed; inspect creation intent to recover', { cause: error }); }
-  if (!forkBase) await validateManagedWorktree(root, record);
+  if (!snapshot) await validateManagedWorktree(root, record);
   return record;
 }
 async function worktreeGitDir(worktree: string, common: string): Promise<string> {

@@ -1384,7 +1384,10 @@ impl Render for HiveApp {
                         ),
                 )
             })
-            .child(
+            .when(self.showing_welcome_guide, |root| {
+                root.child(self.render_welcome_setup(window, cx))
+            })
+            .when(!self.showing_welcome_guide, |root| root.child(
                 h_flex()
                     .flex_1()
                     .min_h_0()
@@ -1692,106 +1695,9 @@ impl Render for HiveApp {
                                                                         )),
                                                                     )
                                                                 })
-                                                                .when_some(
-                                                                    active_project.clone(),
-                                                                    |tools, ws| {
-                                                                        let ws_id = ws.id.clone();
-                                                                        let ws_menu_id = ws.id.clone();
-                                                                        let folder_path =
-                                                                            std::path::PathBuf::from(
-                                                                                &ws.path,
-                                                                            );
-                                                                        let default_target =
-                                                                            crate::general::current(
-                                                                                cx,
-                                                                            )
-                                                                            .default_open_target;
-                                                                        let target_label =
-                                                                            default_target.label();
-                                                                        let connected =
-                                                                            self.connected;
-                                                                        let open_disabled = !connected
-                                                                            && default_target
-                                                                                != crate::general::OpenTarget::Finder;
-                                                                        let tooltip = if english() {
-                                                                            format!(
-                                                                                "Open project in {target_label}"
-                                                                            )
-                                                                        } else {
-                                                                            format!(
-                                                                                "在 {target_label} 中打开项目"
-                                                                            )
-                                                                        };
-                                                                        tools
-                                                                            .child(
-                                                                                Button::new("topbar-open-folder")
-                                                                                    .custom(crate::palette::quiet_icon_variant(cx))
-                                                                                    .compact()
-                                                                                    .xsmall()
-                                                                                    .h(px(28.))
-                                                                                    .px_2()
-                                                                                    .rounded_lg()
-                                                                                    .icon(Glyph::FolderOpen)
-                                                                                    .label(target_label)
-                                                                                    .tooltip(tooltip.clone())
-                                                                                    .accessibility_label(tooltip)
-                                                                                    .disabled(open_disabled)
-                                                                                    .on_click(cx.listener(
-                                                                                        move |this, _, _, cx| {
-                                                                                            if !this.connected
-                                                                                                && default_target
-                                                                                                    == crate::general::OpenTarget::Finder
-                                                                                            {
-                                                                                                cx.reveal_path(&folder_path);
-                                                                                            } else {
-                                                                                                this.open_workspace_target(
-                                                                                                    ws_id.clone(),
-                                                                                                    default_target.wire(),
-                                                                                                    cx,
-                                                                                                );
-                                                                                            }
-                                                                                        },
-                                                                                    )),
-                                                                            )
-                                                                            .child(
-                                                                                Button::new("topbar-open-target-menu")
-                                                                                    .custom(crate::palette::quiet_icon_variant(cx))
-                                                                                    .compact()
-                                                                                    .xsmall()
-                                                                                    .h(px(28.))
-                                                                                    .w(px(20.))
-                                                                                    .rounded_lg()
-                                                                                    .icon(Glyph::ChevronDown)
-                                                                                    .tooltip(tr("选择打开方式"))
-                                                                                    .accessibility_label(tr("选择打开方式"))
-                                                                                    .disabled(!connected)
-                                                                                    .dropdown_menu({
-                                                                                        let weak = cx.weak_entity();
-                                                                                        move |mut menu, _, _| {
-                                                                                            for target in crate::general::OpenTarget::for_platform().iter().copied() {
-                                                                                                let weak = weak.clone();
-                                                                                                let ws_item_id = ws_menu_id.clone();
-                                                                                                let active = target == default_target;
-                                                                                                menu = menu.item(
-                                                                                                    PopupMenuItem::new(target.label())
-                                                                                                        .checked(active)
-                                                                                                        .on_click(move |_, _, cx| {
-                                                                                                            let _ = weak.update(cx, |this, cx| {
-                                                                                                                this.open_workspace_target(
-                                                                                                                    ws_item_id.clone(),
-                                                                                                                    target.wire(),
-                                                                                                                    cx,
-                                                                                                                );
-                                                                                                            });
-                                                                                                        }),
-                                                                                                );
-                                                                                            }
-                                                                                            menu
-                                                                                        }
-                                                                                    }),
-                                                                            )
-                                                                    },
-                                                                )
+                                                                .when_some(active_project.clone(), |tools, workspace| {
+                                                                    tools.child(self.render_project_open_controls(&workspace.id, cx))
+                                                                })
                                                                 .when(show_conv_tools, |tools| {
                                                                     tools.child(
                                                                         Button::new(
@@ -1830,6 +1736,7 @@ impl Render for HiveApp {
                                                                     active_project.clone(),
                                                                     |tools, _| {
                                                                         tools
+                                                                            .child(self.project_file_browser_button("topbar-project-files", cx))
                                                                             .child(
                                                                                 Button::new(
                                                                                     "topbar-quick-terminal",
@@ -2101,55 +2008,15 @@ impl Render for HiveApp {
                                     } else {
                                         can_submit && has_text
                                     };
-                                    surface
-                                        .when(self.showing_welcome_guide, |surface| {
-                                            surface.child(
-                                                h_flex()
-                                                    .id("welcome-guide-banner")
-                                                    .w_full()
-                                                    .px_5()
-                                                    .py_2()
-                                                    .border_b_1()
-                                                    .border_color(Color::Divider.get(cx))
-                                                    .bg(Color::Surface.get(cx))
-                                                    .items_center()
-                                                    .justify_between()
-                                                    .gap_2()
-                                                    .flex_wrap()
-                                                    .child(
-                                                        div()
-                                                            .text_xs()
-                                                            .text_color(Color::Secondary.get(cx))
-                                                            .child(tr("正在查看欢迎引导")),
-                                                    )
-                                                    .child(
-                                                        Button::new("exit-welcome-guide")
-                                                            .outline()
-                                                            .compact()
-                                                            .small()
-                                                            .h(px(26.))
-                                                            .px_2p5()
-                                                            .rounded_md()
-                                                            .label(tr("返回当前工作区"))
-                                                            .on_click(cx.listener(
-                                                                |this, _, _, cx| {
-                                                                    this.showing_welcome_guide =
-                                                                        false;
-                                                                    cx.notify();
-                                                                },
-                                                            )),
-                                                    ),
-                                            )
-                                        })
-                                        .child(self.render_hero_stage(
-                                            window,
-                                            narrow,
-                                            running,
-                                            hero_can_send,
-                                            pending,
-                                            needs_pi_model,
-                                            cx,
-                                        ))
+                                    surface.child(self.render_hero_stage(
+                                        window,
+                                        narrow,
+                                        running,
+                                        hero_can_send,
+                                        pending,
+                                        needs_pi_model,
+                                        cx,
+                                    ))
                                 })
                                 .when(!welcome && open_failed, |surface| {
                                     surface.child(
@@ -2294,6 +2161,6 @@ impl Render for HiveApp {
                                 .into_any_element()
                         })
                     }),
-            )
+            ))
     }
 }

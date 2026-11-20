@@ -2,7 +2,7 @@ use crate::{
     app::HiveApp,
     focus_scroll::Reveal,
     general::{
-        self, BusySendMode, GeneralSettings, OpenTarget, ProjectSortOrder, QuitConfirmation,
+        self, BusySendMode, GeneralSettings, ProjectSortOrder, QuitConfirmation,
         SessionTimeFormat,
     },
     language::tr,
@@ -182,37 +182,10 @@ impl HiveApp {
                                             ),
                                             |row, btn| row.child(btn),
                                         )
-                                        .child(Reveal::new(
-                                            "general-open-target-bar-reveal",
-                                            &self.general_scroll,
-                                            super::settings_segmented_bar(cx)
-                                                .flex_wrap()
-                                                .children(
-                                                    OpenTarget::for_platform().iter().copied().map(
-                                                        |target| {
-                                                            let active =
-                                                                saved.default_open_target == target;
-                                                            Button::new(SharedString::from(format!(
-                                                                "general-open-target-{}",
-                                                                target.wire()
-                                                            )))
-                                                            .when(active, |b| b.outline())
-                                                            .when(!active, |b| b.ghost())
-                                                            .small()
-                                                            .h(px(26.))
-                                                            .px_2p5()
-                                                            .rounded_md()
-                                                            .label(target.label())
-                                                            .on_click(move |_, _, cx| {
-                                                                let mut next =
-                                                                    general::current(cx);
-                                                                next.default_open_target = target;
-                                                                general::set(next, cx);
-                                                            })
-                                                        },
-                                                    ),
-                                                ),
-                                        )),
+                                        .child(crate::open_targets::settings_picker(
+                                            saved.default_open_target,
+                                            cx,
+                                        ))
                                 ),
                         )
                     })

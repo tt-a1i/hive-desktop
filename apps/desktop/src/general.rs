@@ -8,72 +8,7 @@ use std::{
 
 const FILE: &str = "desktop-general.json";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum OpenTarget {
-    #[default]
-    Finder,
-    Vscode,
-    VscodeInsiders,
-    Cursor,
-    Zed,
-    Terminal,
-    Ghostty,
-}
-
-impl OpenTarget {
-    pub fn wire(self) -> &'static str {
-        match self {
-            Self::Finder => "finder",
-            Self::Vscode => "vscode",
-            Self::VscodeInsiders => "vscode-insiders",
-            Self::Cursor => "cursor",
-            Self::Zed => "zed",
-            Self::Terminal => "terminal",
-            Self::Ghostty => "ghostty",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Finder => {
-                if cfg!(target_os = "macos") {
-                    tr("访达")
-                } else {
-                    tr("文件管理器")
-                }
-            }
-            Self::Vscode => "VS Code",
-            Self::VscodeInsiders => "VS Code Insiders",
-            Self::Cursor => "Cursor",
-            Self::Zed => "Zed",
-            Self::Terminal => tr("系统终端"),
-            Self::Ghostty => "Ghostty",
-        }
-    }
-
-    pub fn for_platform() -> &'static [Self] {
-        if cfg!(target_os = "macos") {
-            &[
-                Self::Finder,
-                Self::Vscode,
-                Self::VscodeInsiders,
-                Self::Cursor,
-                Self::Zed,
-                Self::Terminal,
-                Self::Ghostty,
-            ]
-        } else {
-            &[
-                Self::Finder,
-                Self::Vscode,
-                Self::VscodeInsiders,
-                Self::Cursor,
-                Self::Zed,
-            ]
-        }
-    }
-}
+pub use crate::open_targets::OpenTarget;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -174,7 +109,7 @@ impl GeneralPreferences {
 
 fn validate(settings: GeneralSettings) -> GeneralSettings {
     let mut normalized = settings;
-    if !OpenTarget::for_platform().contains(&normalized.default_open_target) {
+    if !OpenTarget::for_platform().any(|target| target == normalized.default_open_target) {
         normalized.default_open_target = OpenTarget::Finder;
     }
     normalized

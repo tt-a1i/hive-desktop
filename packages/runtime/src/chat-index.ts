@@ -1,3 +1,4 @@
+import { isGithubPrReviewSeed, type GithubPrReviewSeed } from './github-pr-review.js';
 import type { AgentCapabilities } from './agent-capabilities.js';
 import type { AgentProfileRef } from './agent-profiles.js';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -26,6 +27,7 @@ export interface ChatRecord {
   lineage?: {operationId:string;parentSessionId:string;nativeUserItemId:string;edit:boolean;codeRelation:{kind:'current'|'checkpoint';checkpointId:string};inheritedItemIds:string[]};
   rewindOperationId?: string;
   rewound?: true;
+  prReview?: GithubPrReviewSeed;
   forkDraft?: {text:string;attachmentIds:string[];missingAttachments:string[]};
   execution?: ChatExecution;
   codexThreadId?: string;
@@ -182,6 +184,7 @@ function isChatRecord(value: unknown): value is ChatRecord {
   }
   if(record.rewindOperationId!==undefined&&(typeof record.rewindOperationId!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(record.rewindOperationId)))return false;
   if(record.rewound!==undefined&&record.rewound!==true)return false;
+  if (record.prReview !== undefined && !isGithubPrReviewSeed(record.prReview)) return false;
   if(record.forkDraft!==undefined){const draft=record.forkDraft as ChatRecord['forkDraft'];if(!draft||typeof draft.text!=='string'||![draft.attachmentIds,draft.missingAttachments].every(ids=>Array.isArray(ids)&&ids.every(id=>typeof id==='string')))return false;}
   if (record.pinned !== undefined && typeof record.pinned !== 'boolean') return false;
   if (record.archived !== undefined && typeof record.archived !== 'boolean') return false;

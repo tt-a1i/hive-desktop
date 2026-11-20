@@ -157,7 +157,6 @@ pub enum ConversationSource {
 
 pub struct HiveApp {
     pub conversation_find: Option<crate::conversation_find::ConversationFind>,
-    pub(crate) search_target: Option<(u64, String, String)>,
     pub conversation_sources: Vec<ConversationSource>,
     pub navigation: NavigationSelection,
     pub sidebar_open: bool,
@@ -311,7 +310,6 @@ pub struct HiveApp {
     pub open_request: u64,
     pub conversation_ready: bool,
     pub history_page: Option<crate::protocol::HistoryPageMeta>,
-    pub loading_older_history: bool,
     pub readiness: Option<crate::protocol::ReadinessReport>,
     pub readiness_loading: bool,
     pub readiness_error: Option<String>,
@@ -355,6 +353,7 @@ pub struct HiveApp {
     pub settings_highlight_anchor: Option<(&'static str, u64)>,
     pub settings_highlight_generation: u64,
     pub showing_welcome_guide: bool,
+    pub(crate) welcome_setup: crate::welcome::Setup,
     pub quit_confirm_open: bool,
     pub(crate) archive_settings: crate::settings::archive::ArchiveState,
     pub(crate) maintenance_state: crate::maintenance::MaintenanceState,
@@ -733,7 +732,6 @@ impl HiveApp {
             codex_command,
             claude_command,
             conversation_find: None,
-            search_target: None,
             settings_panel: false,
             preferences_focus: cx.focus_handle(),
             preferences_modal_open: false,
@@ -841,7 +839,6 @@ impl HiveApp {
             open_request: 0,
             conversation_ready: false,
             history_page: None,
-            loading_older_history: false,
             readiness: None,
             readiness_loading: false,
             readiness_error: None,
@@ -885,6 +882,7 @@ impl HiveApp {
             settings_highlight_anchor: None,
             settings_highlight_generation: 0,
             showing_welcome_guide: false,
+            welcome_setup: Default::default(),
             quit_confirm_open: false,
             archive_settings: crate::settings::archive::ArchiveState::new(window, cx),
             maintenance_state: crate::maintenance::MaintenanceState::default(),
@@ -1119,7 +1117,7 @@ impl HiveApp {
                     Err(error) => {
                         if this.open_request == open_request {
                             this.loading = false;
-                            if method == "chat.open" { this.status = "未能打开会话".into(); this.search_target = None; }
+                            if method == "chat.open" { this.status = "未能打开会话".into(); }
                             let error = error.into();
                             this.error = Some(if method == "chat.open" {
                                 ErrorNotice::Conversation(Box::new(error))

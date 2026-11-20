@@ -6,6 +6,18 @@ export interface HistoryPageMeta {
   hasOlder: boolean;
   nextBeforeIndex?: number;
   nextBeforeMessageId?: string;
+  hasNewer: boolean;
+  nextAfterIndex?: number;
+  nextAfterMessageId?: string;
+}
+
+export interface HistoryWindowOptions {
+  limit?: number;
+  aroundMessageId?: string;
+  beforeIndex?: number;
+  beforeMessageId?: string;
+  afterIndex?: number;
+  afterMessageId?: string;
 }
 
 export interface HistorySliceResult<T> {
@@ -217,12 +229,7 @@ export function clampHistoryLimit(limit?: number): number {
 export function sliceHistoryWindow<T>(
   history: readonly T[],
   historyMessageIds: readonly string[],
-  options: {
-    limit?: number;
-    aroundMessageId?: string;
-    beforeIndex?: number;
-    beforeMessageId?: string;
-  },
+  options: HistoryWindowOptions,
 ): HistorySliceResult<T> {
   const totalCount = history.length;
   const limit = clampHistoryLimit(options.limit);
@@ -240,12 +247,18 @@ export function sliceHistoryWindow<T>(
     }
     endIndex = resolvedEnd;
     startIndex = Math.max(0, endIndex - limit);
+  } else if (options.afterIndex !== undefined) {
+    const exactIdx = options.afterMessageId ? historyMessageIds.indexOf(options.afterMessageId) : -1;
+    const afterIndex = exactIdx >= 0 ? exactIdx : Math.floor(options.afterIndex);
+    startIndex = Math.min(Math.max(0, afterIndex + 1), totalCount);
+    endIndex = Math.min(totalCount, startIndex + limit);
   } else if (totalCount > limit) {
     startIndex = totalCount - limit;
     if (options.aroundMessageId) {
-      const targetIdx = historyMessageIds.indexOf(options.aroundMessageId);
+      const targetIdx = historyFocusIndex(history, historyMessageIds, options.aroundMessageId);
       if (targetIdx >= 0 && targetIdx < startIndex) {
-        startIndex = Math.max(0, targetIdx - 20);
+        startIndex = Math.max(0, targetIdx - Math.min(20, Math.floor(limit / 2)));
+        endIndex = startIndex + limit;
       }
     }
   }
@@ -254,6 +267,8 @@ export function sliceHistoryWindow<T>(
   const slicedIds = historyMessageIds.slice(startIndex, endIndex);
   const hasOlder = startIndex > 0;
   const nextBeforeMessageId = hasOlder ? slicedIds[0] : undefined;
+  const hasNewer = endIndex < totalCount && slicedHistory.length > 0;
+  const nextAfterMessageId = hasNewer ? slicedIds.at(-1) : undefined;
 
   return {
     history: slicedHistory,
@@ -264,6 +279,37 @@ export function sliceHistoryWindow<T>(
       hasOlder,
       ...(hasOlder && { nextBeforeIndex: startIndex }),
       ...(nextBeforeMessageId && { nextBeforeMessageId }),
+      hasNewer,
+      ...(hasNewer && { nextAfterIndex: endIndex - 1 }),
+      ...(nextAfterMessageId && { nextAfterMessageId }),
     },
   };
+}
+
+function historyFocusIndex(
+  history: readonly unknown[],
+  ids: readonly string[],
+  target: string,
+): number {
+  const exact = ids.indexOf(target);
+  if (exact >= 0) return exact;
+
+  // Search and reading positions use the desktop row identity. The native
+  // history ID can differ for deliveries, tool results and unresolved calls.
+  const projected = history.findIndex(message => {
+    if (!message || typeof message !== 'object') return false;
+    const item = message as Record<string, unknown>;
+    const presentation = item.presentation as { deliveryId?: unknown } | undefined;
+    if (item.role === 'user' || (item.role === 'custom' && item.customType === 'hive-delivery')) {
+      return presentation?.deliveryId === target;
+    }
+    return item.role === 'toolResult' && item.toolCallId === target;
+  });
+  if (projected >= 0) return projected;
+  return history.findIndex(message => {
+    if (!message || typeof message !== 'object') return false;
+    const item = message as Record<string, unknown>;
+    return item.role === 'assistant' && Array.isArray(item.content)
+      && item.content.some(block => block?.type === 'toolCall' && block.id === target);
+  });
 }

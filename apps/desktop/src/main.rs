@@ -25,6 +25,7 @@ mod diagnostics;
 mod desktop_update;
 mod failures;
 mod general;
+mod open_targets;
 mod image_input;
 mod project_files;
 mod project_scripts;
@@ -138,6 +139,7 @@ fn main() {
             cx.set_global(local_notifications::Preferences::default());
             cx.set_global(appearance::Appearance::default());
             general::init(cx);
+            open_targets::init(cx);
             diffs_settings::init(cx);
             cx.set_global(language::Language::default());
             component::set_locale("zh-CN");
@@ -185,7 +187,15 @@ fn main() {
                             appearance::apply(Some(window), cx);
                         })
                         .detach();
-                    cx.new(|cx| app::HiveApp::new(window, cx))
+                    cx.new(|cx| {
+                        cx.observe_window_activation(window, |_, window, cx| {
+                            if window.is_window_active() {
+                                open_targets::refresh(cx);
+                            }
+                        })
+                        .detach();
+                        app::HiveApp::new(window, cx)
+                    })
                 },
             )
             .expect("open Hive window");
