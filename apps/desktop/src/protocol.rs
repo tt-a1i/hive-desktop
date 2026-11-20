@@ -63,6 +63,8 @@ pub struct Session {
     #[serde(default)]
     pub execution_path: Option<String>,
     #[serde(default)]
+    pub scratch: bool,
+    #[serde(default)]
     pub profile: Option<ProfileRef>,
 }
 impl Session {

@@ -98,9 +98,7 @@ fn selected_target(
         TerminalMode::Session => Some(session?.id.clone()),
         TerminalMode::Auto => session
             .filter(|session| {
-                session
-                    .execution
-                    .as_ref()
+                session.scratch || session.execution.as_ref()
                     .is_some_and(|execution| execution.kind == "worktree")
             })
             .map(|session| session.id.clone()),
@@ -496,19 +494,22 @@ mod tests {
         serde_json::from_value(json!({"id":"s", "workspaceId":"w", "title":"session", "execution": if worktree { json!({"kind":"worktree","path":"/worktrees/s","branch":"test"}) } else { serde_json::Value::Null }})).unwrap()
     }
     #[test]
-    fn auto_isolates_only_worktree_sessions_and_explicit_scope_overrides_it() {
+    fn auto_follows_private_session_directories_and_explicit_scope_overrides_it() {
         let isolated = session(true);
         let shared = session(false);
-        let auto = selected_target(TerminalMode::Auto, Some("w"), Some(&isolated)).unwrap();
-        assert_eq!(auto.session_id.as_deref(), Some("s"));
-        assert!(
-            selected_target(TerminalMode::Auto, Some("w"), Some(&shared))
+        let scratch: crate::protocol::Session = serde_json::from_value(json!({
+            "id":"scratch", "workspaceId":"w", "title":"Scratch conversation", "scratch":true,
+        })).unwrap();
+        for session in [&isolated, &scratch] {
+            let auto = selected_target(TerminalMode::Auto, Some("w"), Some(session)).unwrap();
+            assert_eq!(auto.session_id.as_deref(), Some(session.id.as_str()));
+            assert!(selected_target(TerminalMode::Workspace, Some("w"), Some(session))
                 .unwrap()
                 .session_id
-                .is_none()
-        );
+                .is_none());
+        }
         assert!(
-            selected_target(TerminalMode::Workspace, Some("w"), Some(&isolated))
+            selected_target(TerminalMode::Auto, Some("w"), Some(&shared))
                 .unwrap()
                 .session_id
                 .is_none()

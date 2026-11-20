@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { NativeImportSource } from './native-import-source.js';
+import { isScratchId, scratchConversationPath } from './scratch-workspace.js';
 
 export type ChatBackend = 'pi' | 'codex' | 'pi-rpc' | 'claude' | 'acp';
 
@@ -32,6 +33,7 @@ export interface ChatRecord {
   prReview?: GithubPrReviewSeed;
   forkDraft?: {text:string;attachmentIds:string[];missingAttachments:string[]};
   execution?: ChatExecution;
+  scratch?: true;
   codexThreadId?: string;
   nativeclaudeSessionId?: string;
   id: string;
@@ -55,6 +57,12 @@ export interface ChatRecord {
   startupContext?: string;
   model?: { provider: string; id: string; name: string };
   updatedAt: number;
+}
+
+/** Declared directory for offline history. Execution must still verify ownership. */
+export function declaredExecutionPath(record: ChatRecord, workspacePath: string): string {
+  return record.scratch ? scratchConversationPath(workspacePath, record.workspaceId, record.id)
+    : record.execution?.path ?? workspacePath;
 }
 
 // Desktop navigation metadata only. Hive owns workspaces/team state and each
@@ -115,6 +123,10 @@ export class ChatIndex {
   }
   save(record: ChatRecord): void {
     const existing = this.peek(record.id);
+    if (existing && (existing.scratch !== record.scratch || existing.scratch && existing.workspaceId !== record.workspaceId))
+      throw new SessionIdentityError('SCRATCH_IDENTITY_CONFLICT', 'A Scratch conversation’s directory ownership cannot be changed.');
+    if (record.scratch !== undefined && !isScratchRecord(record))
+      throw new SessionIdentityError('SCRATCH_IDENTITY_CONFLICT', 'Invalid Scratch conversation identity.');
     if (existing?.handoff && JSON.stringify(existing.handoff) !== JSON.stringify(record.handoff))
       throw new SessionIdentityError('SESSION_HANDOFF_CONFLICT', 'A fixed historical handoff cannot be changed.');
     if (existing && !isDeepStrictEqual(existing.nativeImport, record.nativeImport))
@@ -188,6 +200,11 @@ function normalizeIdentity(record: ChatRecord): ChatRecord {
   return {...record, identityState: record.identityState === 'new' ? 'new' : 'unknown'};
 }
 
+function isScratchRecord(record: Record<string, unknown> | ChatRecord): boolean {
+  return record.scratch === true && isScratchId(record.id) && isScratchId(record.workspaceId)
+    && !record.execution && !record.nativeImport && !record.handoff && !record.lineage;
+}
+
 function isChatRecord(value: unknown): value is ChatRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
@@ -197,6 +214,7 @@ function isChatRecord(value: unknown): value is ChatRecord {
   }
   if (typeof record.id !== 'string' || typeof record.workspaceId !== 'string' || typeof record.title !== 'string'
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
+  if (record.scratch !== undefined && !isScratchRecord(record)) return false;
   if (record.profile !== undefined && (!record.profile || typeof record.profile !== 'object' || typeof (record.profile as Record<string, unknown>).id !== 'string' || !(record.profile as Record<string, unknown>).id || !Number.isSafeInteger((record.profile as Record<string, unknown>).revision) || ((record.profile as Record<string, unknown>).revision as number) < 1)) return false;
   if (record.legacyConfiguration !== undefined && record.legacyConfiguration !== true) return false;
   if (record.nativeImport !== undefined) {

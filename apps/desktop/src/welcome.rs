@@ -113,9 +113,10 @@ impl HiveApp {
             .find(|ws| Some(&ws.id) == self.workspace.as_ref())
             .cloned();
         let execution = self.session.as_ref().and_then(|session| session.execution.as_ref());
+        let scratch = self.session.as_ref().is_some_and(|session| session.scratch);
         let execution_path = execution.map(|execution| execution.path.clone())
             .or_else(|| self.session.as_ref().and_then(|session| session.execution_path.clone()))
-            .or_else(|| active_project.as_ref().map(|workspace| workspace.path.clone()));
+            .or_else(|| active_project.as_ref().filter(|_| !scratch).map(|workspace| workspace.path.clone()));
         let branch = execution.map(|execution| execution.branch.clone())
             .or_else(|| execution_path.as_deref().and_then(cached_git_branch));
         let git_hint = crate::keybindings::hint(
@@ -128,7 +129,9 @@ impl HiveApp {
             .map(|path| {
                 format!(
                     "{} · {}\n{}",
-                    tr(if execution.is_some() {
+                    tr(if scratch {
+                        "临时会话目录"
+                    } else if execution.is_some() {
                         "独立工作树执行目录"
                     } else {
                         "会话执行目录"

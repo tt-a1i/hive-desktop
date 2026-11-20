@@ -40,7 +40,8 @@ import { CodexModes, CodexSavedModeError, type CodexModeReplacement } from './ag
 import { CodexTransport } from './agents/codex-transport.js';
 import { type ExternalPiSessionHandle } from './agents/external-pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
-import { ChatIndex, SessionIdentityError, type ChatRecord, type ChatBackend } from './chat-index.js';
+import { ChatIndex, SessionIdentityError, declaredExecutionPath, type ChatRecord, type ChatBackend } from './chat-index.js';
+import { createScratchConversation, isScratchWorkspace, validateScratchConversation } from './scratch-workspace.js';
 import { externalPiBranch, externalPiMessage, piHistoryMessageId, readPiTranscript, verifyPiTranscriptIdentity } from './agents/external-pi-history.js';
 import { PiHistoryPages } from './agents/pi-history-pages.js';
 import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
@@ -434,7 +435,8 @@ export class Chats implements StructuredSessionPort {
     return {id: record.id, title: record.title, workspaceId: record.workspaceId, backend: record.backend, ...(record.profile && {profile: record.profile}), ...(record.legacyConfiguration && {legacyConfiguration: true as const}),
       pinned: !!record.pinned, archived: !!record.archived, updatedAt: record.updatedAt,
       ...(record.customTitle !== undefined && {customTitle: record.customTitle}), ...(record.agentId && {agentId: record.agentId}),
-      ...(record.execution && {execution: {kind: record.execution.kind, path: record.execution.path, branch: record.execution.branch}}), executionPath,
+      ...(record.execution && {execution: {kind: record.execution.kind, path: record.execution.path, branch: record.execution.branch}}),
+      ...(record.scratch && {scratch: true as const}), executionPath,
       ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.handoff&&{handoff:{...record.handoff}}), identityState: record.identityState ?? 'unknown'};
   }
   async dispatchSession(workspaceId: string, dispatchId: unknown, sourceAgentId?: unknown) {
@@ -547,6 +549,10 @@ export class Chats implements StructuredSessionPort {
       } catch { /* Missing or moved imports cannot execute from the workspace root. */ }
       throw new SessionIdentityError('NATIVE_IMPORT_SOURCE_UNAVAILABLE', 'The imported conversation’s original project directory is unavailable.');
     }
+    if (record.scratch) {
+      try { return await validateScratchConversation(this.dataDir, workspace, record.id); }
+      catch { throw new SessionIdentityError('SCRATCH_FOLDER_UNAVAILABLE', 'The original Scratch conversation folder is missing or was replaced.'); }
+    }
     if (!record.execution) return workspace.path;
     try {
       const {record: owned, creation} = await readWorktreeIntent(this.dataDir, record.id);
@@ -569,7 +575,7 @@ export class Chats implements StructuredSessionPort {
     const record = this.index.get(id);
     this.assertWorkspaceAvailable(record.workspaceId);
     const workspace = await this.workspace(record.workspaceId);
-    return {sessionId: id, workspaceId: record.workspaceId, path: await this.executionPath(record, workspace), kind: record.execution?.kind ?? 'project'};
+    return {sessionId: id, workspaceId: record.workspaceId, path: await this.executionPath(record, workspace), kind: record.scratch ? 'scratch' : record.execution?.kind ?? 'project'};
   }
   async executionDirectory(workspaceId: string, sessionId?: unknown): Promise<string> {
     this.assertWorkspaceAvailable(workspaceId);
@@ -1187,7 +1193,7 @@ export class Chats implements StructuredSessionPort {
               claudeDirectory: join(this.sessionDir, '..', 'claude'),
               firstMatchOnly: true,
               ...(signal && {signal}),
-              ...(hit.session.backend === 'claude' && {readClaudeHistory: () => this.readProfileClaudeHistory(hit.session, hit.session.execution?.path ?? hit.workspacePath)}),
+              ...(hit.session.backend === 'claude' && {readClaudeHistory: () => this.readProfileClaudeHistory(hit.session, declaredExecutionPath(hit.session, hit.workspacePath))}),
               ...(live && !live.failure && !live.cleanup && {liveHistory: live.handle.snapshot(), liveBusy: live.queue.busy}),
             });
           } catch (error) {
@@ -1570,7 +1576,7 @@ export class Chats implements StructuredSessionPort {
       if (!handle.hasContext('hive-desktop')) {
         await handle.addContext(toolGuidance, 'hive-desktop');
       }
-      if (record.execution && !handle.hasContext('hive-desktop-execution')) {
+      if ((record.execution || record.scratch) && !handle.hasContext('hive-desktop-execution')) {
         await handle.addContext(this.executionGuidance(workspace, executionPath), 'hive-desktop-execution');
       }
       if (record.backend === 'pi-rpc') {
@@ -1607,6 +1613,7 @@ export class Chats implements StructuredSessionPort {
         ...(handle.steer && {steer: (item: import('./delivery-queue.js').DeliveryItem) => handle.steer!(item.text, {deliveryId: item.id, presentation: item.presentation!})}),
         execute: async item => {const release=this.executionMutations?.begin(record.workspaceId);try{
           await this.assertHistoryReady(this.index.get(record.id));await this.initializationReady(this.index.get(record.id));
+          if (record.scratch) await this.executionDirectory(record.workspaceId, record.id);
           const h=this.index.get(record.id).handoff;
           if(h&&this.handoffDeliveries.get(record.id)?.status!=='consumed'&&item.triggerTurn&&item.presentation?.origin==='user'&&!item.contextRef)throw new HandoffError('HANDOFF_CONTEXT_PENDING','The earliest pending user input must carry its historical context before it may execute');
           if(item.contextRef&&(!h||h.operationId!==item.contextRef.operationId||h.snapshotHash!==item.contextRef.snapshotHash||item.presentation?.origin!=='user'))throw new HandoffError('HANDOFF_CONTEXT_CONFLICT','The queued input does not match this frozen context');
@@ -1749,7 +1756,7 @@ export class Chats implements StructuredSessionPort {
       } else if (record.backend === 'claude' && record.nativeclaudeSessionId) {
         const metadata = readClaudeMetadata(join(this.sessionDir, '..', 'claude'), record.nativeclaudeSessionId);
         const projection = new ClaudeProjection(() => metadata);
-        const messages = await this.readProfileClaudeHistory(record, record.execution?.path ?? workspace.path, signal);
+        const messages = await this.readProfileClaudeHistory(record, declaredExecutionPath(record, workspace.path), signal);
         for (let i = 0; i < messages.length; i++) {
           if (i > 0 && i % 1024 === 0) await setImmediate(undefined, {signal});
           projection.put(messages[i]!);
@@ -1771,7 +1778,7 @@ export class Chats implements StructuredSessionPort {
     return JSON.stringify([record.workspaceId, record.id, record.backend, record.profile,
       record.sessionFile, record.piSessionId, record.externalPiSessionId, record.codexThreadId,
       record.nativeclaudeSessionId, record.acpSessionId, record.nativeImport,
-      record.originAgentId ?? record.agentId, record.execution?.path ?? workspace.path]);
+      record.originAgentId ?? record.agentId, declaredExecutionPath(record, workspace.path)]);
   }
 
   private async openIndexedSavedHistory(record: ChatRecord, workspace: WorkspaceSummary, snapshot?: string): Promise<{
@@ -1836,7 +1843,7 @@ export class Chats implements StructuredSessionPort {
         };
       }
     } else if (record.backend === 'claude' && record.nativeclaudeSessionId) {
-      const location = await this.profileClaudeHistoryLocation(record, record.execution?.path ?? workspace.path);
+      const location = await this.profileClaudeHistoryLocation(record, declaredExecutionPath(record, workspace.path));
       const source = await openClaudeSavedHistory({
         ...location, ...context, scope,
         cacheDirectory: claudeHistoryCacheDirectory(this.dataDir, record.workspaceId),
@@ -1890,7 +1897,7 @@ export class Chats implements StructuredSessionPort {
       ? this.index.snapshotVersion(record.id) : undefined;
     const acpVersion = allowOfflineQueueEdits && this.canEditOfflineAcp(record) ? this.index.snapshotVersion(record.id) : undefined;
     const workspace = await this.workspace(record.workspaceId);
-    const executionPath = record.nativeImport?.cwd ?? record.execution?.path ?? workspace.path;
+    const executionPath = record.nativeImport?.cwd ?? declaredExecutionPath(record, workspace.path);
     const indexed = indexedHistory ?? (includeHistory && historyOptions ? await this.indexedSavedHistory(record, workspace, historyOptions) : undefined);
     const saved = includeHistory && !indexed ? await this.readSavedHistory(record, workspace) : undefined;
     const {history = [], historyMessageIds = []} = indexed?.page ?? saved ?? {};
@@ -1939,6 +1946,7 @@ export class Chats implements StructuredSessionPort {
   private async require(id: string, browse = false, explicitDesktopConnect = false): Promise<LiveChat> {
     if (this.closing) throw new Error('Chat runtime is closing');
     const requested=this.index.get(id);
+    if (requested.scratch && this.live.has(id)) await this.executionDirectory(requested.workspaceId, id);
     if (browse && requested.nativeImport && !explicitDesktopConnect && !this.live.has(id))
       throw new SessionIdentityError('NATIVE_IMPORT_PASSIVE', 'Continue the imported conversation before reading live backend settings.');
     if(requested.rewindOperationId) await this.assertHistoryReady(requested);
@@ -2188,7 +2196,7 @@ export class Chats implements StructuredSessionPort {
       }else if(record.backend==='acp'&&record.sessionFile&&record.acpSessionId){const history=await AcpHistory.load(record.sessionFile);if(history?.state.sessionId===record.acpSessionId){native=record.acpSessionId;completed=Object.entries(history.state.deliveries).filter(([,status])=>status==='completed').map(([id])=>id);}}
       else if(record.backend==='claude'&&record.nativeclaudeSessionId&&record.profile){
         const profile=await this.profiles.getRef(record.profile,'claude'),workspace=await this.workspace(record.workspaceId);
-        const messages=await readClaudeSessionMessages(record.nativeclaudeSessionId,record.execution?.path??workspace.path,nativeProfileLaunch(profile).env,this.closeAbort.signal);
+        const messages=await readClaudeSessionMessages(record.nativeclaudeSessionId, declaredExecutionPath(record, workspace.path),nativeProfileLaunch(profile).env,this.closeAbort.signal);
         const ids=new Set(messages.map(message=>message.uuid)),metadata=readClaudeMetadata(join(this.sessionDir,'..','claude'),record.nativeclaudeSessionId);
         native=record.nativeclaudeSessionId;completed=metadata.completed.filter(item=>ids.has(item.userUuid)&&ids.has(item.assistantUuid)).map(item=>item.deliveryId);
       }
@@ -2265,7 +2273,13 @@ export class Chats implements StructuredSessionPort {
     queue.prepareNextUserContext();
   }
   private async saveNewRecord(workspace: WorkspaceSummary, record: ChatRecord, options: {profile?: AgentProfileRef; isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string; prStart?: {oid: string; commonDir: string}}) {
-    if (options.isolation === 'worktree') {
+    if (await isScratchWorkspace(this.dataDir, workspace.path)) {
+      if (options.isolation === 'worktree') throw new Error('Scratch conversations do not use Git worktrees');
+      await createScratchConversation(this.dataDir, workspace, record.id);
+      record.scratch = true;
+      this.assertWorkspaceAvailable(record.workspaceId);
+      this.closeAbort.signal.throwIfAborted();
+    } else if (options.isolation === 'worktree') {
       const setup = await this.initialization?.capture(record.workspaceId, options.skipSetup, options.expectedSetupRevision);
       const creation: WorktreeCreation = {version: setup ? 2 : 1, ...(setup && {setup}), workspaceId: record.workspaceId, backend: record.backend, ...(record.profile && {profile: record.profile}), ...(record.legacyConfiguration && {legacyConfiguration: true as const}),
         identityState: record.originAgentId ? 'known' : 'new', ...(record.prReview && {prReview: record.prReview}), ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.model && {model: record.model})};
@@ -2320,6 +2334,7 @@ export class Chats implements StructuredSessionPort {
           !isDeepStrictEqual(existing.profile, selected.ref) || existing.execution || existing.nativeImport || existing.handoff) {
           throw new Error('The Scratch request identity already belongs to a different conversation.');
         }
+        if (existing.scratch) await this.executionPath(existing, workspace);
         return existing;
       }
       return this.saveNewRecord(workspace, {id: requestId, workspaceId: workspace.id, backend,
@@ -2623,7 +2638,7 @@ export class Chats implements StructuredSessionPort {
             && ['hive-context', 'hive-desktop', 'hive-desktop-execution', 'hive-desktop-external', 'hive-desktop-claude'].includes(message.customType)));
         if (options?.triggerTurn === false || recoveringWithoutWakeup) {
           if (images.length) throw new TypeError('不触发模型回合的投递暂不支持图片。');
-          const startupContext = record.execution ? `${text}\n\n${this.executionGuidance(input.workspace, chat.executionPath)}` : text;
+          const startupContext = record.execution || record.scratch ? `${text}\n\n${this.executionGuidance(input.workspace, chat.executionPath)}` : text;
           this.index.save({ ...this.index.get(id), startupContext });
           await chat.handle.addContext(startupContext);
         } else {
@@ -2666,6 +2681,7 @@ export class Chats implements StructuredSessionPort {
   private async activationAvailable(id: string) {
     await this.initializationReady(this.index.get(id));
     const record = await this.runnableIdentity(this.index.get(id));
+    if (record.scratch) await this.executionDirectory(record.workspaceId, record.id);
     if(record.handoff&&this.handoffDeliveries.get(id)?.status!=='consumed'){
       const eligibility=await this.handoffRuntime!.inspect(record.workspaceId,record.handoff.sourceSessionId,{driver:record.backend,profile:record.profile!},id);
       if(!eligibility.eligible)throw new SessionIdentityError('HANDOFF_RESPONSIBILITY_BUSY',eligibility.blockers.map(b=>b.message).join('; '));

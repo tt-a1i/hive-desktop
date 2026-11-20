@@ -142,7 +142,7 @@ impl FileReveal {
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 struct Match {
     path: String,
     line: Option<usize>,
@@ -165,6 +165,44 @@ struct Preview {
     text: Option<TextPages>,
     error: Option<FileError>,
     scroll: ScrollHandle,
+}
+
+struct ExpandedFilePreview {
+    browser: WeakEntity<FileBrowser>,
+    scope: Scope,
+    scope_generation: u64,
+    selection: Match,
+    text: TextPages,
+    scroll: ScrollHandle,
+    focus: FocusHandle,
+}
+
+fn preview_text(id: &'static str, text: &TextPages, cx: &App) -> Stateful<Div> {
+    let appearance = cx.global::<crate::appearance::Appearance>();
+    let font = appearance
+        .code_font_family()
+        .font_family_name()
+        .map(SharedString::from)
+        .unwrap_or_else(|| Theme::global(cx).mono_font_family.clone());
+    let content = if text.full.is_empty() {
+        tr("此文件为空").into()
+    } else {
+        text.visible.clone()
+    };
+    text_reading::selectable_text(id, content)
+        .text_sm()
+        .font_family(font)
+}
+
+fn step_preview(text: &mut TextPages, scroll: &mut ScrollHandle, step: isize) -> bool {
+    let changed = text
+        .page
+        .checked_add_signed(step)
+        .is_some_and(|page| text.show(page));
+    if changed {
+        *scroll = ScrollHandle::new();
+    }
+    changed
 }
 
 #[derive(Default)]
@@ -388,6 +426,7 @@ pub(crate) struct FileBrowser {
     search_task: Option<Task<()>>,
     preview: Option<Preview>,
     preview_task: Option<Task<()>>,
+    expanded_preview: Option<WeakEntity<ExpandedFilePreview>>,
     git_generation: u64,
     git_status: TreeGitStatus,
     git_task: Option<Task<()>>,
@@ -581,6 +620,7 @@ impl HiveApp {
                 search_task: None,
                 preview: None,
                 preview_task: None,
+                expanded_preview: None,
                 git_generation: 0,
                 git_status: TreeGitStatus::Idle,
                 git_task: None,
@@ -1356,14 +1396,69 @@ impl FileBrowser {
         let Some(text) = &mut preview.text else {
             return;
         };
-        if text
-            .page
-            .checked_add_signed(step)
-            .is_some_and(|page| text.show(page))
-        {
-            preview.scroll = ScrollHandle::new();
+        if step_preview(text, &mut preview.scroll, step) {
             cx.notify();
         }
+    }
+
+    fn expand_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.current(cx)
+            || self
+                .expanded_preview
+                .as_ref()
+                .and_then(WeakEntity::upgrade)
+                .is_some()
+            || self.docked && window.has_active_dialog(cx)
+        {
+            return;
+        }
+        let Some(preview) = &self.preview else {
+            return;
+        };
+        let Some(text) = &preview.text else {
+            return;
+        };
+        let Some(scope) = self.scope.clone() else {
+            return;
+        };
+        let browser = cx.entity();
+        let app = self.app.clone();
+        let selection = preview.selection.clone();
+        let text = text.clone();
+        let scroll = ScrollHandle::new();
+        scroll.set_offset(preview.scroll.offset());
+        let scope_generation = self.scope_generation;
+        let reader = cx.new(|cx| {
+            cx.observe(&browser, |_, _, cx| cx.notify()).detach();
+            if let Some(app) = app.upgrade() {
+                cx.observe(&app, |_, _, cx| cx.notify()).detach();
+            }
+            ExpandedFilePreview {
+                browser: browser.downgrade(),
+                scope,
+                scope_generation,
+                selection,
+                text,
+                scroll,
+                focus: cx.focus_handle(),
+            }
+        });
+        self.expanded_preview = Some(reader.downgrade());
+        let focus = reader.read(cx).focus.clone();
+        // Keep the Files dialog mounted below the expanded reader in narrow windows.
+        window.open_dialog(cx, move |dialog, window, _| {
+            dialog
+                .title(tr("文件预览"))
+                .w((window.viewport_size().width - px(48.)).min(px(1120.)))
+                .on_ok(|_, _, _| false)
+                .child(reader.clone())
+        });
+        let dialog_focus = window.focused(cx);
+        window.on_next_frame(move |window, cx| {
+            if dialog_focus.is_some_and(|dialog| dialog.contains_focused(window, cx)) {
+                focus.focus(window, cx);
+            }
+        });
     }
 
     fn file_row(&self, hit: Match, label: String, active: usize, cx: &Context<Self>) -> Button {
@@ -1660,14 +1755,35 @@ impl FileBrowser {
                 .gap_2()
                 .child(div().min_w_0().truncate().text_sm().child(path.clone()))
                 .child(
-                    Button::new("browser-reload-preview")
-                        .ghost()
-                        .small()
-                        .label(tr("重新读取"))
-                        .disabled(preview.loading)
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.select(selection.clone(), cx)),
-                        ),
+                    h_flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            Button::new("browser-reload-preview")
+                                .ghost()
+                                .small()
+                                .label(tr("重新读取"))
+                                .disabled(preview.loading)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.select(selection.clone(), cx)
+                                })),
+                        )
+                        .when(preview.text.is_some(), |actions| {
+                            actions.child(
+                                Button::new("browser-expand-preview")
+                                    .custom(palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .size(px(24.))
+                                    .icon(Glyph::Maximize2)
+                                    .tooltip(tr("展开预览"))
+                                    .accessibility_label(tr("展开预览"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.expand_preview(window, cx)
+                                    })),
+                            )
+                        }),
                 ),
         );
         if preview.loading {
@@ -1692,26 +1808,11 @@ impl FileBrowser {
         let Some(text) = &preview.text else {
             return panel;
         };
-        let appearance = cx.global::<crate::appearance::Appearance>();
-        let font = appearance
-            .code_font_family()
-            .font_family_name()
-            .map(SharedString::from)
-            .unwrap_or_else(|| Theme::global(cx).mono_font_family.clone());
-        let content = if text.full.is_empty() {
-            tr("此文件为空").into()
-        } else {
-            text.visible.clone()
-        };
         panel
             .child(
                 text_reading::region("browser-preview".into(), path, &preview.scroll, height, cx)
                     .when(self.docked, |region| region.flex_1().min_h_0())
-                    .child(
-                        text_reading::selectable_text("browser-text-preview", content)
-                            .text_sm()
-                            .font_family(font),
-                    ),
+                    .child(preview_text("browser-text-preview", text, cx)),
             )
             .when(text.count() > 1, |panel| {
                 panel.child(
@@ -1742,6 +1843,111 @@ impl FileBrowser {
                         ),
                 )
             })
+    }
+}
+
+impl ExpandedFilePreview {
+    fn current(&self, cx: &App) -> bool {
+        self.browser.upgrade().is_some_and(|browser| {
+            let browser = browser.read(cx);
+            browser.scope_generation == self.scope_generation
+                && browser.scope.as_ref() == Some(&self.scope)
+                && browser.current(cx)
+                && browser.preview.as_ref().is_some_and(|preview| {
+                    preview.selection == self.selection && preview.text.is_some()
+                })
+        })
+    }
+
+    fn page(&mut self, step: isize, cx: &mut Context<Self>) {
+        if self.current(cx) && step_preview(&mut self.text, &mut self.scroll, step) {
+            cx.notify();
+        }
+    }
+}
+
+impl Render for ExpandedFilePreview {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let back = Button::new("file-reader-back")
+            .outline()
+            .small()
+            .label(tr("返回文件"))
+            .on_click(|_, window, cx| window.close_dialog(cx));
+        let view = v_flex().w_full().min_w_0().gap_3();
+        if !self.current(cx) {
+            return view
+                .child(
+                    div()
+                        .id("file-reader-stale")
+                        .role(Role::Status)
+                        .child(tr("项目、会话或后台连接已变化，请关闭后重新选择。")),
+                )
+                .child(back);
+        }
+        let path = self.selection.line.map_or_else(
+            || self.selection.path.clone(),
+            |line| format!("{}:{line}", self.selection.path),
+        );
+        let height = (window.viewport_size().height - px(194.)).max(px(112.));
+        view.child(
+            h_flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .child(text_reading::selectable_text("file-reader-source", path.clone()).text_sm())
+                .child(back),
+        )
+        .child(
+            text_reading::region("file-reader".into(), path, &self.scroll, height, cx)
+                .track_focus(&self.focus)
+                .child(preview_text("file-reader-text", &self.text, cx)),
+        )
+        .child(
+            h_flex()
+                .items_center()
+                .justify_end()
+                .gap_2()
+                .flex_wrap()
+                .when_some(self.selection.line, |actions, line| {
+                    actions.child(
+                        Button::new("file-reader-jump-to-match")
+                            .ghost()
+                            .small()
+                            .label(tr("跳到搜索命中行"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if this.current(cx) {
+                                    this.text.show_line(line);
+                                    this.scroll = ScrollHandle::new();
+                                    cx.notify();
+                                }
+                            })),
+                    )
+                })
+                .when(self.text.count() > 1, |actions| {
+                    actions
+                        .child(
+                            Button::new("file-reader-previous-page")
+                                .ghost()
+                                .small()
+                                .label(tr("上一页"))
+                                .disabled(self.text.page == 0)
+                                .on_click(cx.listener(|this, _, _, cx| this.page(-1, cx))),
+                        )
+                        .child(div().text_xs().child(format!(
+                            "{} / {}",
+                            self.text.page + 1,
+                            self.text.count()
+                        )))
+                        .child(
+                            Button::new("file-reader-next-page")
+                                .ghost()
+                                .small()
+                                .label(tr("下一页"))
+                                .disabled(self.text.page + 1 >= self.text.count())
+                                .on_click(cx.listener(|this, _, _, cx| this.page(1, cx))),
+                        )
+                }),
+        )
     }
 }
 
@@ -2044,9 +2250,10 @@ impl Render for FileBrowser {
 mod tests {
     use super::{
         Directory, DirectoryEntry, FILE_TREE_STATUS_LIMIT, FileError, FileReveal,
-        FileTreeExpansions, RevealStep, Scope, TreeRow, TreeScope, TreeSource, dock_width, json,
-        px, unrequested_expansions, visible_tree,
+        FileTreeExpansions, RevealStep, Scope, TextPages, TreeRow, TreeScope, TreeSource,
+        dock_width, json, px, step_preview, unrequested_expansions, visible_tree,
     };
+    use gpui_kit::{ScrollHandle, point};
     use std::collections::{HashMap, HashSet};
 
     #[test]
@@ -2146,6 +2353,33 @@ mod tests {
         };
         assert!(worktree != reopened);
         assert!(worktree != project);
+    }
+
+    #[test]
+    fn expanded_preview_pages_independently_and_can_return_to_the_exact_hit() {
+        let sample = (1..=640)
+            .map(|line| format!("Fixture line {line:03}\n"))
+            .collect::<String>();
+        let mut preview = TextPages::new(sample.into());
+        preview.show_line(350);
+        let preview_page = preview.page;
+        let preview_scroll = ScrollHandle::new();
+        let previous_offset = point(px(0.), px(-42.));
+        preview_scroll.set_offset(previous_offset);
+
+        let mut expanded = preview.clone();
+        let mut expanded_scroll = ScrollHandle::new();
+        expanded_scroll.set_offset(preview_scroll.offset());
+        assert_eq!(expanded.first_line, 350);
+        assert!(expanded.visible.starts_with("Fixture line 350\n"));
+        assert!(step_preview(&mut expanded, &mut expanded_scroll, 1));
+        assert_eq!(expanded.first_line, 513);
+        assert_eq!(expanded_scroll.offset(), point(px(0.), px(0.)));
+        assert_eq!(preview.page, preview_page);
+        assert_eq!(preview_scroll.offset(), previous_offset);
+        expanded.show_line(350);
+        assert_eq!(expanded.page, preview_page);
+        assert_eq!(expanded.visible, preview.visible);
     }
 
     #[test]

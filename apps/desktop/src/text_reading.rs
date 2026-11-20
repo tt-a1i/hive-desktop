@@ -68,6 +68,7 @@ pub(crate) fn selectable_text(
 const PAGE_BYTES: usize = 32 * 1024;
 const PAGE_LINES: usize = 256;
 
+#[derive(Clone)]
 pub(crate) struct TextPages {
     pub full: SharedString,
     pub visible: SharedString,

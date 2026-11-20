@@ -114,9 +114,9 @@ function exact(params: Record<string, unknown>, allowed: string[]) {
 }
 function navigationSearchSession(session: ChatRecord) {
   const {id, title, customTitle, pinned, archived, updatedAt, workspaceId, agentId, originAgentId, identityState,
-    backend, execution, profile} = session;
+    backend, execution, scratch, profile} = session;
   return {id, title, customTitle, pinned, archived, updatedAt, workspaceId, agentId, originAgentId, identityState,
-    backend, execution, profile};
+    backend, execution, scratch, profile};
 }
 function viewRevision(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1)

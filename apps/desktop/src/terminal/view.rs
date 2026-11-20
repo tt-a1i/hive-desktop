@@ -168,7 +168,7 @@ impl RenderOnce for TerminalDrawer {
                                     .compact().xsmall().h(px(22.)).px_2().rounded_md()
                                     .label(tr(label)).selected(self.mode == mode)
                                     .disabled(mode == TerminalMode::Session && !self.has_session)
-                                    .tooltip(tr("自动选择：工作树会话使用独立终端，其他会话使用工作区终端"))
+                                    .tooltip(tr("自动模式会跟随独立会话目录，普通会话使用工作区终端"))
                                     .on_click(move |_, _, cx| { app.update(cx, |this, cx| this.select_terminal_mode(mode, cx)); })
                             }))
                             .child(div().w(px(1.)).h(px(14.)).mx_0p5().bg(Color::Divider.get(cx)))

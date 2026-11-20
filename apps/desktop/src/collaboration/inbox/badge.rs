@@ -26,7 +26,7 @@ pub(super) enum BadgeItem {
 }
 
 impl BadgeItem {
-    fn workspace(&self) -> &str {
+    pub(super) fn workspace(&self) -> &str {
         match self {
             Self::Question { workspace, .. } | Self::UnreadSession { workspace, .. } => workspace,
         }
@@ -222,24 +222,29 @@ impl HiveApp {
         {
             return false;
         }
-        let active_project = |id: &str| {
+        self.unseen_global_inbox_items().next().is_some()
+    }
+
+    pub(super) fn unseen_global_inbox_items(&self) -> impl Iterator<Item = BadgeItem> + '_ {
+        let badge = &self.collaboration.inbox_badge;
+        let active_project = move |id: &str| {
             self.workspace_removing.as_deref() != Some(id)
                 && self.workspaces.iter().any(|project| project.id == id)
         };
         badge
             .pending
             .iter()
-            .any(|item| active_project(item.workspace()) && !badge.sees(item))
-            || (!self.unread.is_empty()
-                && self
-                    .sessions
+            .filter(move |_| badge.connection == self.connection_generation)
+            .cloned()
+            .chain(
+                self.sessions
                     .iter()
                     .chain(self.project_sessions.values().flatten())
-                    .any(|session| {
+                    .filter_map(move |session| {
                         if !self.unread.contains(&session.id)
                             || !active_project(&session.workspace_id)
                         {
-                            return false;
+                            return None;
                         }
                         let interactions =
                             self.inbox_interactions(std::slice::from_ref(session), &self.members);
@@ -247,8 +252,9 @@ impl HiveApp {
                             .and_then(|entry| {
                                 BadgeItem::from_entry(&session.workspace_id, &entry, self)
                             })
-                            .is_some_and(|item| !badge.sees(&item))
-                    }))
+                    }),
+            )
+            .filter(move |item| active_project(item.workspace()) && !badge.sees(item))
     }
 
     pub(crate) fn start_global_inbox_badge(cx: &mut Context<Self>) {

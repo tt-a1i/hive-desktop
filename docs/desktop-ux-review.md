@@ -68,8 +68,22 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 从文件树分别打开项目目录和工作树 A、B 的同名 `docs/nested/note.txt`，三个 Diff 各显示本范围的内容。A 从文件浏览弹窗发起，另两个使用停靠面板。在 112 条 Git 改动的工作树中，也能打开第二页的 `page-109.txt`，并自动选择暂存比较。证据在 `.artifacts/tree-to-diff-qa/receipt.md` 和 `paging-receipt.md`。
 - 194 项桌面 Rust 测试通过，1 项原有忽略。TypeScript 类型检查、运行时构建和 Windows x64 MSVC 交叉检查通过。macOS 验收使用独立测试项目和协议对端，未调用模型服务。Windows 原生界面待复验。
 
+## 2026-11-21 第六批
+
+本轮从 Hive Desktop `02f9d63` 开始。参考默认分支为 T3 Code `667d8a1`、Cindy `79d93b1`、Beluga `45a484b`，Hive 上游仍是 `18861b8`。
+
+- **新建 Scratch 对话各有自己的执行目录。** 欢迎页和普通新建入口都分配独立目录，Agent、文件浏览和自动终端跟随会话。明确选择工作区终端时仍进入 Scratch 根目录。旧会话继续使用原目录，移除工作区保留文件。目录缺失或被替换时会提示错误。 [T3 Code 无项目对话](https://github.com/pingdotgg/t3code/blob/667d8a120aa72e8c37795c9e391596acb141170b/docs/user/thread-sidebar.md#L19-L33)
+- **长文件可展开到更大的阅读窗口。** 点开路径或正文命中的预览后可以展开，原行位置或当前页一并带入。展开后可翻页或回到命中行，关闭后回到原筛选、选中文件、页码和滚动位置。 [Beluga 文件阅读](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L104-L116)
+- **单独查看跨项目的新事项。** 收件箱内可打开新事项列表，再返回保存的项目和阅读位置。事项进入当前窗口的可见区域才会确认看过，在新事项列表中仍可继续处理它。 [Cindy 视图规则](https://github.com/makecindy/cindy/blob/79d93b160b97f7617f02a8821bfde976fa02f4b5/docs/product-rules/task-inbox.md#L14-L23)
+
+- macOS 在同一 Scratch 工作区新建两段 External Pi 会话。发送前没有提交提示。两段会话各自写入同名文件，读回的内容不同。退出重开后，同一个工作区里的两段历史分别恢复。另用运行时验证旧目录、并发和冷启动重试、附件范围、目录被替换及移除工作区后保留文件。证据在 `.artifacts/scratch-two-qa/desktop-receipt.json` 和 `.artifacts/scratch-conversations-native/runtime-product-check.json`。
+- macOS 从两段 Scratch 对话分别打开自动终端，用 `pwd -P` 验证各自的执行目录。切到工作区终端后，`pwd -P` 返回 Scratch 根目录。证据在 `.artifacts/scratch-two-qa/terminal-receipt.json`。
+- macOS 从 700 行文件的第 350 行正文命中展开阅读，翻到第 513 行开头的一页，回到命中位置，再返回保留查询和预览的文件面板。切到工作树后，同名文件显示工作树自己的内容。每个文件只读一次，展开、翻页和返回均沿用已加载内容。另在 900 像素窄窗中从文件树打开、展开预览并返回，选中文件和滚动位置保持。证据在 `.artifacts/content-preview-qa/receipt.md`。
+- macOS 在 Beacon 项目收件箱滚动到较早的事项，关闭期间向 Atlas 加入新问题。查看新事项时能打开准确的 Atlas 派单，返回时恢复 Beacon 筛选，原事项按钮的垂直坐标相同。证据在 `.artifacts/inbox-review-qa/receipt.md`。
+- 197 项桌面 Rust 测试通过，1 项原有忽略。运行时构建、TypeScript 检查、Scratch 和会话终端专项回归、Windows x64 MSVC 交叉类型检查均通过。macOS 实窗使用隔离测试数据和受控协议对端。Windows 原生交互待复验。
+
 ## 接下来优先检查
 
-- **多段无项目对话的文件各自保留。** 当前 Scratch 目录由工作区内会话共享。用两段无项目对话生成同名文件，验证各自执行目录、文件浏览和冷恢复。对端和验证夹具已用两个独立测试目录预检，证据在 `.artifacts/scratch-conversations-native`。 [T3 Code 对话目录](https://github.com/pingdotgg/t3code/blob/667d8a120aa72e8c37795c9e391596acb141170b/apps/server/src/project/ManagedProjectFolders.ts#L343-L367)
-- **长文件可离开窄侧栏继续阅读。** 从工作树正文搜索命中某一行，并打开更大的预览，检查路径、行位置和返回文件树时的选中项。当前预览在文件面板中分页。 [Beluga 文件行操作](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L242-L252)
-- **从入口提示更快找到新事项。** 先在长收件箱中保留一个项目和阅读位置，再向另一个项目加入需要答复的问题。新增入口提示已能告知有新事项，继续检查怎样从恢复视图快速找到提示来源。 [Cindy 视图与筛选](https://github.com/makecindy/cindy/blob/48acd5fff52ffcd9892a8dc9759e8fe5fa31d706/docs/product-rules/task-inbox.md#L14-L23)
+- **把值得继续的 Scratch 工作整理成项目。** 用已经写出文件的 Scratch 会话验证原地提升为项目的规划，保留 Agent 所用的目录、源会话和附件来源。评估项目身份迁移过程中已有任务、历史和重试语义。 [T3 Code 转为项目](https://github.com/pingdotgg/t3code/blob/667d8a120aa72e8c37795c9e391596acb141170b/docs/user/thread-sidebar.md#L34-L38)
+- **从文件预览按实际路径打开外部编辑器。** 在同一项目的多个工作树打开同名文件，验证编辑器收到当前执行目录下的准确文件。当前「打开方式」主要作用于项目目录，文件预览缺少这个入口。 [Beluga 预览行操作](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L104-L113)
+- **把协作事项暂缓到指定日期和时间。** 当前菜单提供简单间隔和无限期。检查日历快捷项、自定义时间的显示与保存是否一致，以及重启和新输入提前唤回。 [Cindy 暂缓规则](https://github.com/makecindy/cindy/blob/79d93b160b97f7617f02a8821bfde976fa02f4b5/docs/product-rules/task-inbox.md#L75-L89)

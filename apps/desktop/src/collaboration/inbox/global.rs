@@ -31,7 +31,10 @@ use gpui_kit::{
 };
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 #[derive(Clone, Default)]
 pub(in crate::collaboration) struct GlobalInboxView {
@@ -53,6 +56,10 @@ impl ReadingPosition {
     }
 }
 
+struct NewItemsReview {
+    previous_position: Option<ReadingPosition>,
+}
+
 struct GlobalInbox {
     app: WeakEntity<HiveApp>,
     connection: u64,
@@ -64,6 +71,8 @@ struct GlobalInbox {
     row_focus: HashMap<RowId, (FocusHandle, [Subscription; 2])>,
     row_ids: Vec<Option<RowId>>,
     restore_position: Option<ReadingPosition>,
+    new_items: HashSet<BadgeItem>,
+    reviewing_new: Option<NewItemsReview>,
     dismissed: bool,
     scroll: ScrollHandle,
 }
@@ -155,6 +164,7 @@ impl HiveApp {
         let parent = cx.entity();
         let connection = self.connection_generation;
         let saved = self.collaboration.inbox_view.clone();
+        let new_items = self.unseen_global_inbox_items().collect();
         let inbox = cx.new(move |cx: &mut Context<GlobalInbox>| {
             cx.observe(&parent, |_, _, cx| cx.notify()).detach();
             GlobalInbox {
@@ -168,6 +178,8 @@ impl HiveApp {
                 row_focus: HashMap::new(),
                 row_ids: Vec::new(),
                 restore_position: saved.reading_position,
+                new_items,
+                reviewing_new: None,
                 dismissed: false,
                 scroll: ScrollHandle::new(),
             }
@@ -236,6 +248,29 @@ impl HiveApp {
 }
 
 impl GlobalInbox {
+    fn review_new_items(&mut self, cx: &mut Context<Self>) {
+        if self.reviewing_new.is_some() || self.new_items.is_empty() {
+            return;
+        }
+        let pending = self.restore_position.take();
+        self.reviewing_new = Some(NewItemsReview {
+            previous_position: self.reading_position().or(pending),
+        });
+        self.placement.clear();
+        self.scroll.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+    }
+
+    fn return_to_inbox(&mut self, cx: &mut Context<Self>) {
+        let Some(review) = self.reviewing_new.take() else {
+            return;
+        };
+        self.restore_position = review.previous_position;
+        self.placement.clear();
+        self.scroll.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+    }
+
     fn reading_position(&self) -> Option<ReadingPosition> {
         let offset = self.scroll.offset().y;
         if offset >= px(0.) {
@@ -267,9 +302,12 @@ impl GlobalInbox {
             project_filter: self.project_filter.clone(),
             show_waiting: self.show_waiting,
             show_snoozed: self.show_snoozed,
-            reading_position: self
-                .reading_position()
-                .or_else(|| self.restore_position.clone()),
+            reading_position: if let Some(review) = &self.reviewing_new {
+                review.previous_position.clone()
+            } else {
+                self.reading_position()
+                    .or_else(|| self.restore_position.clone())
+            },
         };
         if let Some(app) = self.app.upgrade() {
             app.update(cx, |app, cx| {
@@ -317,6 +355,7 @@ impl GlobalInbox {
                         this.connection = app.connection_generation;
                         this.projects.clear();
                         this.placement.clear();
+                        this.new_items.clear();
                     }
                     this.projects
                         .retain(|id, _| app.workspaces.iter().any(|project| project.id == *id));
@@ -415,11 +454,40 @@ impl GlobalInbox {
             project.action_center = Some(snapshot);
         }
         project.errors = errors;
+        if project.errors.is_empty() {
+            let now = now_ms();
+            let eligible: HashSet<_> = project
+                .entries(app)
+                .iter()
+                .filter_map(|entry| project.badge_item(app, workspace, entry, now))
+                .collect();
+            update_new_items(
+                &mut self.new_items,
+                workspace,
+                eligible,
+                &app.collaboration.inbox_badge,
+            );
+        }
         cx.notify();
     }
 }
 
 impl ProjectInbox {
+    fn badge_item(
+        &self,
+        app: &HiveApp,
+        workspace: &str,
+        entry: &Entry,
+        now: u64,
+    ) -> Option<BadgeItem> {
+        if is_snoozed(entry, &self.reminders, now) {
+            return None;
+        }
+        let item = BadgeItem::from_entry(workspace, entry, app)?;
+        (!matches!(item, BadgeItem::Question { .. }) || self.reminders.saved.is_some())
+            .then_some(item)
+    }
+
     fn entries(&self, app: &HiveApp) -> Vec<Entry> {
         let interactions = app.inbox_interactions(&self.sessions, &self.members);
         let mut rows: Vec<_> = self
@@ -487,6 +555,22 @@ fn section_title(id: &'static str, title: &str, count: usize, cx: &App) -> impl 
         .child(format!("{title} ({count})"))
 }
 
+fn row_is_visible(viewport: Bounds<Pixels>, row: Bounds<Pixels>, scroll_y: Pixels) -> bool {
+    let center = row.top() + row.size.height / 2. + scroll_y;
+    viewport.top() <= center && center < viewport.bottom()
+}
+
+fn update_new_items(
+    items: &mut HashSet<BadgeItem>,
+    workspace: &str,
+    eligible: HashSet<BadgeItem>,
+    badge: &InboxBadge,
+) {
+    // Seen rows stay in this dialog's review until they are answered, snoozed, or removed.
+    items.retain(|item| item.workspace() != workspace || eligible.contains(item));
+    items.extend(eligible.into_iter().filter(|item| !badge.sees(item)));
+}
+
 impl Render for GlobalInbox {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut body = v_flex().gap_2().min_w_0();
@@ -495,13 +579,19 @@ impl Render for GlobalInbox {
         };
         let app = parent.read(cx);
         let ready = self.is_current(self.connection, cx);
+        let reviewing = self.reviewing_new.is_some();
         let removing = app.workspace_removing.as_deref();
         let selected = selected_project(&app.workspaces, removing, self.project_filter.as_deref());
         if ready && selected.is_none() && self.project_filter.take().is_some() {
             self.restore_position = None;
-            self.placement.clear();
-            self.scroll.set_offset(point(px(0.), px(0.)));
+            if let Some(review) = self.reviewing_new.as_mut() {
+                review.previous_position = None;
+            } else {
+                self.placement.clear();
+                self.scroll.set_offset(point(px(0.), px(0.)));
+            }
         }
+        let selected = selected.filter(|_| !reviewing);
         let selected_title = selected.map(|project| display_project(project, &app.workspaces));
         let available: Vec<_> = app
             .workspaces
@@ -509,6 +599,11 @@ impl Render for GlobalInbox {
             .filter(|workspace| removing != Some(workspace.id.as_str()))
             .cloned()
             .collect();
+        self.new_items.retain(|item| {
+            available
+                .iter()
+                .any(|project| project.id == item.workspace())
+        });
         let projects: Vec<_> = available
             .iter()
             .filter(|project| selected.is_none_or(|selected| project.id == selected.id))
@@ -526,6 +621,12 @@ impl Render for GlobalInbox {
                     project
                         .entries(app)
                         .into_iter()
+                        .filter(|entry| {
+                            !reviewing
+                                || project
+                                    .badge_item(app, &workspace.id, entry, now)
+                                    .is_some_and(|item| self.new_items.contains(&item))
+                        })
                         .map(|entry| (workspace.id.as_str(), entry))
                 })
                 .collect()
@@ -552,7 +653,9 @@ impl Render for GlobalInbox {
                     .is_none_or(|project| project.errors.is_empty())
             })
         {
-            Some(if has_snoozed {
+            Some(if reviewing {
+                "暂无新事项需要关注。"
+            } else if has_snoozed {
                 "此范围内的协作事项均已暂缓。"
             } else if selected_title.is_some() {
                 "此项目暂无需要关注的协作事项。"
@@ -583,7 +686,17 @@ impl Render for GlobalInbox {
             });
         }
         let app = parent.read(cx);
-        if available.len() > 1 || has_snoozed {
+        if reviewing {
+            body = body.child(
+                Button::new("global-inbox-back-from-new")
+                    .ghost()
+                    .compact()
+                    .small()
+                    .icon(Glyph::ArrowLeft)
+                    .label(tr("返回收件箱"))
+                    .on_click(cx.listener(|this, _, _, cx| this.return_to_inbox(cx))),
+            );
+        } else if available.len() > 1 || has_snoozed || !self.new_items.is_empty() {
             let mut controls = h_flex()
                 .items_center()
                 .justify_between()
@@ -635,8 +748,6 @@ impl Render for GlobalInbox {
                             })
                         }),
                 );
-            } else {
-                controls = controls.child(div());
             }
             if has_snoozed {
                 controls = controls.child(toggle_button(self.show_snoozed).on_click(cx.listener(
@@ -647,6 +758,16 @@ impl Render for GlobalInbox {
                         cx.notify();
                     },
                 )));
+            }
+            if !self.new_items.is_empty() {
+                controls = controls.child(
+                    Button::new("global-inbox-review-new")
+                        .outline()
+                        .compact()
+                        .xsmall()
+                        .label(tr("查看新事项"))
+                        .on_click(cx.listener(|this, _, _, cx| this.review_new_items(cx))),
+                );
             }
             body = body.child(controls);
         }
@@ -693,19 +814,21 @@ impl Render for GlobalInbox {
         }
 
         let connection = self.connection;
-        let mut acknowledged = Vec::new();
+        let mut candidates = HashMap::new();
+        let awaiting_position = self.restore_position.is_some() && (!ready || loading);
         let mut render_row = |(id, entry): (&str, Entry)| {
             let project = projects.iter().find(|project| project.id == id)?;
             let row_id = RowId::for_entry(id, &entry);
             let layout_id = row_id.clone();
             let title = display_project(project, &app.workspaces);
-            let reminders = &self.projects[id].reminders;
+            let data = &self.projects[id];
+            let reminders = &data.reminders;
             let snoozed = is_snoozed(&entry, reminders, now);
-            if !snoozed
-                && let Some(item) = BadgeItem::from_entry(id, &entry, app)
+            if !awaiting_position
+                && let Some(item) = data.badge_item(app, id, &entry, now)
                 && !app.collaboration.inbox_badge.sees(&item)
             {
-                acknowledged.push(item);
+                candidates.insert(row_id.clone(), item);
             }
             let target = entry.target.clone();
             let id = id.to_owned();
@@ -813,7 +936,11 @@ impl Render for GlobalInbox {
                 None,
                 section_title(
                     "global-inbox-attention",
-                    tr("需要你关注"),
+                    if reviewing {
+                        tr("新事项")
+                    } else {
+                        tr("需要你关注")
+                    },
                     sections.attention.len(),
                     cx,
                 )
@@ -866,19 +993,12 @@ impl Render for GlobalInbox {
             ));
             items.extend(sections.snoozed.into_iter().filter_map(&mut render_row));
         }
-        if !acknowledged.is_empty() {
-            let parent = parent.downgrade();
-            cx.defer(move |cx| {
-                let _ = parent.update(cx, |app, cx| {
-                    if app.connection_generation == connection
-                        && app.collaboration.inbox_badge.acknowledge(acknowledged)
-                    {
-                        cx.notify();
-                    }
-                });
-            });
-        }
         let (ids, elements): (Vec<_>, Vec<_>) = items.into_iter().unzip();
+        let candidates: Vec<_> = ids
+            .iter()
+            .enumerate()
+            .filter_map(|(index, id)| Some((index, candidates.remove(id.as_ref()?)?)))
+            .collect();
         self.row_ids = ids;
         let restore = if ready && !loading {
             self.restore_position.take().and_then(|position| {
@@ -889,21 +1009,49 @@ impl Render for GlobalInbox {
         } else {
             None
         };
+        let restore_or_acknowledge = restore.is_some() || !candidates.is_empty();
+        let parent = parent.downgrade();
         let list = v_flex()
             .gap_2()
-            .when_some(restore, |list, (index, viewport_offset)| {
+            .when(restore_or_acknowledge, |list| {
                 let scroll = self.scroll.clone();
-                list.on_children_prepainted(move |_, window, _| {
-                    let Some(bounds) = scroll.bounds_for_item(index) else {
+                list.on_children_prepainted(move |_, window, cx| {
+                    if let Some((index, viewport_offset)) = restore
+                        && let Some(bounds) = scroll.bounds_for_item(index)
+                    {
+                        let offset = (scroll.bounds().top() + viewport_offset - bounds.top())
+                            .clamp(-scroll.max_offset().y, px(0.));
+                        if offset != scroll.offset().y {
+                            let scroll = scroll.clone();
+                            window.on_next_frame(move |window, _| {
+                                scroll.set_offset(point(px(0.), offset));
+                                window.refresh();
+                            });
+                            return;
+                        }
+                    }
+                    if !window.is_window_active() {
                         return;
-                    };
-                    let offset = (scroll.bounds().top() + viewport_offset - bounds.top())
-                        .clamp(-scroll.max_offset().y, px(0.));
-                    if offset != scroll.offset().y {
-                        let scroll = scroll.clone();
-                        window.on_next_frame(move |window, _| {
-                            scroll.set_offset(point(px(0.), offset));
-                            window.refresh();
+                    }
+                    let viewport = scroll.bounds();
+                    let scroll_y = scroll.offset().y;
+                    let visible: Vec<_> = candidates
+                        .iter()
+                        .filter_map(|(index, item)| {
+                            row_is_visible(viewport, scroll.bounds_for_item(*index)?, scroll_y)
+                                .then(|| item.clone())
+                        })
+                        .collect();
+                    if !visible.is_empty() {
+                        let parent = parent.clone();
+                        window.defer(cx, move |_, cx| {
+                            let _ = parent.update(cx, |app, cx| {
+                                if app.connection_generation == connection
+                                    && app.collaboration.inbox_badge.acknowledge(visible)
+                                {
+                                    cx.notify();
+                                }
+                            });
                         });
                     }
                 })
@@ -921,13 +1069,14 @@ impl Render for GlobalInbox {
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionCenter, Destination, Entry, InboxSections, ReadingPosition, RowId, display_project,
-        selected_project,
+        ActionCenter, BadgeItem, Destination, Entry, InboxBadge, InboxSections, ReadingPosition,
+        RowId, display_project, row_is_visible, selected_project, update_new_items,
     };
     use crate::collaboration::inbox::Priority;
     use crate::protocol::Workspace;
-    use gpui_kit::px;
+    use gpui_kit::{Bounds, point, px, size};
     use serde_json::json;
+    use std::collections::HashSet;
 
     fn workspace(id: &str, path: &str) -> Workspace {
         Workspace {
@@ -959,6 +1108,37 @@ mod tests {
         assert!(selected_project(&projects, Some("left"), Some("left")).is_none());
         assert!(selected_project(&projects, None, Some("right")).is_none());
         assert!(selected_project(&projects, None, None).is_none());
+    }
+
+    #[test]
+    fn review_rows_stay_visible_after_acknowledgement_and_drop_when_resolved() {
+        let item = BadgeItem::Question {
+            workspace: "atlas".into(),
+            dispatch: "dispatch".into(),
+            message: "first".into(),
+        };
+        let unseen = BadgeItem::Question {
+            workspace: "beacon".into(),
+            dispatch: "dispatch".into(),
+            message: "first".into(),
+        };
+        let mut badge = InboxBadge::default();
+        let mut items = HashSet::from([unseen.clone()]);
+        update_new_items(&mut items, "atlas", HashSet::from([item.clone()]), &badge);
+        assert!(badge.acknowledge([item.clone()]));
+        update_new_items(&mut items, "atlas", HashSet::from([item.clone()]), &badge);
+        assert_eq!(items, HashSet::from([item.clone(), unseen.clone()]));
+        update_new_items(&mut items, "atlas", HashSet::new(), &badge);
+        assert_eq!(items, HashSet::from([unseen]));
+    }
+
+    #[test]
+    fn only_rows_with_their_center_in_the_scroll_view_count_as_shown() {
+        let bounds = |top| Bounds::new(point(px(0.), px(top)), size(px(100.), px(40.)));
+        let viewport = bounds(100.);
+        assert!(row_is_visible(viewport, bounds(135.), px(-35.)));
+        assert!(!row_is_visible(viewport, bounds(135.), px(0.)));
+        assert!(!row_is_visible(viewport, bounds(90.), px(-11.)));
     }
 
     #[test]

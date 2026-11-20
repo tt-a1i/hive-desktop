@@ -3,7 +3,7 @@ import { readFile, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
-import type { ChatRecord } from './chat-index.js';
+import { declaredExecutionPath, type ChatRecord } from './chat-index.js';
 import type { AgentProfiles, AgentProfileRef, AgentDriver } from './agent-profiles.js';
 import { externalPiBranch, externalPiMessage } from './agents/external-pi-history.js';
 import { piUserInputSources } from './agents/pi-user-input.js';
@@ -38,7 +38,7 @@ export class HandoffHistoryError extends Error { constructor(readonly code:strin
 const hash=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
 const object=(v:unknown):v is Record<string,unknown>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 export function handoffRecordHash(record:ChatRecord):string {
-  return hash(JSON.stringify({id:record.id,workspaceId:record.workspaceId,backend:record.backend,profile:record.profile,originAgentId:record.originAgentId,identityState:record.identityState,execution:record.execution,sessionFile:record.sessionFile,codexThreadId:record.codexThreadId,piSessionId:record.piSessionId,externalPiSessionId:record.externalPiSessionId,nativeclaudeSessionId:record.nativeclaudeSessionId,acpSessionId:record.acpSessionId,lineage:record.lineage,...('handoff' in record?{handoff:record.handoff}:{})}));
+  return hash(JSON.stringify({id:record.id,workspaceId:record.workspaceId,backend:record.backend,profile:record.profile,originAgentId:record.originAgentId,identityState:record.identityState,execution:record.execution,scratch:record.scratch,sessionFile:record.sessionFile,codexThreadId:record.codexThreadId,piSessionId:record.piSessionId,externalPiSessionId:record.externalPiSessionId,nativeclaudeSessionId:record.nativeclaudeSessionId,acpSessionId:record.acpSessionId,lineage:record.lineage,...('handoff' in record?{handoff:record.handoff}:{})}));
 }
 export function handoffHistoryHash(snapshot:HandoffHistorySnapshot):string { return hash(JSON.stringify({...snapshot,sha256:''})); }
 async function frozenFile(path:string){
@@ -133,7 +133,7 @@ export async function readHandoffHistory(record:ChatRecord,options:HandoffHistor
     const projection=new ClaudeProjection(()=>readClaudeMetadata(options.claudeDirectory,id));
     const env={...process.env,CLAUDE_CONFIG_DIR:configDir};
     if(!profile.launch.configDir)warnings.push('Source profile uses the official default Claude directory; its historical process environment cannot be verified offline');
-    for(const m of await readSessionMessages(id,record.execution?.path??options.workspacePath,env))projection.put(m);
+    for(const m of await readSessionMessages(id,declaredExecutionPath(record,options.workspacePath),env))projection.put(m);
     const snapshot=projection.snapshot();rows=snapshot.history.map((m,i)=>({id:snapshot.historyMessageIds[i]!,message:m}));
     warnings.push('Official Claude SDK does not establish transcript completeness or reveal skipped parse errors');
   }
@@ -169,7 +169,7 @@ export async function readHandoffHistory(record:ChatRecord,options:HandoffHistor
       const included=toolFact?excerpt(text,8*1024):text;const includedBytes=Buffer.byteLength(included);
       if(includedBytes<bytes)omitted.push({itemId:row.id,reason:'Tool text excerpt',bytes:bytes-includedBytes,sha256:hash(text)});
       const nativeSessionId=source.backend==='codex'?source.codexThreadId:source.backend==='pi'?source.piSessionId:source.backend==='pi-rpc'?source.externalPiSessionId:source.backend==='claude'?source.nativeclaudeSessionId:source.acpSessionId;
-      facts.push({id:`${source.id}:${row.id}:${kind}:${tool?.nativeCallId??''}`,kind,text:included,source:{sourceSessionId:source.id,sourceDriver:source.backend,sourceProfile:source.profile!,...(nativeSessionId?{nativeSessionId}:{}),nativeItemId:row.id,...(row.turnId?{nativeTurnId:row.turnId}:{}),executionPath:source.execution?.path??options.workspacePath,contentSha256:hash(text)},...(tool?{tool}:{}),...(includedBytes<bytes?{excerpt:{originalBytes:bytes,includedBytes,omittedBytes:bytes-includedBytes}}:{}),...(attachments?.length?{attachments}:{})});
+      facts.push({id:`${source.id}:${row.id}:${kind}:${tool?.nativeCallId??''}`,kind,text:included,source:{sourceSessionId:source.id,sourceDriver:source.backend,sourceProfile:source.profile!,...(nativeSessionId?{nativeSessionId}:{}),nativeItemId:row.id,...(row.turnId?{nativeTurnId:row.turnId}:{}),executionPath:declaredExecutionPath(source,options.workspacePath),contentSha256:hash(text)},...(tool?{tool}:{}),...(includedBytes<bytes?{excerpt:{originalBytes:bytes,includedBytes,omittedBytes:bytes-includedBytes}}:{}),...(attachments?.length?{attachments}:{})});
     };
     if(presentation){if(presentation.origin==='user')add('user-text',presentation.displayText);else if(presentation.origin==='report')add('historical-report',presentation.displayText);else omitted.push({itemId:row.id,reason:'Internal delivery/context excluded'});continue;}
     if(m.role==='user')add('user-text',textBlocks(m.content));

@@ -111,12 +111,16 @@ impl HiveApp {
             connection: self.connection_generation,
             open_request: self.open_request,
         };
-        let source_directory = self.session.as_ref()
-            .and_then(|session| session.execution.as_ref())
-            .filter(|execution| execution.kind == "worktree")
-            .map(|execution| format!("{}: {}", tr("独立工作树执行目录"), execution.path))
-            .or_else(|| self.workspaces.iter().find(|project| project.id == target.workspace)
-                .map(|project| format!("{}: {}", tr("项目路径"), project.path)));
+        let session = self.session.as_ref().filter(|session| session.workspace_id == target.workspace);
+        let source_directory = if let Some(session) = session.filter(|session| session.scratch) {
+            session.execution_path.as_ref().map(|path| format!("{}: {path}", tr("临时会话目录")))
+        } else {
+            session.and_then(|session| session.execution.as_ref())
+                .filter(|execution| execution.kind == "worktree")
+                .map(|execution| format!("{}: {}", tr("独立工作树执行目录"), execution.path))
+                .or_else(|| self.workspaces.iter().find(|project| project.id == target.workspace)
+                    .map(|project| format!("{}: {}", tr("项目路径"), project.path)))
+        };
         let app = cx.weak_entity();
         let picker = cx.new(|cx| {
             let query =
