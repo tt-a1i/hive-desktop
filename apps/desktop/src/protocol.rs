@@ -80,6 +80,8 @@ pub struct Session {
     #[serde(default)]
     pub can_start_fresh_worktree_draft: bool,
     #[serde(default)]
+    pub inherited_draft_model: bool,
+    #[serde(default)]
     pub execution_path: Option<String>,
     #[serde(default)]
     pub scratch: bool,
@@ -607,6 +609,7 @@ pub struct ActiveMessage {
 pub struct ModelIdentity {
     pub provider: String,
     pub id: String,
+    pub name: Option<String>,
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

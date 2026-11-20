@@ -37,7 +37,7 @@ use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
-        menu::{DropdownMenu, PopupMenuItem},
+        menu::{DropdownMenu, PopupMenu, PopupMenuItem},
         scroll::ScrollableElement,
         *,
     },
@@ -98,13 +98,106 @@ struct GlobalInbox {
     intro_save_failed: bool,
     intro_focus: FocusHandle,
     help_focus: FocusHandle,
-    project_filter_focus: FocusHandle,
+    filter_entry_focus: FocusHandle,
     clear_filters_focus: FocusHandle,
     dismissed: bool,
     scroll: ScrollHandle,
 }
 
 type ArchiveUndoAction = Rc<dyn Fn(&mut Window, &mut App)>;
+
+type SelectInboxFilter<T> = fn(&mut GlobalInbox, Option<T>, &mut Context<GlobalInbox>);
+
+#[derive(Clone)]
+struct InboxFilter<T> {
+    selected: Option<T>,
+    choices: Vec<(Option<T>, String)>,
+    title: String,
+}
+
+impl<T: Clone + PartialEq + 'static> InboxFilter<T> {
+    fn new(
+        selected: Option<T>,
+        available: impl IntoIterator<Item = (T, String)>,
+        all: &str,
+        unavailable: &str,
+    ) -> Self {
+        let choices: Vec<_> = std::iter::once((None, all.to_owned()))
+            .chain(
+                available
+                    .into_iter()
+                    .map(|(choice, title)| (Some(choice), title)),
+            )
+            .collect();
+        let title = choices
+            .iter()
+            .find(|(choice, _)| *choice == selected)
+            .map_or_else(|| unavailable.to_owned(), |(_, title)| title.clone());
+        Self {
+            selected,
+            choices,
+            title,
+        }
+    }
+
+    fn menu(
+        &self,
+        menu: PopupMenu,
+        window: &Window,
+        inbox: &WeakEntity<GlobalInbox>,
+        select: SelectInboxFilter<T>,
+        max_width: Pixels,
+    ) -> PopupMenu {
+        let menu = menu
+            .scrollable(true)
+            .max_h((window.viewport_size().height - px(200.)).max(px(120.)))
+            .max_w((window.viewport_size().width - px(48.)).min(max_width));
+        self.choices.iter().fold(menu, |menu, (choice, title)| {
+            let checked = self.selected == *choice;
+            let choice = choice.clone();
+            let inbox = inbox.clone();
+            menu.item(PopupMenuItem::new(title.clone()).checked(checked).on_click(
+                move |_, _, cx| {
+                    let _ = inbox.update(cx, |this, cx| select(this, choice.clone(), cx));
+                },
+            ))
+        })
+    }
+
+    fn button(
+        self,
+        button: Button,
+        name: &str,
+        inbox: WeakEntity<GlobalInbox>,
+        select: SelectInboxFilter<T>,
+    ) -> AnyElement {
+        let label = format!("{name} · {}", self.title);
+        button
+            .outline()
+            .compact()
+            .xsmall()
+            .dropdown_caret(true)
+            .label(self.title.clone())
+            .tooltip(label.clone())
+            .accessibility_label(label)
+            .dropdown_menu(move |menu, window, _| self.menu(menu, window, &inbox, select, px(600.)))
+            .into_any_element()
+    }
+
+    fn submenu(
+        self,
+        menu: PopupMenu,
+        label: String,
+        window: &mut Window,
+        cx: &mut Context<PopupMenu>,
+        inbox: WeakEntity<GlobalInbox>,
+        select: SelectInboxFilter<T>,
+    ) -> PopupMenu {
+        menu.submenu(label, window, cx, move |menu, window, _| {
+            self.menu(menu, window, &inbox, select, px(360.))
+        })
+    }
+}
 
 struct ArchiveUndoOffer {
     title: String,
@@ -403,7 +496,7 @@ impl HiveApp {
                 intro_save_failed,
                 intro_focus: cx.focus_handle(),
                 help_focus: cx.focus_handle(),
-                project_filter_focus: cx.focus_handle(),
+                filter_entry_focus: cx.focus_handle(),
                 clear_filters_focus: cx.focus_handle(),
                 dismissed: false,
                 scroll: ScrollHandle::new(),
@@ -413,14 +506,13 @@ impl HiveApp {
         cx.notify();
         inbox.update(cx, |inbox, cx| inbox.poll(cx));
         let intro_focus = intro.map(|_| inbox.read(cx).intro_focus.clone());
-        let width = (window.viewport_size().width - px(36.)).min(px(740.));
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, window, _| {
             let dismiss = inbox.downgrade();
             let cancel = inbox.downgrade();
             let confirm = inbox.downgrade();
             dialog
                 .title(tr("跨项目收件箱"))
-                .w(width)
+                .w((window.viewport_size().width - px(36.)).min(px(740.)))
                 .on_ok(move |_, window, cx| {
                     let _ = confirm.update(cx, |inbox, cx| inbox.confirm(window, cx));
                     false
@@ -905,6 +997,7 @@ impl GlobalInbox {
         };
         let app = app.read(cx);
         if !self.is_current(self.connection, cx)
+            || self.reviewing_new.is_some()
             || app.global_inbox_workspace_list().is_none()
             || self.preferences.values.project_filter == project
             || (project.is_some()
@@ -929,6 +1022,7 @@ impl GlobalInbox {
         };
         let app = parent.read(cx);
         if !self.is_current(self.connection, cx)
+            || self.reviewing_new.is_some()
             || app.global_inbox_workspace_list().is_none()
             || self.preferences.values.member_filter == member
             || member.as_ref().is_some_and(|member| {
@@ -977,89 +1071,201 @@ impl GlobalInbox {
         cx.notify();
     }
 
-    fn backend_filter_button(
-        &self,
-        current: Option<Backend>,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let title = current.map_or_else(|| tr("全部后端"), |backend| tr(backend.label()));
-        let label = format!("{} · {title}", tr("按后端筛选收件箱"));
-        let inbox = cx.weak_entity();
-        Button::new("global-inbox-backend-filter")
-            .outline()
-            .compact()
-            .xsmall()
-            .dropdown_caret(true)
-            .label(title)
-            .tooltip(label.clone())
-            .accessibility_label(label)
-            .dropdown_menu(move |menu, _, _| {
-                [
-                    None,
-                    Some(Backend::Pi),
-                    Some(Backend::PiRpc),
-                    Some(Backend::Codex),
-                    Some(Backend::Claude),
-                    Some(Backend::Acp),
-                ]
-                .into_iter()
-                .fold(menu, |menu, backend| {
-                    let inbox = inbox.clone();
-                    let title =
-                        backend.map_or_else(|| tr("全部后端"), |backend| tr(backend.label()));
-                    menu.item(
-                        PopupMenuItem::new(title)
-                            .checked(current == backend)
-                            .on_click(move |_, _, cx| {
-                                let _ =
-                                    inbox.update(cx, |this, cx| this.select_backend(backend, cx));
-                            }),
-                    )
-                })
-            })
+    fn select_activity(&mut self, activity: Option<ActivityRange>, cx: &mut Context<Self>) {
+        if !self.is_current(self.connection, cx)
+            || self.reviewing_new.is_some()
+            || self.preferences.values.activity_filter == activity
+        {
+            return;
+        }
+        self.preferences.values.activity_filter = activity;
+        self.preferences.save_changed();
+        self.clear_filter_position();
+        self.sync_completed(cx);
+        cx.notify();
     }
 
-    fn activity_filter_button(
+    fn filter_controls(
         &self,
-        current: Option<ActivityRange>,
+        app: &HiveApp,
+        available: &[Workspace],
+        compact: bool,
         cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let title = tr(ActivityRange::label(current));
-        let label = format!("{} · {title}", tr("按活跃时间筛选收件箱"));
+    ) -> Vec<AnyElement> {
+        let current = &self.preferences.values;
+        let projects = InboxFilter::new(
+            current.project_filter.clone(),
+            available.iter().map(|project| {
+                (
+                    project.id.clone(),
+                    display_project(project, &app.workspaces),
+                )
+            }),
+            tr("全部项目"),
+            tr("全部项目"),
+        );
+        let members = InboxFilter::new(
+            current.member_filter.clone(),
+            member_choices(
+                &app.workspaces,
+                current.project_filter.as_deref(),
+                app.workspace_removing.as_deref(),
+                &self.projects,
+            ),
+            tr("全部成员"),
+            tr("已选成员"),
+        );
+        let backends = InboxFilter::new(
+            current.backend_filter,
+            [
+                Backend::Pi,
+                Backend::PiRpc,
+                Backend::Codex,
+                Backend::Claude,
+                Backend::Acp,
+            ]
+            .into_iter()
+            .map(|backend| (backend, tr(backend.label()).to_owned())),
+            tr("全部后端"),
+            tr("全部后端"),
+        );
+        let activity = InboxFilter::new(
+            current.activity_filter,
+            ActivityRange::OPTIONS
+                .into_iter()
+                .flatten()
+                .map(|range| (range, tr(ActivityRange::label(Some(range))).to_owned())),
+            tr("全部时间"),
+            tr("全部时间"),
+        );
+
         let inbox = cx.weak_entity();
-        Button::new("global-inbox-activity-filter")
-            .outline()
-            .compact()
-            .xsmall()
-            .dropdown_caret(true)
-            .label(title)
-            .tooltip(label.clone())
-            .accessibility_label(label)
-            .dropdown_menu(move |menu, _, _| {
-                ActivityRange::OPTIONS
-                    .into_iter()
-                    .fold(menu, |menu, range| {
+        if compact {
+            let count = self.preferences.filter_count();
+            let title = tr("筛选");
+            let button_title = if count == 0 {
+                title.to_owned()
+            } else {
+                format!("{title} ({count})")
+            };
+            let labels = [
+                format!("{}: {}", tr("项目"), projects.title),
+                format!("{}: {}", tr("成员"), members.title),
+                format!("{}: {}", tr("Agent 后端"), backends.title),
+                format!("{}: {}", tr("最近活跃"), activity.title),
+            ];
+            let count_label = tr("{count} 项筛选生效").replace("{count}", &count.to_string());
+            let summary = format!(
+                "{} · {count_label} · {}",
+                tr("收件箱筛选"),
+                labels.join(" · ")
+            );
+            return vec![
+                Button::new("global-inbox-compact-filters")
+                    .outline()
+                    .compact()
+                    .xsmall()
+                    .icon(Glyph::ListFilter)
+                    .dropdown_caret(true)
+                    .track_focus(&self.filter_entry_focus)
+                    .label(button_title)
+                    .tooltip(summary.clone())
+                    .accessibility_label(summary)
+                    .dropdown_menu(move |menu, window, cx| {
+                        let menu =
+                            menu.max_w((window.viewport_size().width - px(48.)).min(px(360.)));
+                        let menu = projects.clone().submenu(
+                            menu,
+                            labels[0].clone(),
+                            window,
+                            cx,
+                            inbox.clone(),
+                            Self::select_project,
+                        );
+                        let menu = members.clone().submenu(
+                            menu,
+                            labels[1].clone(),
+                            window,
+                            cx,
+                            inbox.clone(),
+                            Self::select_member,
+                        );
+                        let menu = backends.clone().submenu(
+                            menu,
+                            labels[2].clone(),
+                            window,
+                            cx,
+                            inbox.clone(),
+                            Self::select_backend,
+                        );
+                        let menu = activity.clone().submenu(
+                            menu,
+                            labels[3].clone(),
+                            window,
+                            cx,
+                            inbox.clone(),
+                            Self::select_activity,
+                        );
+                        if count == 0 {
+                            return menu;
+                        }
                         let inbox = inbox.clone();
-                        menu.item(
-                            PopupMenuItem::new(tr(ActivityRange::label(range)))
-                                .checked(current == range)
-                                .on_click(move |_, _, cx| {
-                                    let _ = inbox.update(cx, |this, cx| {
-                                        if this.is_current(this.connection, cx)
-                                            && this.reviewing_new.is_none()
-                                            && this.preferences.values.activity_filter != range
-                                        {
-                                            this.preferences.values.activity_filter = range;
-                                            this.preferences.save_changed();
-                                            this.clear_filter_position();
-                                            this.sync_completed(cx);
-                                            cx.notify();
-                                        }
-                                    });
-                                }),
-                        )
+                        menu.separator()
+                            .item(PopupMenuItem::new(tr("清除筛选")).on_click(
+                                move |_, window, cx| {
+                                    let _ =
+                                        inbox.update(cx, |this, cx| this.clear_filters(window, cx));
+                                },
+                            ))
                     })
-            })
+                    .into_any_element(),
+            ];
+        }
+
+        let mut controls = vec![
+            projects.button(
+                Button::new("global-inbox-project-filter")
+                    .track_focus(&self.filter_entry_focus)
+                    .icon(Glyph::ListFilter)
+                    .max_w(px(320.)),
+                tr("按项目筛选收件箱"),
+                inbox.clone(),
+                Self::select_project,
+            ),
+        ];
+        if members.choices.len() > 1 || members.selected.is_some() {
+            controls.push(members.button(
+                Button::new("global-inbox-member-filter").max_w(px(260.)),
+                tr("按成员筛选收件箱"),
+                inbox.clone(),
+                Self::select_member,
+            ));
+        }
+        controls.push(backends.button(
+            Button::new("global-inbox-backend-filter"),
+            tr("按后端筛选收件箱"),
+            inbox.clone(),
+            Self::select_backend,
+        ));
+        controls.push(activity.button(
+            Button::new("global-inbox-activity-filter"),
+            tr("按活跃时间筛选收件箱"),
+            inbox,
+            Self::select_activity,
+        ));
+        if self.preferences.has_filters() {
+            controls.push(
+                Button::new("global-inbox-clear-filters")
+                    .ghost()
+                    .compact()
+                    .xsmall()
+                    .label(tr("清除筛选"))
+                    .track_focus(&self.clear_filters_focus)
+                    .on_click(cx.listener(|this, _, window, cx| this.clear_filters(window, cx)))
+                    .into_any_element(),
+            );
+        }
+        controls
     }
 
     fn clear_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1072,7 +1278,7 @@ impl GlobalInbox {
         }
         self.clear_filter_position();
         self.sync_completed(cx);
-        let focus = self.project_filter_focus.clone();
+        let focus = self.filter_entry_focus.clone();
         window.on_next_frame(move |window, cx| focus.focus(window, cx));
         cx.notify();
     }
@@ -1776,129 +1982,12 @@ impl Render for GlobalInbox {
                 .flex_wrap()
                 .gap_2();
             if ready {
-                let all = tr("全部项目");
-                let title = selected_title.unwrap_or_else(|| all.to_owned());
-                let tooltip = format!("{} · {title}", tr("按项目筛选收件箱"));
-                let choices: Vec<_> = std::iter::once((None, all.to_owned()))
-                    .chain(available.iter().map(|project| {
-                        (
-                            Some(project.id.clone()),
-                            display_project(project, &app.workspaces),
-                        )
-                    }))
-                    .collect();
-                let current = self.preferences.values.project_filter.clone();
-                let inbox = cx.weak_entity();
-                controls = controls.child(
-                    Button::new("global-inbox-project-filter")
-                        .track_focus(&self.project_filter_focus)
-                        .outline()
-                        .compact()
-                        .xsmall()
-                        .icon(Glyph::ListFilter)
-                        .dropdown_caret(true)
-                        .max_w(px(320.))
-                        .label(title)
-                        .tooltip(tooltip.clone())
-                        .accessibility_label(tooltip)
-                        .dropdown_menu(move |menu, window, _| {
-                            let menu = menu
-                                .scrollable(true)
-                                .max_h((window.viewport_size().height - px(200.)).max(px(120.)))
-                                .max_w((window.viewport_size().width - px(48.)).min(px(600.)));
-                            choices.iter().fold(menu, |menu, (id, title)| {
-                                let checked = current == *id;
-                                let id = id.clone();
-                                let inbox = inbox.clone();
-                                menu.item(
-                                    PopupMenuItem::new(title.clone()).checked(checked).on_click(
-                                        move |_, _, cx| {
-                                            let _ = inbox.update(cx, |this, cx| {
-                                                this.select_project(id.clone(), cx);
-                                            });
-                                        },
-                                    ),
-                                )
-                            })
-                        }),
-                );
-                let current = self.preferences.values.member_filter.clone();
-                let members = member_choices(
-                    &app.workspaces,
-                    self.preferences.values.project_filter.as_deref(),
-                    app.workspace_removing.as_deref(),
-                    &self.projects,
-                );
-                if !members.is_empty() || current.is_some() {
-                    let all = tr("全部成员");
-                    let title = current.as_ref().map_or_else(
-                        || all.to_owned(),
-                        |current| {
-                            members
-                                .iter()
-                                .find(|(member, _)| member == current)
-                                .map(|(_, label)| label.clone())
-                                .unwrap_or_else(|| tr("已选成员").to_owned())
-                        },
-                    );
-                    let label = format!("{} · {title}", tr("按成员筛选收件箱"));
-                    let choices: Vec<_> = std::iter::once((None, all.to_owned()))
-                        .chain(
-                            members
-                                .into_iter()
-                                .map(|(member, label)| (Some(member), label)),
-                        )
-                        .collect();
-                    let inbox = cx.weak_entity();
-                    controls = controls.child(
-                        Button::new("global-inbox-member-filter")
-                            .outline()
-                            .compact()
-                            .xsmall()
-                            .dropdown_caret(true)
-                            .max_w(px(260.))
-                            .label(title)
-                            .tooltip(label.clone())
-                            .accessibility_label(label)
-                            .dropdown_menu(move |menu, window, _| {
-                                let menu = menu
-                                    .scrollable(true)
-                                    .max_h((window.viewport_size().height - px(200.)).max(px(120.)))
-                                    .max_w((window.viewport_size().width - px(48.)).min(px(600.)));
-                                choices.iter().fold(menu, |menu, (member, title)| {
-                                    let checked = current == *member;
-                                    let member = member.clone();
-                                    let inbox = inbox.clone();
-                                    menu.item(
-                                        PopupMenuItem::new(title.clone())
-                                            .checked(checked)
-                                            .on_click(move |_, _, cx| {
-                                                let _ = inbox.update(cx, |this, cx| {
-                                                    this.select_member(member.clone(), cx);
-                                                });
-                                            }),
-                                    )
-                                })
-                            }),
-                    );
-                }
-            }
-            if ready {
-                controls = controls.child(self.backend_filter_button(selected_backend, cx));
-                controls = controls.child(self.activity_filter_button(selected_activity, cx));
-                if self.preferences.has_filters() {
-                    controls = controls.child(
-                        Button::new("global-inbox-clear-filters")
-                            .ghost()
-                            .compact()
-                            .xsmall()
-                            .label(tr("清除筛选"))
-                            .track_focus(&self.clear_filters_focus)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.clear_filters(window, cx)),
-                            ),
-                    );
-                }
+                controls = controls.children(self.filter_controls(
+                    app,
+                    &available,
+                    window.viewport_size().width < px(820.),
+                    cx,
+                ));
             }
             if has_snoozed {
                 controls = controls.child(
@@ -2359,9 +2448,9 @@ impl Render for GlobalInbox {
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionCenter, BadgeItem, Destination, Entry, InboxBadge, InboxSections, MemberFilter,
-        ProjectInbox, ReadingPosition, RowId, display_project, matches_member, member_choices,
-        row_is_visible, selected_project, update_new_items,
+        ActionCenter, BadgeItem, Destination, Entry, InboxBadge, InboxFilter, InboxSections,
+        MemberFilter, ProjectInbox, ReadingPosition, RowId, display_project, matches_member,
+        member_choices, row_is_visible, selected_project, update_new_items,
     };
     use crate::collaboration::inbox::Priority;
     use crate::collaboration::inbox::placement::SnoozedUntil;
@@ -2392,6 +2481,19 @@ mod tests {
             "/projects/left/app"
         );
         assert!(selected_project(&projects, None, Some("app")).is_none());
+        let menu = InboxFilter::new(
+            Some("right".to_owned()),
+            projects
+                .iter()
+                .map(|project| (project.id.clone(), display_project(project, &projects))),
+            "All projects",
+            "Unavailable",
+        );
+        assert_eq!(menu.title, "/projects/right/app");
+        assert_eq!(
+            menu.choices[1],
+            (Some("left".to_owned()), "/projects/left/app".to_owned())
+        );
     }
 
     #[test]

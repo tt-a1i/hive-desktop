@@ -98,10 +98,19 @@ impl ViewPreferences {
     }
 
     pub(super) fn has_filters(&self) -> bool {
-        self.values.project_filter.is_some()
-            || self.values.member_filter.is_some()
-            || self.values.backend_filter.is_some()
-            || self.values.activity_filter.is_some()
+        self.filter_count() > 0
+    }
+
+    pub(super) fn filter_count(&self) -> usize {
+        [
+            self.values.project_filter.is_some(),
+            self.values.member_filter.is_some(),
+            self.values.backend_filter.is_some(),
+            self.values.activity_filter.is_some(),
+        ]
+        .into_iter()
+        .filter(|selected| *selected)
+        .count()
     }
 
     pub(super) fn clear_filters(&mut self) -> bool {
@@ -225,8 +234,9 @@ mod tests {
         view.values.show_snoozed = true;
         view.save_changed();
 
+        assert_eq!(view.filter_count(), 4);
         assert!(view.clear_filters());
-        assert!(!view.has_filters());
+        assert_eq!(view.filter_count(), 0);
         let saved = load(root.path()).unwrap();
         assert!(saved.project_filter.is_none());
         assert!(saved.member_filter.is_none());

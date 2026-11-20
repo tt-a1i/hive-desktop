@@ -26,6 +26,7 @@ export interface ClaudeSessionOptions {
   configDir?: string;
   env?: NodeJS.ProcessEnv;
   model?: { provider: string; id: string }; onEvent: (event: PiEvent) => void;
+  verifyInitialModel?: true;
   teamBinding?: () => ClaudeTeamBinding | undefined;
   onUnexpectedExit?: (error: Error) => void;
   canUseTool?: CanUseTool; onUserDialog?: OnUserDialog; supportedDialogKinds?: string[]; onElicitation?: OnElicitation;
@@ -183,6 +184,13 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     const init = await claudeDeadline(running.initializationResult(), 'initialization', 30000, options.signal);
     if (options.mode !== undefined) await claudeDeadline(running.setPermissionMode(selectedMode), 'restore permission mode', 30000, options.signal);
     models = await claudeDeadline(running.supportedModels(), 'model catalog', 30000, options.signal);
+    if (options.verifyInitialModel && options.model) {
+      const requested = options.model.id;
+      const {modelId: applied} = await readClaudeReasoning(running, models);
+      if (applied !== requested && !models.some(model => model.value === requested && model.resolvedModel === applied))
+        throw new Error('Claude did not apply the inherited model');
+      currentModel = requested;
+    }
     const servers = await claudeDeadline(running.mcpServerStatus(), 'MCP handshake', 30000, options.signal);
     if (!servers.some(server => server.name === team.name && server.status === 'connected')) throw new Error('Claude Hive MCP server did not connect');
     catalogs = { commands: init.commands.map(command => command.name), models: models.map(model => model.value), mcpServers: servers.map(server => ({ name: server.name, status: server.status })) };

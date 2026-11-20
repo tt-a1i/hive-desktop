@@ -69,6 +69,8 @@ pub struct GeneralSettings {
     pub confirm_unpin_session: bool,
     pub confirm_cancel_queued_input: bool,
     pub quit_confirmation: QuitConfirmation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) file_preview_split: Option<u8>,
 }
 
 impl Default for GeneralSettings {
@@ -84,6 +86,7 @@ impl Default for GeneralSettings {
             confirm_unpin_session: false,
             confirm_cancel_queued_input: true,
             quit_confirmation: QuitConfirmation::default(),
+            file_preview_split: None,
         }
     }
 }
@@ -121,6 +124,9 @@ impl GeneralPreferences {
 
 fn validate(settings: GeneralSettings) -> GeneralSettings {
     let mut normalized = settings;
+    normalized.file_preview_split = normalized
+        .file_preview_split
+        .map(|percent| percent.clamp(20, 80));
     if !OpenTarget::for_platform().any(|target| target == normalized.default_open_target) {
         normalized.default_open_target = OpenTarget::Finder;
     }
@@ -286,6 +292,7 @@ mod tests {
         let previous = load(root.path()).unwrap();
         assert!(previous.pin_active_sessions_top);
         assert!(previous.fold_working_sessions);
+        assert_eq!(previous.file_preview_split, None);
 
         let custom = GeneralSettings {
             default_open_target: OpenTarget::Cursor,
@@ -298,6 +305,7 @@ mod tests {
             confirm_unpin_session: false,
             confirm_cancel_queued_input: true,
             quit_confirmation: QuitConfirmation::WhenBusy,
+            file_preview_split: Some(37),
         };
         save(root.path(), &custom).unwrap();
         assert_eq!(load(root.path()).unwrap(), custom);

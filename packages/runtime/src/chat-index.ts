@@ -19,7 +19,7 @@ export interface DeliveryFailure {deliveryId:string;message:string}
 export interface ChatExecution { kind: 'worktree'; path: string; branch: string; ownerSessionId?: string }
 export interface PinnedSessionRef { workspaceId: string; sessionId: string }
 export class SessionIdentityError extends Error {
-  constructor(readonly code: string, message: string) { super(`[${code}] ${message}`); this.name = 'SessionIdentityError'; }
+  constructor(readonly code: string, message: string, options?: ErrorOptions) { super(`[${code}] ${message}`, options); this.name = 'SessionIdentityError'; }
 }
 
 export interface ChatRecord {
@@ -28,6 +28,8 @@ export interface ChatRecord {
   draftCopy?: string;
   worktreeReuse?: {sourceSessionId: string; ownerFingerprint: string};
   freshDraftSourceSessionId?: string;
+  inheritedDraftModel?: true;
+  unavailableDraftModel?: true;
   handoff?: {operationId:string;snapshotId:string;snapshotHash:string;sourceSessionId:string};
   profile?: AgentProfileRef;
   legacyConfiguration?: true;
@@ -143,7 +145,7 @@ export class ChatIndex {
     assertWorktreeUse(original);
     if (original.identityState === 'unknown') throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'This older conversation has no reliable original agent identity. Its history is read-only; create a new conversation to continue.');
     if (original.originAgentId && original.originAgentId !== agentId) throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'A historical conversation cannot be rebound to a different agent.');
-    const {deferFirstConnection, ...session} = original;
+    const {deferFirstConnection, inheritedDraftModel, unavailableDraftModel, ...session} = original;
     const bound: ChatRecord = { ...session, agentId, originAgentId: original.originAgentId ?? agentId, identityState: 'known' };
     const next = this.records.map(record => {
       if (record.id === id) return bound;
@@ -363,6 +365,9 @@ export function worktreeDraftAvailability(record: ChatRecord): {canStartFreshWor
 function isChatRecord(value: unknown): value is ChatRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
+  if (record.inheritedDraftModel !== undefined && (record.inheritedDraftModel !== true || record.backend === 'acp'
+    || record.deferFirstConnection !== true || !record.model || record.agentId || record.originAgentId)
+    || record.unavailableDraftModel !== undefined && (record.unavailableDraftModel !== true || record.inheritedDraftModel !== true)) return false;
   if (record.deferFirstConnection !== undefined && record.deferFirstConnection !== true || !validFreshWorktreeDraft(record)) return false;
   if (record.draftCopy !== undefined && (typeof record.draftCopy !== 'string' || !/^[a-f0-9]{64}$/.test(record.draftCopy))) return false;
   if (record.handoff !== undefined) {

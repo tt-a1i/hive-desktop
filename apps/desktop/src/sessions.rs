@@ -795,8 +795,9 @@ impl HiveApp {
             if let Some(reference) = &profile {
                 params["profile"] = json!(reference);
             }
-            if fresh_after.is_some() {
+            if let Some(target) = &fresh_after {
                 params["deferFirstConnection"] = json!(true);
+                params["sourceSessionId"] = json!(target.source.id);
             }
             (method, params)
         };
@@ -1382,7 +1383,8 @@ impl HiveApp {
                                 }
                             }
                             ConversationOpen::Latest => this.schedule_reading_position_save(cx),
-                            ConversationOpen::Connect(panel) if !this.conversation_is_read_only() => match panel {
+                            ConversationOpen::Connect(panel)
+                                if !this.conversation_is_read_only() && this.unavailable_inherited_model().is_none() => match panel {
                                 NativeSessionPanel::Models => {
                                     this.choosing_model = true;
                                     this.load_reasoning(None, cx);

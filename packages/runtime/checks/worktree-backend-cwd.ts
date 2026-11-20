@@ -3,6 +3,7 @@
  * subprocess peers. The single Codex turn is synthetic materialization only. */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -16,14 +17,14 @@ import type { PiSessionHandle } from '../src/agents/types.js';
 assert.ok(!process.argv.includes('--live'), 'This check must never run native vendor CLIs or models');
 const directory = await realpath(await mkdtemp(join(tmpdir(), 'hive-backend-worktree-cwd-')));
 const repo = join(directory, 'repo'), project = join(repo, 'sub project'), data = join(directory, 'state');
-const keys = ['PI_CODING_AGENT_DIR', 'PI_OFFLINE', 'CLAUDE_CONFIG_DIR', 'HIVE_CWD_FIXTURE_WIRE', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'] as const;
+const keys = ['PI_CODING_AGENT_DIR', 'PI_OFFLINE', 'CLAUDE_CONFIG_DIR', 'HIVE_CWD_FIXTURE_WIRE', 'HIVE_CWD_FIXTURE_MODEL_UNAVAILABLE', 'HIVE_CWD_FIXTURE_MODEL_MISSING', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'] as const;
 const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
 let runtime: Awaited<ReturnType<typeof createDesktopRuntime>> | undefined;
 let requests = 0;
 const server = createServer((_request, response) => { requests++; response.writeHead(500).end('Unexpected model request'); });
 const live = (chats: Chats) => (chats as unknown as {live: Map<string, {handle: PiSessionHandle}>}).live;
 const records = new Map<ChatBackend, {record: ChatRecord; root: string; nativeId: string; historyIds: string[]; file?: string}>();
-type Wire = {backend: ChatBackend; cwd: string; event: string; args?: string[]; method?: string; params?: Record<string, unknown>; type?: string; action?: string; shouldQuery?: boolean};
+type Wire = {backend: ChatBackend; cwd: string; event: string; args?: string[]; method?: string; params?: Record<string, unknown>; type?: string; action?: string; shouldQuery?: boolean; effectiveModel?: string};
 try {
   await mkdir(project, {recursive: true}); await mkdir(join(directory, 'pi')); await writeFile(join(directory, 'gitconfig'), '');
   process.env.GIT_CONFIG_GLOBAL = join(directory, 'gitconfig'); process.env.GIT_CONFIG_NOSYSTEM = '1';
@@ -31,7 +32,7 @@ try {
   process.env.CLAUDE_CONFIG_DIR = join(directory, 'claude'); process.env.HIVE_CWD_FIXTURE_WIRE = join(directory, 'wire.jsonl');
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const address = server.address(); assert.ok(address && typeof address !== 'string');
-  await writeFile(join(directory, 'pi', 'models.json'), JSON.stringify({providers: {openai: {api: 'openai-responses', baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: 'fixture-only', models: [{id: 'fixture-cwd', name: 'No model requests allowed', input: ['text']}]}}}));
+  await writeFile(join(directory, 'pi', 'models.json'), JSON.stringify({providers: {openai: {api: 'openai-responses', baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: 'fixture-only', models: ['fixture-cwd', 'fixture-inherited'].map(id => ({id, name: id, input: ['text']}))}}}));
   await writeFile(join(directory, 'pi', 'settings.json'), JSON.stringify({defaultProvider: 'openai', defaultModel: 'fixture-cwd'}));
   const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgSign=false', ...args], {cwd: repo, encoding: 'utf8', stdio: 'pipe'});
   git('init', '--template='); await writeFile(join(project, 'file.txt'), 'committed project file'); git('add', '.'); git('commit', '-qm', 'base');
@@ -128,6 +129,101 @@ try {
     wire.filter(row => row.event === 'start').length, 'Search and read-only open never launch another child');
   const after = await runtime.hive.request('GET', '/api/workspaces') as {id: string; path: string}[];
   assert.equal(after.length, 1); assert.equal(after[0]!.path, project); assert.equal(requests, 0);
+
+  // Use the real native model picker operation on both sources, then exercise
+  // inherited first turns with a controlled app-server after a cold reopen.
+  const rootSource = await runtime.chats.createRecord(workspace.id, 'codex');
+  const isolatedSource = records.get('codex')!.record;
+  const chosen = 'fixture-inherited';
+  await runtime.chats.setModel(rootSource.id, 'openai', chosen);
+  await runtime.chats.setModel(isolatedSource.id, 'openai', chosen);
+  const rootOptions = {profile: rootSource.profile, deferFirstConnection: true, sourceSessionId: rootSource.id};
+  await assert.rejects(runtime.chats.createRecord(workspace.id, 'codex', {...rootOptions, deferFirstConnection: false}), {code: 'FRESH_DRAFT_SOURCE_INVALID'});
+  const rootDraft = await runtime.chats.createRecord(workspace.id, 'codex', rootOptions);
+  const staleDraft = await runtime.chats.createRecord(workspace.id, 'codex', rootOptions);
+  const missingModelDraft = await runtime.chats.createRecord(workspace.id, 'codex', rootOptions);
+  const worktreeDraft = await runtime.chats.createFreshWorktreeDraftRecord(workspace.id, isolatedSource.id, randomUUID());
+  const inheritedControlDrafts = [];
+  for (const backend of ['pi', 'pi-rpc', 'claude'] as const) {
+    const source = records.get(backend)!.record;
+    await runtime.chats.setModel(source.id, backend === 'claude' ? 'claude' : 'openai', chosen);
+    inheritedControlDrafts.push(await runtime.chats.createFreshWorktreeDraftRecord(workspace.id, source.id, randomUUID()));
+  }
+  const getWire = async () => (await readFile(process.env.HIVE_CWD_FIXTURE_WIRE!, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as Wire);
+  const wireBeforeBrowse = (await getWire()).length;
+  await runtime.close(); runtime = await createDesktopRuntime(data, () => {}, options);
+  for (const draft of [rootDraft, worktreeDraft, staleDraft, ...inheritedControlDrafts]) {
+    const passive = await runtime.chats.open(draft.id);
+    assert.ok('passive' in passive && passive.passive);
+    assert.equal(passive.model?.id, chosen);
+    assert.equal(passive.inheritedDraftModel, true);
+    assert.equal(passive.codexThreadId, undefined);
+  }
+  assert.equal((await getWire()).length, wireBeforeBrowse, 'passive cold opens send no native requests');
+  for (const draft of inheritedControlDrafts) {
+    const connected = await runtime.chats.open(draft.id, true, true, {limit: 5}, 'connect');
+    assert.equal(connected.model?.id, chosen);
+    assert.equal(connected.inheritedDraftModel, true);
+  }
+  const send = async (id: string, text: string, cwd: string, model: string) => {
+    const accepted = await runtime!.chats.prompt(id, text);
+    assert.equal(accepted.session.model?.id, model);
+    assert.equal(accepted.session.inheritedDraftModel, undefined);
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
+      const turn = (await getWire()).find(row => row.method === 'turn/start' && JSON.stringify(row.params?.input).includes(text));
+      if (turn && !(await runtime!.chats.open(id)).busy) {
+        assert.equal(turn.effectiveModel, model);
+        assert.equal(turn.cwd, cwd);
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw new Error('Controlled first turn did not settle');
+  };
+  await send(rootDraft.id, 'first root draft input', project, chosen);
+  await send(worktreeDraft.id, 'first isolated draft input', worktreeDraft.executionPath, chosen);
+
+  // The peer still echoes an explicitly requested model from thread/start.
+  // A complete catalog without that model must stop the draft before launch.
+  process.env.HIVE_CWD_FIXTURE_MODEL_MISSING = '1';
+  const beforeMissingModel = (await getWire()).length;
+  await assert.rejects(runtime.chats.prompt(missingModelDraft.id, 'do not send without catalog approval'),
+    {code: 'FRESH_DRAFT_MODEL_UNAVAILABLE'});
+  const missingRequests = (await getWire()).slice(beforeMissingModel);
+  assert.ok(missingRequests.some(row => row.method === 'model/list'));
+  assert.ok(missingRequests.every(row => row.method !== 'thread/start' && row.method !== 'turn/start'));
+  delete process.env.HIVE_CWD_FIXTURE_MODEL_MISSING;
+
+  process.env.HIVE_CWD_FIXTURE_MODEL_UNAVAILABLE = '1';
+  await assert.rejects(runtime.chats.prompt(staleDraft.id, 'must wait for model repair'), {code: 'FRESH_DRAFT_MODEL_UNAVAILABLE'});
+  await runtime.close(); runtime = await createDesktopRuntime(data, () => {}, options);
+  const unavailable = await runtime.chats.open(staleDraft.id);
+  assert.ok('unavailableModel' in unavailable && unavailable.unavailableModel?.id === chosen);
+  assert.equal(unavailable.agentId, undefined);
+  const failedConnect = await runtime.chats.open(staleDraft.id, true, true, {limit: 5}, 'connect');
+  assert.ok('passive' in failedConnect && failedConnect.passive && !failedConnect.readOnly);
+  assert.ok('identityError' in failedConnect && failedConnect.identityError?.code === 'FRESH_DRAFT_MODEL_UNAVAILABLE');
+  const claudeDraft = inheritedControlDrafts.find(draft => draft.backend === 'claude')!;
+  const nativeBeforeReset = runtime.chats.list(workspace.id).find(record => record.id === claudeDraft.id)?.nativeclaudeSessionId;
+  assert.ok(nativeBeforeReset, 'Claude picker materialized an unbound native conversation before the restart');
+  const staleClaude = await runtime.chats.open(claudeDraft.id, true, true, {limit: 5}, 'connect');
+  assert.ok('unavailableModel' in staleClaude && staleClaude.unavailableModel?.id === chosen);
+  await runtime.chats.resetFreshDraftModel(workspace.id, claudeDraft.id, 'claude', chosen);
+  const resetClaude = await runtime.chats.open(claudeDraft.id);
+  assert.ok('passive' in resetClaude && resetClaude.passive);
+  assert.equal(resetClaude.nativeclaudeSessionId, undefined);
+  assert.equal(resetClaude.model, undefined);
+  assert.ok(!(await getWire()).some(row => row.method === 'turn/start' && JSON.stringify(row.params?.input).includes('must wait for model repair')));
+  await assert.rejects(runtime.chats.resetFreshDraftModel(workspace.id, staleDraft.id, 'openai', 'wrong'), {code: 'FRESH_DRAFT_MODEL_CHANGED'});
+  const wireBeforeReset = (await getWire()).length;
+  const reset = await runtime.chats.resetFreshDraftModel(workspace.id, staleDraft.id, 'openai', chosen);
+  assert.equal(reset.model, undefined);
+  assert.equal(reset.inheritedDraftModel, undefined);
+  assert.equal((await getWire()).length, wireBeforeReset, 'explicit reset needs no running provider');
+  await send(staleDraft.id, 'send after explicit model reset', project, 'fixture-cwd');
+  assert.equal(requests, 0);
+  console.log('FRESH_DRAFT_MODEL_OK: project and worktree first turns use the persisted selected model after restart; unavailable selection prevents a turn until explicit reset.');
   console.log('WORKTREE_BACKEND_CWD_OK: four actual Chats.open adapters, real Pi SDK header, controlled Codex/Pi-RPC child cwd+restore args and official Claude SDK transcript; cold native identity/path retained, one unchanged Hive workspace, read-only open of missing checkout. Synthetic protocol only; zero model requests.');
 } finally {
   await runtime?.close();

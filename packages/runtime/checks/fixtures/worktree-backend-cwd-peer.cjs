@@ -9,9 +9,8 @@ const send = value => process.stdout.write(JSON.stringify(value) + '\n');
 log({event: 'start', args});
 let state, entries = [], servers = [], parentUuid = null;
 if (backend === 'codex') {
-  const file = path.join(cwd, '.fixture-codex-thread.json');
-  try { state = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  state ??= {id: crypto.randomUUID(), path: file, cwd, historyMode: 'paginated', turns: []};
+  const id = crypto.randomUUID();
+  state = {id, path: path.join(cwd, `.fixture-codex-thread-${id}.json`), cwd, historyMode: 'paginated', turns: [], model: 'fixture-cwd'};
 } else if (backend === 'pi-rpc') {
   const file = arg('--session') ?? path.join(arg('--session-dir'), crypto.randomUUID() + '.jsonl');
   if (fs.existsSync(file)) {
@@ -22,14 +21,16 @@ if (backend === 'codex') {
     state = {sessionId: crypto.randomUUID(), sessionFile: file}; fs.mkdirSync(path.dirname(file), {recursive: true});
     fs.writeFileSync(file, JSON.stringify({type: 'session', version: 3, id: state.sessionId, cwd, timestamp: new Date().toISOString()}) + '\n');
   }
-  Object.assign(state, {isStreaming: false, thinkingLevel: 'medium', model: {id: 'fixture-cwd', provider: 'openai', name: 'Protocol fixture only', input: ['text']}});
+  const id = arg('--model') ?? 'fixture-cwd';
+  Object.assign(state, {isStreaming: false, thinkingLevel: 'medium', model: {id, provider: 'openai', name: id, input: ['text']}});
 } else {
   const sid = arg('--session-id') ?? arg('--resume');
   const file = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), sid + '.jsonl');
-  state = {sid, file};
+  state = {sid, file, model: process.env.HIVE_CWD_FIXTURE_MODEL_UNAVAILABLE ? 'fixture-cwd' : arg('--model') ?? 'fixture-cwd'};
   if (fs.existsSync(file)) for (const raw of fs.readFileSync(file, 'utf8').trim().split('\n')) { const row = JSON.parse(raw); if (row.uuid) parentUuid = row.uuid; }
 }
-const model = {model: 'fixture-cwd', modelProvider: 'openai'};
+const availableModels = ['fixture-cwd', 'fixture-inherited'];
+const codexModel = () => ({model: state.model, modelProvider: 'openai'});
 const saveCodex = () => fs.writeFileSync(state.path, JSON.stringify(state));
 const notify = (method, params) => send({method, params: {threadId: state.id, ...params}});
 readline.createInterface({input: process.stdin}).on('line', raw => {
@@ -37,13 +38,28 @@ readline.createInterface({input: process.stdin}).on('line', raw => {
     const q = JSON.parse(raw);
     if (backend === 'codex') {
       if (!q.method) return;
-      log({event: 'request', method: q.method, params: q.params});
+      log({event: 'request', method: q.method, params: q.params, ...(q.method === 'turn/start' && {effectiveModel: state.model})});
       const answer = result => send({id: q.id, result});
       if (q.method === 'initialize') answer({});
-      else if (q.method === 'model/list') answer({data: [{id: 'fixture-cwd', model: 'fixture-cwd', displayName: 'Protocol fixture only', hidden: false}], nextCursor: null});
-      else if (q.method === 'thread/start') { if (q.params.cwd !== cwd) throw Error('Codex thread/start cwd mismatch'); saveCodex(); answer({thread: {...state, turns: []}, ...model}); }
-      else if (q.method === 'thread/resume') { if (q.params.threadId !== state.id) throw Error('Codex thread identity changed'); answer({thread: {...state, turns: []}, ...model}); }
-      else if (q.method === 'thread/read') answer({thread: {...state, turns: []}, ...model});
+      else if (q.method === 'model/list') {
+        const missing = process.env.HIVE_CWD_FIXTURE_MODEL_MISSING;
+        const ids = q.params.cursor ? availableModels.slice(1) : availableModels.slice(0, 1);
+        answer({data: ids.map(id => ({id, model:id, displayName: id, hidden: false})), nextCursor: q.params.cursor || missing ? null : 'second-page'});
+      }
+      else if (q.method === 'thread/start') {
+        if (q.params.cwd !== cwd) throw Error('Codex thread/start cwd mismatch');
+        if (q.params.model && !process.env.HIVE_CWD_FIXTURE_MODEL_UNAVAILABLE) state.model = q.params.model;
+        saveCodex(); answer({thread: {...state, turns: []}, ...codexModel()});
+      }
+      else if (q.method === 'thread/resume') {
+        state = JSON.parse(fs.readFileSync(path.join(cwd, `.fixture-codex-thread-${q.params.threadId}.json`), 'utf8'));
+        if (q.params.threadId !== state.id) throw Error('Codex thread identity changed');
+        answer({thread: {...state, turns: []}, ...codexModel()});
+      }
+      else if (q.method === 'thread/read') answer({thread: {...state, turns: []}, ...codexModel()});
+      else if (q.method === 'thread/settings/update') {
+        state.model = q.params.model; saveCodex(); answer({}); notify('thread/settings/updated', {threadSettings: {model: state.model}});
+      }
       else if (q.method === 'thread/turns/list') answer({data: state.turns.map(turn => ({...turn, itemsView: 'full'})), nextCursor: null});
       else if (q.method === 'turn/start') {
         const user = {id: crypto.randomUUID(), type: 'userMessage', content: q.params.input};
@@ -59,7 +75,8 @@ readline.createInterface({input: process.stdin}).on('line', raw => {
       const answer = data => send({id: q.id, type: 'response', command: q.type, success: true, data});
       if (q.type === 'get_state') answer(state);
       else if (q.type === 'get_commands') answer({commands: [{name: process.env.HIVE_PI_BRIDGE_COMMAND, source: 'extension', sourceInfo: {path: arg('--extension')}}]});
-      else if (q.type === 'get_available_models') answer({models: [state.model]});
+      else if (q.type === 'get_available_models') answer({models: availableModels.map(id => ({...state.model, id, name: id}))});
+      else if (q.type === 'set_model') { state.model = {...state.model, id: q.modelId, provider: q.provider, name: q.modelId}; answer(state.model); }
       else if (q.type === 'get_entries') {
         const index = q.since === undefined ? -1 : entries.findIndex(entry => entry.id === q.since);
         answer({entries: entries.slice(index + 1), leafId: entries.at(-1)?.id ?? null});
@@ -78,9 +95,10 @@ readline.createInterface({input: process.stdin}).on('line', raw => {
       log({event: 'incoming', type: q.type, subtype: q.request?.subtype, shouldQuery: q.shouldQuery});
       if (q.type === 'control_request') {
         const sub = q.request.subtype; let response = {};
-        if (sub === 'initialize') { servers = q.request.sdkMcpServers ?? []; response = {commands: [], models: [{value: 'fixture-cwd', displayName: 'Protocol fixture only', description: 'No inference'}], account: {}}; }
+        if (sub === 'initialize') { servers = q.request.sdkMcpServers ?? []; response = {commands: [], models: availableModels.map(id => ({value:id, displayName:id, description: 'No inference'})), account: {}}; }
         else if (sub === 'mcp_status') response = {mcpServers: servers.map(name => ({name, status: 'connected', serverInfo: {name, version: '1'}, config: {type: 'sdk', name}}))};
-        else if (sub === 'get_settings') response = {applied: {model: 'fixture-cwd', effort: 'medium'}};
+        else if (sub === 'set_model') state.model = q.request.model;
+        else if (sub === 'get_settings') response = {applied: {model: state.model, effort: 'medium'}};
         send({type: 'control_response', response: {subtype: 'success', request_id: q.request_id, response}});
       } else if (q.type === 'user') {
         if (q.shouldQuery !== false) throw Error('Claude model query is forbidden in this fixture');

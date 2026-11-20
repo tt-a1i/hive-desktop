@@ -1,3 +1,6 @@
+mod inherited;
+pub(crate) use inherited::is_unavailable_inherited_model_error;
+
 use crate::{app::HiveApp, language::tr, palette::Color};
 use gpui_kit::{
     assets::IconName as Glyph,
@@ -29,6 +32,7 @@ impl HiveApp {
         let raw_name = selected
             .filter(|model| !model.name.trim().is_empty())
             .map(|model| model.name.clone())
+            .or_else(|| current.and_then(|model| model.name.as_ref().filter(|name| !name.trim().is_empty()).cloned()))
             .or_else(|| current.map(|model| model.id.clone()))
             .unwrap_or_else(|| tr("选择模型").into());
         let name = ["Codex", "Claude", "Pi", "外部 Pi", tr("外部 Pi")]
@@ -36,7 +40,7 @@ impl HiveApp {
             .find_map(|tag| raw_name.strip_suffix(&format!(" · {tag}")))
             .map(str::to_owned)
             .unwrap_or(raw_name);
-        let effort = self.reasoning_label();
+        let effort = self.reasoning_label().filter(|level| !level.trim().is_empty());
         let label = effort
             .as_ref()
             .map(|level| format!("{name} · {level}"))
@@ -56,8 +60,14 @@ impl HiveApp {
             .and_then(|s| s.profile.as_ref())
             .map(|profile| format!("\n{}", self.profile_label(profile)))
             .unwrap_or_default();
+        let picker_label = tr("选择会话模型与推理强度");
+        let accessibility = if self.session.as_ref().is_some_and(|session| session.inherited_draft_model) {
+            format!("{picker_label} · {label}")
+        } else {
+            picker_label.to_owned()
+        };
         let trigger = Button::new("choose-model")
-            .accessibility_label(tr("选择会话模型与推理强度"))
+            .accessibility_label(accessibility)
             .custom(crate::palette::quiet_icon_variant(cx))
             .compact()
             .h(px(26.))

@@ -34,6 +34,7 @@ export interface CodexSessionOptions {
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   model?: { provider: string; id: string };
+  verifyInitialModel?: true;
   mode?: string;
   permissionMode?: string;
   customTools?: CodexTool[];
@@ -311,8 +312,11 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       const page: { data: Model[]; nextCursor: string | null } = await transport.sendRequest('model/list', { cursor, includeHidden: true });
       models.push(...page.data); cursor = page.nextCursor;
     } while (cursor);
+    const selectedModel = options.model;
+    if (options.verifyInitialModel && selectedModel && !models.some(model => model.model === selectedModel.id))
+      throw new Error('Codex no longer lists the inherited model');
     if (options.mode || options.permissionMode) await modes.validateInitial();
-    const modelParams = options.model ? { model: options.model.id, modelProvider: options.model.provider } : {};
+    const modelParams = selectedModel ? { model: selectedModel.id, modelProvider: selectedModel.provider } : {};
     if (options.threadId) {
       projection = new CodexProjection(options.sessionDir, options.threadId);
       await resume({ ...modelParams, ...modes.threadParams(), ...(options.deferGoalContinuation&&{deferGoalContinuation:true}) });

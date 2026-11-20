@@ -49,6 +49,40 @@ const MARKDOWN_MAX_LINES: usize = 1000;
 const DOCK_WIDTH: f32 = 320.;
 const CHAT_MIN_WIDTH: f32 = 600.;
 const DOCK_WIDTH_STEP: f32 = 24.;
+const FILE_SPLIT_HANDLE: f32 = 8.;
+const FILE_SPLIT_STEP: f32 = 24.;
+const FILE_SPLIT_MIN_LIST: f32 = 104.;
+const FILE_SPLIT_MIN_PREVIEW: f32 = 148.;
+
+#[derive(Clone, Copy)]
+struct FileSplit {
+    available: f32,
+    minimum: f32,
+    maximum: f32,
+    list: f32,
+}
+
+impl FileSplit {
+    fn new(height: Pixels, preferred: Option<u8>, docked: bool) -> Self {
+        let available = (f32::from(height) - FILE_SPLIT_HANDLE).max(1.);
+        let minimum = FILE_SPLIT_MIN_LIST.min(available / 3.).max(available / 5.);
+        let preview_minimum = FILE_SPLIT_MIN_PREVIEW
+            .min(available / 3.)
+            .max(available / 5.);
+        let maximum = available - preview_minimum;
+        let share = f32::from(preferred.unwrap_or(if docked { 50 } else { 40 })) / 100.;
+        Self {
+            available,
+            minimum,
+            maximum,
+            list: (available * share).clamp(minimum, maximum),
+        }
+    }
+
+    fn percent(self, height: f32) -> u8 {
+        (100. * height.clamp(self.minimum, self.maximum) / self.available).round() as u8
+    }
+}
 
 fn dock_width(preferred: Option<Pixels>, available: Pixels) -> Option<Pixels> {
     let maximum = available - px(CHAT_MIN_WIDTH);
@@ -66,6 +100,19 @@ struct ResizeFileDock {
 }
 
 impl Render for ResizeFileDock {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+#[derive(Clone)]
+struct ResizeFilePreview {
+    list: f32,
+    starting_y: Cell<Pixels>,
+    generation: u64,
+}
+
+impl Render for ResizeFilePreview {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
     }
@@ -847,6 +894,9 @@ pub(crate) struct FileBrowser {
     root_focus: FocusHandle,
     browser_focus: FocusHandle,
     resize_focus: FocusHandle,
+    split_focus: FocusHandle,
+    split_height: Pixels,
+    split_drag: Option<u8>,
     tree_focus: FocusHandle,
     content_results_focus: FocusHandle,
     tree_selected: Option<TreeItem>,
@@ -1071,6 +1121,9 @@ impl HiveApp {
                 root_focus: cx.focus_handle(),
                 browser_focus: cx.focus_handle(),
                 resize_focus: cx.focus_handle(),
+                split_focus: cx.focus_handle(),
+                split_height: px(0.),
+                split_drag: None,
                 tree_focus,
                 content_results_focus: cx.focus_handle().tab_stop(true),
                 tree_selected: None,
@@ -1333,6 +1386,7 @@ impl FileBrowser {
 
     fn dismiss(&mut self) {
         self.dismissed = true;
+        self.split_drag = None;
         self.search_task = None;
         self.preview_task = None;
         self.tree_preview = None;
@@ -1352,6 +1406,7 @@ impl FileBrowser {
         self.scope = scope;
         self.runtime = runtime;
         self.scope_generation += 1;
+        self.split_drag = None;
         self.directories.clear();
         self.tree_selected = None;
         self.reveal = None;
@@ -3197,7 +3252,100 @@ impl FileBrowser {
             .collect()
     }
 
-    fn preview_view(&self, height: Pixels, cx: &Context<Self>) -> impl IntoElement {
+    fn set_file_split(&mut self, percent: Option<u8>, cx: &mut Context<Self>) {
+        if !self.current(cx) {
+            return;
+        }
+        let mut settings = crate::general::current(cx);
+        if settings.file_preview_split != percent {
+            settings.file_preview_split = percent;
+            crate::general::set(settings, cx);
+        }
+        cx.notify();
+    }
+
+    fn finish_file_split(&mut self, cx: &mut Context<Self>) {
+        if let Some(percent) = self.split_drag.take() {
+            self.set_file_split(Some(percent), cx);
+        }
+    }
+
+    fn file_split_handle(&self, split: FileSplit, cx: &Context<Self>) -> impl IntoElement {
+        let focus = self.split_focus.clone();
+        resize_handle("project-file-preview-resize", Axis::Vertical)
+            .inside(HandleEdge::Leading)
+            .role(Role::Splitter)
+            .aria_label(tr(
+                "调整文件列表与预览的高度，使用上下方向键，双击或按 Home 恢复默认",
+            ))
+            .aria_orientation(accesskit::Orientation::Horizontal)
+            .aria_numeric_value(f64::from(split.list))
+            .aria_min_numeric_value(f64::from(split.minimum))
+            .aria_max_numeric_value(f64::from(split.maximum))
+            .track_focus(&focus)
+            .tab_stop(true)
+            .with_appearance(Rc::new(move |_, window, cx| {
+                focus.is_focused(window).then(|| {
+                    div()
+                        .w_full()
+                        .h(px(2.))
+                        .flex_none()
+                        .bg(Color::Secondary.get(cx))
+                        .into_any_element()
+                })
+            }))
+            .on_drag(
+                ResizeFilePreview {
+                    list: split.list,
+                    starting_y: Cell::default(),
+                    generation: self.scope_generation,
+                },
+                |drag, _, window, cx| {
+                    drag.starting_y.set(window.mouse_position().y);
+                    cx.new(|_| drag.clone())
+                },
+            )
+            .on_drag_move(cx.listener(
+                move |this, event: &DragMoveEvent<ResizeFilePreview>, _, cx| {
+                    let drag = event.drag(cx);
+                    if drag.generation != this.scope_generation || !this.current(cx) {
+                        return;
+                    }
+                    let list =
+                        drag.list + f32::from(event.event.position.y - drag.starting_y.get());
+                    let percent = split.percent(list);
+                    if this.split_drag != Some(percent) {
+                        this.split_drag = Some(percent);
+                        cx.notify();
+                    }
+                },
+            ))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.finish_file_split(cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.finish_file_split(cx)),
+            )
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                let modifiers = event.keystroke.modifiers;
+                if modifiers.alt || modifiers.control || modifiers.platform || modifiers.shift {
+                    return;
+                }
+                let percent = match event.keystroke.key.as_str() {
+                    "up" => Some(split.percent(split.list - FILE_SPLIT_STEP)),
+                    "down" => Some(split.percent(split.list + FILE_SPLIT_STEP)),
+                    "home" => None,
+                    _ => return,
+                };
+                this.set_file_split(percent, cx);
+                cx.stop_propagation();
+            }))
+            .on_double_click(cx.listener(|this, _, _, cx| this.set_file_split(None, cx)))
+    }
+
+    fn preview_view(&self, height: Pixels, stretch: bool, cx: &Context<Self>) -> impl IntoElement {
         let mut panel = v_flex().flex_1().min_w_0().min_h_0().gap_2();
         let Some(preview) = &self.preview else {
             return panel.child(
@@ -3299,7 +3447,7 @@ impl FileBrowser {
             )
             .child(
                 text_reading::region("browser-preview".into(), path, scroll, height, cx)
-                    .when(self.docked, |region| region.flex_1().min_h_0())
+                    .when(stretch, |region| region.flex_1().min_h_0())
                     .child(rendered.map_or_else(
                         || preview_text("browser-text-preview", text, cx),
                         |markdown| markdown.render("browser-markdown-preview", cx),
@@ -3696,6 +3844,7 @@ impl Render for FileBrowser {
             rows.iter().map(|row| self.tree_row(row, cx)).collect()
         };
         let narrow = self.docked || window.viewport_size().width < px(690.);
+        let stacked = narrow && self.preview.is_some();
         let body = window.viewport_size().height * 0.62;
         let list_height = if narrow { body * 0.40 } else { body };
         let preview_height = if narrow {
@@ -3727,8 +3876,8 @@ impl Render for FileBrowser {
                         Role::Tree
                     })
                     .aria_label(name)
-                    .when(self.docked, |list| list.flex_1().min_h_0())
-                    .when(!self.docked, |list| list.h(list_height))
+                    .when(self.docked || stacked, |list| list.flex_1().min_h_0())
+                    .when(!self.docked && !stacked, |list| list.h(list_height))
                     .min_w_0()
                     .overflow_y_scroll()
                     .track_scroll(scroll)
@@ -3817,38 +3966,62 @@ impl Render for FileBrowser {
                         ),
                 )
             });
-        let panels = if self.docked {
+        let panels = if stacked {
+            let height = if self.split_height > px(0.) {
+                self.split_height
+            } else {
+                body
+            };
+            let preferred = self
+                .split_drag
+                .or(crate::general::current(cx).file_preview_split);
+            let split = FileSplit::new(height, preferred, self.docked);
+            let share = split.list / split.available;
+            let browser = cx.weak_entity();
             v_flex()
-                .flex_1()
                 .min_h_0()
-                .gap_2()
-                .child(list)
-                .when(self.preview.is_some(), |panels| {
-                    panels.child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_hidden()
-                            .flex()
-                            .border_t_1()
-                            .border_color(Color::Divider.get(cx))
-                            .pt_2()
-                            .child(self.preview_view(window.viewport_size().height, cx)),
-                    )
+                .when(self.docked, |panels| panels.flex_1())
+                .when(!self.docked, |panels| panels.h(body).flex_shrink_0())
+                .child(list.flex_1().flex_grow(share).min_h_0().overflow_hidden())
+                .child(
+                    div()
+                        .relative()
+                        .h(px(FILE_SPLIT_HANDLE))
+                        .w_full()
+                        .flex_none()
+                        .child(self.file_split_handle(split, cx)),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .flex_grow(1. - share)
+                        .min_h_0()
+                        .overflow_hidden()
+                        .child(self.preview_view(window.viewport_size().height, true, cx)),
+                )
+                .on_prepaint(move |bounds, _, cx| {
+                    let _ = browser.update(cx, |browser, cx| {
+                        if browser.split_height != bounds.size.height {
+                            browser.split_height = bounds.size.height;
+                            cx.notify();
+                        }
+                    });
                 })
                 .into_any_element()
+        } else if self.docked {
+            list.into_any_element()
         } else if narrow {
             v_flex()
                 .gap_2()
                 .child(list)
-                .child(self.preview_view(preview_height, cx))
+                .child(self.preview_view(preview_height, false, cx))
                 .into_any_element()
         } else {
             h_flex()
                 .items_start()
                 .gap_3()
                 .child(list)
-                .child(self.preview_view(preview_height, cx))
+                .child(self.preview_view(preview_height, false, cx))
                 .into_any_element()
         };
         let source = self
@@ -4000,7 +4173,6 @@ impl Render for FileBrowser {
 
 #[cfg(test)]
 mod tests {
-    use super::SearchPage;
     use super::{
         Directory, DirectoryEntry, FILE_TREE_STATUS_LIMIT, FileError, FilePreviewMode, FileReveal,
         FileTreeExpansions, MARKDOWN_MAX_BLOCK_BYTES, MARKDOWN_MAX_BYTES, MARKDOWN_MAX_LINES,
@@ -4009,8 +4181,26 @@ mod tests {
         is_expand_preview_chord, is_markdown_file, json, px, step_preview,
         supports_markdown_preview, unrequested_expansions, visible_tree,
     };
+    use super::{FileSplit, SearchPage};
     use gpui_kit::{Keystroke, Modifiers, ScrollHandle, point};
     use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn file_preview_split_uses_the_measured_container_and_keeps_both_panes_usable() {
+        assert_eq!(FileSplit::new(px(608.), None, true).list, 300.);
+        assert_eq!(FileSplit::new(px(608.), None, false).list, 240.);
+        let large = FileSplit::new(px(608.), Some(62), true);
+        assert_eq!(large.list, 372.);
+        assert_eq!(large.percent(large.list + 24.), 66);
+        assert_eq!(large.percent(large.list - 24.), 58);
+        let reduced = FileSplit::new(px(308.), Some(80), false);
+        assert_eq!(reduced.list, 200.);
+        assert_eq!(reduced.available - reduced.list, 100.);
+        assert_eq!(reduced.percent(0.), 33);
+        assert_eq!(reduced.percent(300.), 67);
+        let large_again = FileSplit::new(px(1008.), Some(80), false);
+        assert_eq!(large_again.list, 800.);
+    }
 
     #[test]
     fn content_results_accept_old_payloads_and_keep_snippets_out_of_selection_identity() {

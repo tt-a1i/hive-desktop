@@ -656,7 +656,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     }
     case 'chat.createRecord':
     case 'chat.create': {
-      exact(params, ['workspaceId', 'backend', 'profile', 'isolation', 'branch', 'skipSetup', 'expectedSetupRevision', ...(method === 'chat.createRecord' ? ['deferFirstConnection'] : [])]);
+      exact(params, ['workspaceId', 'backend', 'profile', 'isolation', 'branch', 'skipSetup', 'expectedSetupRevision', ...(method === 'chat.createRecord' ? ['deferFirstConnection', 'sourceSessionId'] : [])]);
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude' && params.backend !== 'acp') throw new Error('Unsupported chat backend');
       if (params.isolation !== undefined && params.isolation !== 'worktree') throw new Error('Unsupported session isolation');
       if (params.branch !== undefined && (params.isolation !== 'worktree' || typeof params.branch !== 'string')) throw new Error('A branch is only valid for a new worktree session');
@@ -664,9 +664,13 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       if (params.expectedSetupRevision !== undefined && typeof params.expectedSetupRevision !== 'string') throw new Error('Invalid setup revision');
       if (params.skipSetup !== undefined && typeof params.skipSetup !== 'boolean') throw new Error('Invalid setup selection');
       if (params.deferFirstConnection !== undefined && typeof params.deferFirstConnection !== 'boolean') throw new TypeError('deferFirstConnection must be a boolean');
-      const options = {...optionalProfile(params), ...(params.skipSetup !== undefined && {skipSetup: params.skipSetup as boolean}), ...(params.expectedSetupRevision !== undefined && {expectedSetupRevision: params.expectedSetupRevision as string}), ...(params.isolation === 'worktree' && {isolation: 'worktree' as const}), ...(typeof params.branch === 'string' && {branch: params.branch}), ...(params.deferFirstConnection === true && {deferFirstConnection: true})};
+      const options = {...optionalProfile(params), ...(params.skipSetup !== undefined && {skipSetup: params.skipSetup as boolean}), ...(params.expectedSetupRevision !== undefined && {expectedSetupRevision: params.expectedSetupRevision as string}), ...(params.isolation === 'worktree' && {isolation: 'worktree' as const}), ...(typeof params.branch === 'string' && {branch: params.branch}), ...(params.deferFirstConnection === true && {deferFirstConnection: true}),
+        ...(params.sourceSessionId !== undefined && {sourceSessionId: text(params, 'sourceSessionId')})};
       return method === 'chat.createRecord' ? chats.createRecord(workspace, params.backend, options) : chats.create(workspace, params.backend, options);
     }
+    case 'chat.resetFreshDraftModel':
+      exact(params, ['workspaceId', 'sessionId', 'expectedProvider', 'expectedModelId']);
+      return chats.resetFreshDraftModel(text(params, 'workspaceId'), text(params, 'sessionId'), text(params, 'expectedProvider'), text(params, 'expectedModelId'));
     case 'chat.pin': {
       const session = chats.setPinned(text(params, 'sessionId'), params.pinned);
       return { session, sessions: chats.list(session.workspaceId) };

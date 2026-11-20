@@ -298,8 +298,24 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - 文件名运行时专项覆盖路径分页、大小写、原始 Unicode、带空格和换行的相对路径、无效正则、取消以及工作树隔离。编译后的 JSONL 接口独立验证了翻页和取消。
 - 267 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时构建、工作树及初始化、Git 远端、项目文件专项和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第二十三批
+
+本轮从 Hive Desktop `362939e` 开始。参考 T3 Code `90c028c`、Cindy `e035080`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **后台发送后保留源会话已选模型。** 项目根和独立工作树的后续草稿读取同一工作区、后端和配置中的已保存选择。打开空草稿即可看到模型，启动后确认后端使用该模型再接收首次输入。模型失效时保留草稿，并提供「使用配置默认模型」。 [T3 Code 新对话的模型选择](https://github.com/pingdotgg/t3code/blob/90c028c6fc4a9ecd3af048cb52432e819af6487c/docs/user/thread-sidebar.md#L6-L13)
+- **窄窗收件箱集中显示筛选。** 一个原生菜单显示生效数量和四项当前值，项目、成员、后端和最近活跃仍可组合。改窗宽时筛选继续生效，大窗口提供直接入口，清除后焦点回到当前布局的筛选按钮。 [Cindy 筛选摘要](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/apps/desktop/src/renderer/features/cc-agent/sidebar/SidebarFilterPopover.tsx#L545-L565)
+- **调整文件列表和预览的上下高度。** 停靠面板和窄窗弹层都提供分隔条，可拖动或用上下方向键调整，按 Home 或双击恢复。比例保存到本机设置，宽窗的左右布局沿用原来的方式。 [Beluga 文件区垂直分隔条](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L393-L405)
+
+- 运行时用受控 Codex 对端分别验证项目根和独立工作树的新草稿冷启动后，在首次实际协议请求中使用手选的非默认模型。另验证了 Pi、Pi RPC、Claude 的选模和 Claude 模型菜单连接后再冷启的失效恢复。失效模型无法以其他模型发出原输入，显式切回默认模型后才会按配置发送。全程无模型网络请求。证据在 `.artifacts/batch23-fresh-draft-model.log`。
+- macOS 在独立工作树会话手动选择 Fixture Alternate。后台发送后的草稿立即显示该模型，重启后相同模型和输入仍在。另一个隔离夹具中先让原会话结束，再提交后续草稿。受控 Codex 对端以 `fixture-alternate` 和新工作树目录启动线程，收到一次后继输入。证据在 `.artifacts/fresh-model-qa` 和 `.artifacts/fresh-model-finish-qa`。
+- 复验中发现 Codex 的模型列表移除已选模型、但线程启动回显原模型时，旧路径仍会发送。修正后先核对完整模型目录：缺失时既不创建线程也不发送输入，模型在第 2 页时仍正常。Codex 专项通过，证据在 `.artifacts/batch23-missing-model-catalog.log`。
+- macOS 在本地模拟对端从目录移除继承模型后，发送失败直接在输入区显示「使用配置默认模型」，原草稿完整。切回默认模型后重新发送，受控对端按配置默认模型启动。证据在 `.artifacts/fresh-model-missing-repeat-qa` 和 `.artifacts/fresh-model-inline-qa`。
+- macOS 在 640×480 窄窗设置四项筛选，菜单保留长项目名和成员名。将同一个窗口拉宽到 1220 后，四项出现在各自的直接入口。再次缩窄，从原生菜单用方向键和 Return 清除，读屏可见的生效数量回到 0。证据在 `.artifacts/compact-inbox-qa`。
+- macOS 在停靠面板打开 600 行文件，用上方向键和鼠标拖动调整列表与预览，固定的左右宽度保持。重启后再次打开同文件，恢复到保存的约 36% 比例。Home 恢复默认比例。在 640×600 窄窗弹层，按下方向键扩大列表，再按 Home 回到精确的原位置。证据在 `.artifacts/file-split-qa`。
+- 269 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时构建、工作树与桌面视图、Pi 模型、Codex 专项和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **新草稿保留已选模型。** 目前后台发送的新草稿保留后端和固定配置，源会话手动选定的模型没有写入新草稿。用默认模型和手动选择不一致的配置验收，检查切换、重启后显示、首次实际发送使用的模型，以及跨后端或模型失效时的处理。 [T3 Code 新对话的模型选择](https://github.com/pingdotgg/t3code/blob/0702c6fdcabd70ca6c5a765bc744a24989979540/docs/user/thread-sidebar.md#L6-L13)
-- **窄窗收件箱集中显示筛选。** 现有控件在窗口变窄、项目或成员较长时换行，会压缩待办区域。用两个同名项目、四项组合筛选和 640 像素宽的窗口验收，确认单个入口会显示有效条件数，键盘能查看、修改和清除条件。 [Cindy 筛选摘要](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/apps/desktop/src/renderer/features/cc-agent/sidebar/SidebarFilterPopover.tsx#L545-L565)
-- **调整文件列表和预览的上下高度。** 当前停靠面板和窄窗弹层都使用固定比例。在打开 400 行文件和大量目录项后，拖动或用键盘调整分隔条，验证记住比例，以及文件、搜索词和预览位置仍可恢复。 [Beluga 文件区垂直分隔条](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L393-L405)
+- **后续草稿保留受支持的会话模式。** Hive 已保存源会话的模式，但后台发送后的草稿只继承模型。用同一配置下两个已公布的模式验收，验证默认与手动选择的差异、首次实际发送以及模式失效或后端不支持时的处理。 [T3 Code 新对话沿用模式](https://github.com/pingdotgg/t3code/blob/90c028c6fc4a9ecd3af048cb52432e819af6487c/docs/user/thread-sidebar.md#L6-L13)
+- **从收件箱标题直接打开事项。** 当前用户需要点右侧窄按钮。用两个项目的同名会话、一个派单和一条已处理记录验收标题点击和键盘操作，再确认右侧暂缓、已读和恢复各自只执行本来的动作。 [Cindy 收件箱行导航](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/apps/desktop/src/renderer/features/cc-agent/sidebar/SessionItem.tsx#L946-L984)
+- **一次折叠文件树的目录。** 目前需要逐个折叠。用两个工作树中的同名嵌套目录验收批量折叠只影响当前范围，保留预览和阅读位置，目录回包延迟时也保持折叠。 [Beluga 全部折叠入口](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L320-L330)
