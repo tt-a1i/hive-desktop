@@ -6,8 +6,9 @@ export type RegexScan = {total: number; lines: RegexLine[]};
 
 type Configuration = {query: string; caseSensitive: boolean; wordClass?: string; rangeLimit: number};
 type ScanRequest = {kind: 'scan'; text: string; offset: number; limit: number};
-export type RegexRequest = ScanRequest | {kind: 'matchPaths'; paths: readonly string[]};
-export type RegexResult = ({kind: 'scanned'} & RegexScan) | {kind: 'matchedPaths'; indices: number[]};
+export type RegexRequest = ScanRequest | {kind: 'matchPaths' | 'pathRanges'; paths: readonly string[]};
+export type RegexResult = ({kind: 'scanned'} & RegexScan) | {kind: 'matchedPaths'; indices: number[]}
+  | {kind: 'pathRanges'; ranges: RegexRange[][]};
 const port = parentPort!;
 const {query, caseSensitive, wordClass, rangeLimit} = workerData as Configuration;
 const flags = caseSensitive ? 'gu' : 'giu';
@@ -58,6 +59,14 @@ function matchPaths(pattern: RegExp, paths: readonly string[]): RegexResult {
   return {kind: 'matchedPaths', indices};
 }
 
+function pathRanges(pattern: RegExp, paths: readonly string[]): RegexResult {
+  return {kind: 'pathRanges', ranges: paths.map(path => {
+    pattern.lastIndex = 0;
+    const first = pattern.exec(path);
+    return first ? highlightRanges(pattern, path, first) : [];
+  })};
+}
+
 try {
   // Validate the user expression before combining it with our static word
   // assertions. Both compilation and execution stay in this worker.
@@ -67,8 +76,12 @@ try {
     : userPattern;
   port.on('message', (request: RegexRequest) => {
     try {
-      const result: RegexResult = request.kind === 'scan'
-        ? {kind: 'scanned', ...scan(pattern, request)} : matchPaths(pattern, request.paths);
+      let result: RegexResult;
+      switch (request.kind) {
+        case 'scan': result = {kind: 'scanned', ...scan(pattern, request)}; break;
+        case 'matchPaths': result = matchPaths(pattern, request.paths); break;
+        case 'pathRanges': result = pathRanges(pattern, request.paths); break;
+      }
       port.postMessage(result);
     } catch {
       port.postMessage({kind: 'failed'});

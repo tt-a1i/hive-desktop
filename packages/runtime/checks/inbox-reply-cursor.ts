@@ -193,9 +193,11 @@ try {
   }
   type Attention = {
     kind: string; dispatch_id?: string; message_id?: string; worker_id?: string; worker_name?: string;
+    message_sender_id?: string; message_created_at?: number;
     dispatch_backend?: string | null; severity?: string; submitted_at?: number; minutes_ago?: number; task_title?: string | null;
   };
-  type Center = {summary: {waiting_reports: number}; attention: Attention[]; recent_dispatch_messages: {dispatch_id: string}[]};
+  type Cursor = {through: number; nextAfter: number | null};
+  type Center = {summary: {waiting_reports: number}; attention: Attention[]; recent_dispatch_messages: {dispatch_id: string}[]; inbox_actionable_cursor?: Cursor};
   const actionCenter = `/api/ui/workspaces/${workspace.id}/action-center`;
   const base = `http://127.0.0.1:${hivePort}`;
   const rawUnauthorized = await fetch(base + actionCenter);
@@ -271,7 +273,7 @@ try {
   await wire.close();
   wire = undefined;
   wire = launch();
-  await wire.request('initialize');
+  const {hivePort: restartedHivePort} = await wire.request<{hivePort: number}>('initialize');
   assert.deepEqual(await queryInput(workspace.id), {workspaceId: workspace.id, inputs: [{dispatchId: watched, sequence: 9, createdAt: stamp + 50}]});
   console.log('INBOX_DISPATCH_INPUT_OK: exact eligible input behind workspace preview, ask scope isolation, and cold restart');
 
@@ -317,6 +319,89 @@ try {
   assert.equal(await readSelected(randomUUID()), null);
   assert.equal(await readSelected(cancelledQuestion), null);
   console.log('INBOX_EXACT_QUESTION_OK: two questions past the 100-row history, exact full text and workspace/dispatch isolation');
+
+  const newestQuestion = randomUUID();
+  const foreignDispatch = randomUUID();
+  const foreignQuestion = randomUUID();
+  const queuedNote = randomUUID();
+  const deliveringNoise = randomUUID();
+  const lateQuestion = randomUUID();
+  function addInboxBacklog(late = false) {
+    const db = new DatabaseSync(join(dataDir, 'hive', 'runtime.sqlite'));
+    try {
+      const add = db.prepare(`INSERT INTO dispatch_messages
+        (id, workspace_id, dispatch_id, sequence, from_agent_id, recipient_agent_id, kind, text, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const insert = (id: string, dispatch: string, sequence: number, kind: string) =>
+        add.run(id, workspace.id, dispatch, sequence, later.id, `${workspace.id}:orchestrator`, kind, 'Private fixture content', stamp + sequence);
+      if (late) {
+        insert(lateQuestion, waiting[3]!, 12, 'question');
+        return;
+      }
+      insert(queuedNote, detailed, 104, 'note');
+      insert(deliveringNoise, detailed, 105, 'note');
+      const outbox = db.prepare('INSERT INTO dispatch_message_outbox (message_id, state) VALUES (?, ?)');
+      outbox.run(queuedNote, 'queued');
+      outbox.run(deliveringNoise, 'delivering');
+      for (let i = 0; i < 98; i++) insert(randomUUID(), detailed, 106 + i, 'question');
+      insert(newestQuestion, waiting[3]!, 11, 'question');
+      db.prepare(`INSERT INTO dispatches
+        (id, workspace_id, status, text, to_agent_id, created_at, root_dispatch_id)
+        VALUES (?, ?, 'submitted', 'Foreign dispatch', ?, ?, ?)`).run(foreignDispatch, foreign.id, `${foreign.id}:orchestrator`, stamp, foreignDispatch);
+      add.run(foreignQuestion, foreign.id, foreignDispatch, 1, `${foreign.id}:orchestrator`,
+        `${foreign.id}:orchestrator`, 'question', 'Foreign fixture content', stamp);
+    } finally {
+      db.close();
+    }
+  }
+  addInboxBacklog();
+  type ActionablePage = Cursor & {workspaceId: string; questionsOnly: boolean; rows: Attention[]};
+  const readTail = (page: Cursor, questionsOnly: boolean) => wire!.request<ActionablePage>('inbox.actionablePage',
+    {workspaceId: workspace.id, after: page.nextAfter, through: page.through, questionsOnly});
+  const initial = await wire.request<Center>('hive.request', {method: 'GET', path: actionCenter});
+  const initialRows = initial.attention.filter(row => ['question_waiting_answer', 'message_delivery_pending'].includes(row.kind));
+  const initialCursor = initial.inbox_actionable_cursor;
+  assert.ok(initialCursor?.nextAfter);
+  assert.equal(initialRows.length, 100);
+  assert.ok(initialRows.some(row => row.message_id === queuedNote && row.kind === 'message_delivery_pending'));
+  assert.ok(!initialRows.some(row => [deliveringNoise, cancelledQuestion, foreignQuestion, newestQuestion].includes(row.message_id!)));
+  assert.equal(initialRows[0]?.message_sender_id, early.id);
+  assert.equal(initialRows[0]?.message_created_at, stamp + 101);
+  const firstBadge = await wire.request<ActionablePage[]>('inbox.actionableQuestionPages', {workspaceIds: [workspace.id, foreign.id]});
+  const exactBadge = firstBadge.find(page => page.workspaceId === workspace.id);
+  const foreignBadge = firstBadge.find(page => page.workspaceId === foreign.id);
+  assert.ok(exactBadge?.nextAfter);
+  assert.equal(exactBadge.rows.length, 100);
+  assert.ok(exactBadge.rows.every(row => Object.keys(row).sort().join() === 'dispatch_id,kind,message_id'));
+  assert.deepEqual(foreignBadge?.rows.map(row => row.message_id), [foreignQuestion]);
+  assert.equal(foreignBadge?.nextAfter, null);
+  addInboxBacklog(true);
+  const openTail = await readTail(initialCursor, false);
+  assert.equal(openTail.nextAfter, null);
+  assert.equal(openTail.rows.length, 2);
+  assert.deepEqual(openTail.rows.filter(row => row.message_id === newestQuestion).map(row => [row.worker_id, row.message_sender_id, row.dispatch_backend]),
+    [[`${workspace.id}:orchestrator`, later.id, 'codex']]);
+  assert.ok(!openTail.rows.some(row => row.message_id === lateQuestion || 'text' in row));
+  const badgeTail = await readTail(exactBadge, true);
+  assert.deepEqual(badgeTail.rows.map(row => row.message_id), [newestQuestion]);
+  assert.equal(badgeTail.nextAfter, null);
+  await assert.rejects(wire.request('inbox.actionablePage', {workspaceId: randomUUID(), after: 1, through: exactBadge.through}));
+  await assert.rejects(wire.request('inbox.actionablePage', {workspaceId: workspace.id, after: exactBadge.through, through: exactBadge.through}));
+  const refreshedBadge = (await wire.request<ActionablePage[]>('inbox.actionableQuestionPages', {workspaceIds: [workspace.id]}))[0]!;
+  assert.deepEqual((await readTail(refreshedBadge, true)).rows.map(row => row.message_id), [newestQuestion, lateQuestion]);
+  const legacy = await wire.request<{messageId: string}[]>('inbox.actionableQuestions', {workspaceIds: [workspace.id]});
+  assert.ok(!legacy.some(row => row.messageId === newestQuestion));
+  const restartedBase = `http://127.0.0.1:${restartedHivePort}`;
+  const restartedSession = await fetch(restartedBase + '/api/ui/session');
+  const restartedCookie = restartedSession.headers.get('set-cookie')?.split(';', 1)[0];
+  await restartedSession.body?.cancel();
+  assert.ok(restartedCookie);
+  const rawBacklog = await fetch(restartedBase + actionCenter, {headers: {cookie: restartedCookie, origin: restartedBase}});
+  assert.ok(rawBacklog.ok);
+  const upstreamBacklog: Center = await rawBacklog.json();
+  assert.ok(!('inbox_actionable_cursor' in upstreamBacklog));
+  assert.ok(!upstreamBacklog.attention.some(row => row.message_id === newestQuestion));
+  console.log('INBOX_ACTIONABLE_PAGES_OK: initial and next workspace pages, badge isolation, queued classification, stable boundary and 101st question');
 } finally {
   await wire?.close();
   await rm(root, {recursive: true, force: true});

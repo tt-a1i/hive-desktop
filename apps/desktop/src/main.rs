@@ -11,6 +11,7 @@ mod collaboration;
 mod workflows;
 mod composer;
 mod composer_controls;
+mod prompt_history;
 mod queued_inputs;
 mod quote_source;
 mod command_palette;

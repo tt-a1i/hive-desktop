@@ -1,8 +1,10 @@
 use serde::Deserialize;
+use serde_json::Value;
 use std::ops::Range;
 
 const MAX_SNIPPET_BYTES: usize = 192;
 const MAX_RANGES: usize = 8;
+const MAX_PATH_HIGHLIGHT_BYTES: usize = 16 * 1024;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,38 +20,55 @@ pub(super) struct SearchSnippet {
 
 impl SearchSnippet {
     pub(super) fn display(&self) -> Option<(String, Vec<Range<usize>>)> {
-        if self.text.is_empty()
-            || self.text.len() > MAX_SNIPPET_BYTES
-            || self
-                .text
-                .chars()
-                .any(|ch| (ch.is_control() && ch != '\t') || matches!(ch, '\u{2028}' | '\u{2029}'))
-        {
+        if self.text.is_empty() || self.text.len() > MAX_SNIPPET_BYTES || !safe_label(&self.text) {
             return None;
         }
         let before = if self.leading_ellipsis { "…" } else { "" };
         let after = if self.trailing_ellipsis { "…" } else { "" };
-        let mut previous_end = 0;
-        let is_valid = self.ranges.len() <= MAX_RANGES
-            && self.ranges.iter().all(|&[start, end]| {
-                let valid = start >= previous_end
-                    && start < end
-                    && end <= self.text.len()
-                    && self.text.is_char_boundary(start)
-                    && self.text.is_char_boundary(end);
-                previous_end = end;
-                valid
-            });
-        let ranges = if is_valid {
-            self.ranges
-                .iter()
-                .map(|&[start, end]| start + before.len()..end + before.len())
+        let ranges = validated_ranges(&self.text, &self.ranges).map_or_else(Vec::new, |ranges| {
+            ranges
+                .map(|range| range.start + before.len()..range.end + before.len())
                 .collect()
-        } else {
-            Vec::new()
-        };
+        });
         Some((format!("{before}{}{after}", self.text), ranges))
     }
+}
+
+fn safe_label(text: &str) -> bool {
+    !text
+        .chars()
+        .any(|ch| (ch.is_control() && ch != '\t') || matches!(ch, '\u{2028}' | '\u{2029}'))
+}
+
+fn validated_ranges<'a>(
+    text: &str,
+    ranges: &'a [[usize; 2]],
+) -> Option<impl Iterator<Item = Range<usize>> + 'a> {
+    let mut previous_end = 0;
+    let valid = ranges.len() <= MAX_RANGES
+        && ranges.iter().all(|&[start, end]| {
+            let valid = start >= previous_end
+                && start < end
+                && end <= text.len()
+                && text.is_char_boundary(start)
+                && text.is_char_boundary(end);
+            previous_end = end;
+            valid
+        });
+    valid.then(|| ranges.iter().map(|&[start, end]| start..end))
+}
+
+pub(super) fn path_highlights(path: &str, ranges: Value) -> Vec<Range<usize>> {
+    if !matches!(&ranges, Value::Array(entries) if entries.len() <= MAX_RANGES)
+        || path.len() > MAX_PATH_HIGHLIGHT_BYTES
+        || !safe_label(path)
+    {
+        return Vec::new();
+    }
+    let Ok(ranges) = serde_json::from_value::<Vec<[usize; 2]>>(ranges) else {
+        return Vec::new();
+    };
+    validated_ranges(path, &ranges).map_or_else(Vec::new, Iterator::collect)
 }
 
 #[cfg(test)]

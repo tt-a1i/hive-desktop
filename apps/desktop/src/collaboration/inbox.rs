@@ -248,8 +248,93 @@ struct ActionCenter {
     generated_at: u64,
     attention: Vec<Attention>,
     recent_dispatch_messages: Vec<RecentMessage>,
+    inbox_actionable_cursor: Option<ActionableCursor>,
     #[serde(skip)]
     dispatch_inputs: BTreeMap<String, DispatchInput>,
+}
+
+const ACTIONABLE_PAGE_SIZE: usize = 100;
+const INVALID_ACTIONABLE_PAGE: &str = "收件箱返回了无效的待办数据。";
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionableCursor {
+    through: u64,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
+    next_after: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionablePage {
+    workspace_id: String,
+    questions_only: bool,
+    #[serde(flatten)]
+    cursor: ActionableCursor,
+    rows: Vec<Attention>,
+}
+
+fn validate_actionable_rows<'a>(
+    rows: impl IntoIterator<Item = &'a Attention>,
+    questions_only: bool,
+    cursor: ActionableCursor,
+    seen: &mut HashSet<String>,
+) -> Result<(), String> {
+    let mut count = 0;
+    for row in rows {
+        count += 1;
+        if count > ACTIONABLE_PAGE_SIZE
+            || (!row.is_question() && (questions_only || !row.is_actionable_message()))
+            || row
+                .dispatch_id
+                .as_ref()
+                .is_none_or(|id| uuid::Uuid::try_parse(id).is_err())
+            || row
+                .message_id
+                .as_ref()
+                .is_none_or(|id| id.is_empty() || !seen.insert(id.clone()))
+        {
+            return Err(tr(INVALID_ACTIONABLE_PAGE).into());
+        }
+    }
+    if cursor.next_after.is_some() && count != ACTIONABLE_PAGE_SIZE {
+        return Err(tr(INVALID_ACTIONABLE_PAGE).into());
+    }
+    Ok(())
+}
+
+async fn read_actionable_tail<'a>(
+    runtime: &Runtime,
+    workspace: &str,
+    questions_only: bool,
+    mut cursor: ActionableCursor,
+    first: impl IntoIterator<Item = &'a Attention>,
+) -> Result<Vec<Attention>, String> {
+    let mut seen = HashSet::new();
+    validate_actionable_rows(first, questions_only, cursor, &mut seen)?;
+    let mut previous = 0;
+    let mut rows = Vec::new();
+    while let Some(after) = cursor.next_after {
+        if after <= previous || after >= cursor.through {
+            return Err(tr(INVALID_ACTIONABLE_PAGE).into());
+        }
+        let value = runtime.request("inbox.actionablePage", json!({
+            "workspaceId":workspace, "after":after, "through":cursor.through, "questionsOnly":questions_only,
+        })).await?;
+        let page: ActionablePage =
+            serde_json::from_value(value).map_err(|error| error.to_string())?;
+        if page.workspace_id != workspace
+            || page.questions_only != questions_only
+            || page.cursor.through != cursor.through
+        {
+            return Err(tr(INVALID_ACTIONABLE_PAGE).into());
+        }
+        validate_actionable_rows(&page.rows, questions_only, page.cursor, &mut seen)?;
+        previous = after;
+        cursor = page.cursor;
+        rows.extend(page.rows);
+    }
+    Ok(rows)
 }
 
 #[derive(Deserialize)]
@@ -430,6 +515,20 @@ async fn read_action_center(
             .any(|message| message.workspace_id != workspace)
     {
         return Err(tr("收件箱返回了其他工作区的数据。").into());
+    }
+    if let Some(cursor) = snapshot.inbox_actionable_cursor.take() {
+        let tail = read_actionable_tail(
+            runtime,
+            workspace,
+            false,
+            cursor,
+            snapshot
+                .attention
+                .iter()
+                .filter(|row| row.is_actionable_message()),
+        )
+        .await?;
+        snapshot.attention.extend(tail);
     }
     if let Some(root) = root
         && let Ok(snoozes) = Snoozes::load(root, workspace)
@@ -713,6 +812,14 @@ fn sort_entries(rows: &mut [(&str, Entry)]) {
 }
 
 impl Attention {
+    fn is_question(&self) -> bool {
+        self.kind == "question_waiting_answer"
+    }
+
+    fn is_actionable_message(&self) -> bool {
+        self.is_question() || self.kind == "message_delivery_pending"
+    }
+
     fn waiting_report_id(&self) -> Option<&str> {
         (self.kind == "dispatch_waiting_report")
             .then_some(self.dispatch_id.as_deref())
@@ -1810,13 +1917,45 @@ fn inbox_row<T: 'static>(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionCenter, ArchiveInboxSession, Attention, Delay, Destination, Entry, MarkInboxRead,
-        Priority, Reminders, SnoozeEdit, Snoozes, UNREAD_CONVERSATION, Wake, exact_message, now_ms,
-        sort_entries,
+        ActionCenter, ActionableCursor, ActionablePage, ArchiveInboxSession, Attention, Delay,
+        Destination, Entry, MarkInboxRead, Priority, Reminders, SnoozeEdit, Snoozes,
+        UNREAD_CONVERSATION, Wake, exact_message, now_ms, sort_entries, validate_actionable_rows,
     };
     use crate::protocol::MemberDesktopActivity;
     use serde_json::json;
     use std::collections::HashSet;
+
+    #[test]
+    fn actionable_pages_reject_missing_boundaries_incomplete_pages_and_duplicates() {
+        let row = |id: &str, kind: &str| {
+            serde_json::from_value::<Attention>(json!({
+                "kind":kind, "message_id":id, "dispatch_id":"11111111-0000-4000-8000-0000aaaabbbb",
+            }))
+            .unwrap()
+        };
+        let no_continuation = ActionableCursor {
+            through: 120,
+            next_after: None,
+        };
+        let partial = ActionableCursor {
+            next_after: Some(100),
+            ..no_continuation
+        };
+        let first = row("first", "question_waiting_answer");
+        assert!(validate_actionable_rows([&first], true, partial, &mut HashSet::new()).is_err());
+        assert!(
+            serde_json::from_value::<ActionablePage>(json!({
+                "workspaceId":"project", "questionsOnly":true, "through":120, "rows":[],
+            }))
+            .is_err()
+        );
+        let mut seen = HashSet::new();
+        assert!(validate_actionable_rows([&first], true, no_continuation, &mut seen).is_ok());
+        assert!(validate_actionable_rows([&first], true, no_continuation, &mut seen).is_err());
+        let delivery = row("delivery", "message_delivery_pending");
+        assert!(validate_actionable_rows([&delivery], true, no_continuation, &mut seen).is_err());
+        assert!(validate_actionable_rows([&delivery], false, no_continuation, &mut seen).is_ok());
+    }
 
     #[test]
     fn two_questions_on_one_dispatch_keep_distinct_exact_open_targets() {

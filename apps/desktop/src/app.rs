@@ -187,6 +187,7 @@ pub struct HiveApp {
     pub terminal_drawer_drag: Option<(f32, f32)>,
     pub(crate) git_workspace: Option<Entity<crate::git_workspace::GitWorkspace>>,
     pub input: Entity<TextareaState>,
+    pub(crate) prompt_history: crate::prompt_history::PromptHistory,
     pub(crate) draft_store: Option<crate::drafts::DraftStore>,
     pub(crate) draft_copies: crate::draft_copy::DraftCopies,
     pub(crate) draft_save_task: Option<Task<()>>,
@@ -682,8 +683,11 @@ impl HiveApp {
                 }
                 InputEvent::Change => {
                     this.schedule_draft_save(cx);
-                    this.composer_commands_changed(cx);
-                    let has_text = !input.read(cx).value().trim().is_empty();
+                    let text = input.read(cx).value();
+                    if !this.prompt_history.on_change(this.open_request, &text) {
+                        this.composer_commands_changed(cx);
+                    }
+                    let has_text = !text.trim().is_empty();
                     if this.composer_has_text != has_text {
                         cx.notify();
                     }
@@ -707,6 +711,7 @@ impl HiveApp {
             terminal: crate::terminal::WorkspaceTerminal::new(cx),
             history_navigation: crate::history_navigation::HistoryNavigation::default(),
             input,
+            prompt_history: Default::default(),
             composer_can_submit: false,
             composer_submit_on_enter: true,
             composer_has_text: false,

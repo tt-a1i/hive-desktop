@@ -173,6 +173,7 @@ mod tests {
                 line: Some(line),
             },
             snippet: None,
+            path_highlights: Vec::new(),
         }
     }
 

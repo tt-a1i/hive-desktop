@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { WORKSPACE_UPLOAD_MAX_BYTES } from '@tt-a1i/hive/dist/src/server/upload-limits.js';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import { startProjectRegexSearch } from './project-search-regex.js';
+import { REGEX_TIMEOUT, REGEX_UNAVAILABLE, startProjectRegexSearch } from './project-search-regex.js';
 import type { RegexRange } from './project-search-regex-worker.js';
 
 const exec = promisify(execFile);
@@ -18,6 +18,8 @@ const SNIPPET_BYTES = 192;
 const SNIPPET_CONTEXT_BYTES = 16;
 const SNIPPET_RANGE_LIMIT = 8;
 const UNICODE_MAPPING_LIMIT = 4096;
+const LABEL_CONTROLS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029]/u;
+const ASCII_LABEL = /^[\t\x20-\x7e]*$/;
 const PATH_REGEX_BATCH_SIZE = 256;
 const PATH_REGEX_BATCH_UNITS = 128 * 1024;
 const graphemes = new Intl.Segmenter('und', {granularity: 'grapheme'});
@@ -174,6 +176,24 @@ function snippetWindowStart(matchByte: number, matchBytes: number): number {
   return Math.max(0, matchByte - context);
 }
 
+function graphemeOffsets(source: string, searchable: string, normalize: (segment: string) => string) {
+  if (source.length > UNICODE_MAPPING_LIMIT) return undefined;
+  const boundaries = [{source: 0, normalized: 0, bytes: 0}];
+  const normalizedParts: string[] = [];
+  for (const {segment, index} of graphemes.segment(source)) {
+    const normalized = normalize(segment);
+    const previous = boundaries[boundaries.length - 1]!;
+    normalizedParts.push(normalized);
+    boundaries.push({
+      source: index + segment.length,
+      normalized: previous.normalized + normalized.length,
+      bytes: previous.bytes + Buffer.byteLength(segment),
+    });
+  }
+  // Contextual folds can differ from independently folded graphemes.
+  return normalizedParts.join('') === searchable ? boundaries : undefined;
+}
+
 function lineSnippet(
   line: string, searchable: string, [firstMatch, firstMatchEnd]: RegexRange,
   normalize: (segment: string) => string, matches: (start: number, end: number) => Iterable<RegexRange>,
@@ -183,45 +203,30 @@ function lineSnippet(
     const text = source.slice(start, end);
     // The excerpt is a native, single-line label. Skip undisplayable controls;
     // the file and its exact line remain available to open.
-    if (!text || /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029]/u.test(text)) return undefined;
+    if (!text || LABEL_CONTROLS.test(text)) return undefined;
     return {text, ranges, leadingEllipsis: start > 0, trailingEllipsis: end < source.length};
   };
-  if (/^[\t\x20-\x7e]*$/.test(source)) {
+  if (ASCII_LABEL.test(source)) {
     const start = Math.min(source.length, snippetWindowStart(firstMatch, firstMatchEnd - firstMatch));
     const end = Math.min(source.length, start + SNIPPET_BYTES);
     return result(start, end, snippetRanges(start, end, offset => offset, matches(start, end)));
   }
 
-  if (source.length <= UNICODE_MAPPING_LIMIT) {
-    const boundaries = [{source: 0, normalized: 0, bytes: 0}];
-    const normalizedParts: string[] = [];
-    for (const {segment, index} of graphemes.segment(source)) {
-      const normalized = normalize(segment);
-      const previous = boundaries[boundaries.length - 1]!;
-      normalizedParts.push(normalized);
-      boundaries.push({
-        source: index + segment.length,
-        normalized: previous.normalized + normalized.length,
-        bytes: previous.bytes + Buffer.byteLength(segment),
-      });
+  const foldedLine = line === source ? searchable : searchable.slice(0, -1);
+  const boundaries = graphemeOffsets(source, foldedLine, normalize);
+  if (boundaries) {
+    const byMatch = new Map(boundaries.map(boundary => [boundary.normalized, boundary.bytes]));
+    const firstByte = byMatch.get(firstMatch) ?? 0;
+    const lastByte = byMatch.get(firstMatchEnd) ?? firstByte;
+    const wantedStart = snippetWindowStart(firstByte, lastByte - firstByte);
+    const start = boundaries.find(boundary => boundary.bytes >= wantedStart)!;
+    let end = start;
+    for (const boundary of boundaries) {
+      if (boundary.bytes > start.bytes + SNIPPET_BYTES) break;
+      if (boundary.bytes >= start.bytes) end = boundary;
     }
-    const foldedLine = line === source ? searchable : searchable.slice(0, -1);
-    // Contextual case folds can differ from independently folded graphemes.
-    // Use offsets only after proving that both transformations agree.
-    if (normalizedParts.join('') === foldedLine) {
-      const byMatch = new Map(boundaries.map(boundary => [boundary.normalized, boundary.bytes]));
-      const firstByte = byMatch.get(firstMatch) ?? 0;
-      const lastByte = byMatch.get(firstMatchEnd) ?? firstByte;
-      const wantedStart = snippetWindowStart(firstByte, lastByte - firstByte);
-      const start = boundaries.find(boundary => boundary.bytes >= wantedStart)!;
-      let end = start;
-      for (const boundary of boundaries) {
-        if (boundary.bytes > start.bytes + SNIPPET_BYTES) break;
-        if (boundary.bytes >= start.bytes) end = boundary;
-      }
-      return result(start.source, end.source, snippetRanges(start.normalized, end.normalized,
-        offset => byMatch.get(offset), matches(start.normalized, end.normalized)));
-    }
+    return result(start.source, end.source, snippetRanges(start.normalized, end.normalized,
+      offset => byMatch.get(offset), matches(start.normalized, end.normalized)));
   }
 
   // Bound both folding work and output for a long Unicode line. The last
@@ -240,19 +245,66 @@ function lineSnippet(
 }
 
 /** Search is uncached; each request observes the current file list and ignore rules. */
-export async function searchProjectFiles(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false, regex = false, wholeWord = false): Promise<{ paths: string[]; total: number }> {
+export async function searchProjectFiles(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false, regex = false, wholeWord = false, includeRanges = false): Promise<{ paths: string[]; total: number; ranges?: RegexRange[][] }> {
   validateSearch(query, offset);
   const root = await rootDirectory(projectRoot);
   const worker = regex && query ? await startProjectRegexSearch(query, caseSensitive,
-    wholeWord ? WORD_CHARACTER.source : undefined, 0, signal) : undefined;
+    wholeWord ? WORD_CHARACTER.source : undefined, includeRanges ? SNIPPET_RANGE_LIMIT : 0, signal) : undefined;
   try {
-    return await searchProjectFilePaths(root, query, offset, worker?.signal ?? signal, caseSensitive, wholeWord, worker);
+    const page = await searchProjectFilePaths(root, query, offset, worker?.signal ?? signal, caseSensitive, wholeWord, worker);
+    if (!includeRanges) return page;
+    let ranges: RegexRange[][];
+    if (worker) {
+      try {
+        ranges = await regexPathHighlights(page.paths, worker);
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (!(error instanceof Error) || ![REGEX_TIMEOUT, REGEX_UNAVAILABLE].includes(error.message)) throw error;
+        // Presentation metadata can time out after selection and pagination finished.
+        ranges = page.paths.map(() => []);
+      }
+    } else {
+      ranges = literalPathHighlights(page.paths, query, caseSensitive, wholeWord);
+    }
+    signal?.throwIfAborted();
+    return {...page, ranges};
   } catch (error) {
     worker?.signal.throwIfAborted();
     throw error;
   } finally {
     await worker?.close();
   }
+}
+
+function highlightablePath(path: string): boolean {
+  return path.length <= UNICODE_MAPPING_LIMIT && !LABEL_CONTROLS.test(path);
+}
+
+function pathByteRanges(path: string, searchable: string, normalize: (text: string) => string, matches: Iterable<RegexRange>): RegexRange[] {
+  if (ASCII_LABEL.test(path)) return snippetRanges(0, searchable.length, offset => offset, matches);
+  const boundaries = graphemeOffsets(path, searchable, normalize);
+  if (!boundaries) return [];
+  const byMatch = new Map(boundaries.map(boundary => [boundary.normalized, boundary.bytes]));
+  return snippetRanges(0, searchable.length, offset => byMatch.get(offset), matches);
+}
+
+function literalPathHighlights(paths: string[], query: string, caseSensitive: boolean, wholeWord: boolean): RegexRange[][] {
+  const normalize = (text: string) => searchText(text, caseSensitive);
+  const needle = normalize(query);
+  return paths.map(path => {
+    if (!needle || !highlightablePath(path)) return [];
+    const searchable = normalize(path);
+    return pathByteRanges(path, searchable, normalize, literalRanges(searchable, needle, 0, searchable.length, wholeWord));
+  });
+}
+
+async function regexPathHighlights(paths: string[], worker: Awaited<ReturnType<typeof startProjectRegexSearch>>): Promise<RegexRange[][]> {
+  const highlights = new Map<string, RegexRange[]>();
+  for (const batch of regexPathBatches(paths.filter(highlightablePath))) {
+    const ranges = await worker.pathRanges(batch);
+    batch.forEach((path, index) => highlights.set(path, pathByteRanges(path, path, text => text, ranges[index] ?? [])));
+  }
+  return paths.map(path => highlights.get(path) ?? []);
 }
 
 async function searchProjectFilePaths(
@@ -294,20 +346,26 @@ function* literalProjectPaths(paths: Iterable<string>, query: string, caseSensit
 }
 
 async function* regexProjectPaths(paths: Iterable<string>, worker: Awaited<ReturnType<typeof startProjectRegexSearch>>) {
+  for (const batch of regexPathBatches(paths)) {
+    for (const index of await worker.matchPaths(batch)) yield batch[index]!;
+  }
+}
+
+function* regexPathBatches(paths: Iterable<string>) {
   let batch: string[] = [];
   let units = 0;
   for (const path of paths) {
     // An individual entry this long cannot be opened on supported platforms.
     if (path.length > PATH_REGEX_BATCH_UNITS) continue;
     if (batch.length === PATH_REGEX_BATCH_SIZE || units + path.length > PATH_REGEX_BATCH_UNITS) {
-      for (const index of await worker.matchPaths(batch)) yield batch[index]!;
+      yield batch;
       batch = [];
       units = 0;
     }
     batch.push(path);
     units += path.length;
   }
-  if (batch.length) for (const index of await worker.matchPaths(batch)) yield batch[index]!;
+  if (batch.length) yield batch;
 }
 
 export async function listProjectDirectory(projectRoot: string, directory: string, offset = 0) {

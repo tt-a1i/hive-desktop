@@ -919,8 +919,8 @@ impl HiveApp {
                                     .capture_action(cx.listener(Self::composer_enter))
                                     .capture_action(cx.listener(Self::edit_latest_queued_input))
                                     .capture_action(cx.listener(Self::paste_composer_text))
-                                    .capture_action(cx.listener(Self::command_up))
-                                    .capture_action(cx.listener(Self::command_down))
+                                    .capture_action(cx.listener(Self::composer_up))
+                                    .capture_action(cx.listener(Self::composer_down))
                                     .capture_action(cx.listener(Self::command_escape))
                                     .child(
                                         Textarea::new(&self.input)

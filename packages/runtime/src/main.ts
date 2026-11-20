@@ -17,7 +17,7 @@ import { createInterface } from 'node:readline';
 import { mkdirSync } from 'node:fs';
 import { CodexInteractionError } from './agents/codex-interactions.js';
 import { WorkspaceRemovalError } from './workspace-removal.js';
-import { HiveHttpError, withInboxDispatchBackends } from './hive-host.js';
+import { HiveHttpError, withInboxActionableBackends, withInboxDispatchBackends } from './hive-host.js';
 import { createDesktopRuntime } from './desktop-runtime.js';
 import { structuredCommand } from './structured-runtime.js';
 import { desktopDataDir } from './paths.js';
@@ -429,12 +429,20 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       return inbox ? withInboxDispatchBackends(result, decodeURIComponent(inbox[1]!),
         (workspaceId, dispatchId) => chats.inboxDispatchBackend(workspaceId, dispatchId)) : result;
     }
-    case 'inbox.actionableQuestions': {
+    case 'inbox.actionableQuestions':
+    case 'inbox.actionableQuestionPages': {
+      if (method === 'inbox.actionableQuestionPages') exact(params, ['workspaceIds']);
       const ids = params.workspaceIds;
       if (!Array.isArray(ids) || ids.length > 32 || !ids.every(id => typeof id === 'string' && id.length <= 64)) {
         throw new Error('Expected up to 32 inbox workspace identities');
       }
-      return runtime.hive.inboxQuestions(ids);
+      return method === 'inbox.actionableQuestionPages' ? runtime.hive.inboxQuestionPages(ids) : runtime.hive.inboxQuestions(ids);
+    }
+    case 'inbox.actionablePage': {
+      exact(params, ['workspaceId', 'after', 'through', 'questionsOnly']);
+      const workspace = text(params, 'workspaceId');
+      return withInboxActionableBackends(runtime.hive.inboxActionablePage(workspace, params.after, params.through, params.questionsOnly),
+        (workspaceId, dispatchId) => chats.inboxDispatchBackend(workspaceId, dispatchId));
     }
     case 'inbox.dispatchInput': {
       exact(params, ['workspaceId', 'dispatchIds', 'timestampDispatchIds']);
@@ -556,7 +564,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'git.pr.create': return chats.gitPrApply(text(params, 'workspaceId'), 'create', params);
     case 'git.pr.update': return chats.gitPrApply(text(params, 'workspaceId'), 'update', params);
     case 'project.files.list': return chats.projectFilesList(text(params, 'workspaceId'), params.directory, params.offset, params.sessionId);
-    case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.regex, params.wholeWord));
+    case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.regex, params.wholeWord, params.includeRanges));
     case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.wholeWord, params.regex));
     case 'project.files.preview': return chats.projectFilesPreview(text(params, 'workspaceId'), params.relativePath, params.sessionId, params.allowImage);
     case 'project.files.resolveOpen': return chats.projectFilesResolveOpen(text(params, 'workspaceId'), params.relativePath, params.sessionId);

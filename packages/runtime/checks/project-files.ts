@@ -274,6 +274,30 @@ try {
   assert.equal((await searchProjectFiles(wordNames, 'cat')).total, wholePaths.length + partialPaths.length);
   assert.deepEqual(await wholeName(''), await searchProjectFiles(wordNames, ''));
   await assert.rejects(wholeName('cat', 0, true, false, AbortSignal.abort()), {name: 'AbortError'});
+  for (const [offset, regex] of [[0, false], [100, true]] as const) {
+    const paths = wholePaths.slice(offset, offset + 100);
+    const page = await searchProjectFiles(wordNames, regex ? 'c[ae]t' : 'cat', offset, undefined, false, regex, true, true);
+    assert.deepEqual(page, {paths, total: wholePaths.length, ranges: paths.map(path => {
+      const start = Buffer.from(path.toLowerCase()).indexOf('cat');
+      return [[start, start + 3]];
+    })});
+  }
+  assert.deepEqual(await searchProjectFiles(wordNames, 'CAT', 0, undefined, true, false, true, true), {
+    paths: ['src/CAT-notes.md'], total: 1, ranges: [[[4, 7]]],
+  });
+  const zwjPath = 'src/👩‍💻.txt';
+  await writeFile(join(wordNames, zwjPath), 'grapheme');
+  assert.deepEqual(await searchProjectFiles(wordNames, '👩', 0, undefined, false, true, false, true), {
+    paths: [zwjPath], total: 1, ranges: [[]],
+  });
+  assert.deepEqual(await searchProjectFiles(wordNames, '👩‍💻', 0, undefined, false, true, false, true), {
+    paths: [zwjPath], total: 1, ranges: [[[4, 15]]],
+  });
+  assert.deepEqual(await searchProjectFiles(wordNames, '(?=👩)', 0, undefined, false, true, false, true), {
+    paths: [zwjPath], total: 1, ranges: [[]],
+  });
+  await writeFile(join(wordNames, 'mark-'.repeat(12) + '.md'), 'cap');
+  assert.equal((await searchProjectFiles(wordNames, 'mark', 0, undefined, false, true, false, true)).ranges?.[0]?.length, 8);
   const namedPath = 'nested/Cafe\u0301-ReadMe.md';
   await writeFile(join(repo, namedPath), 'case-sensitive path fixture');
   const [returnedPath] = (await searchProjectFiles(repo, 'café-readme')).paths;
@@ -281,6 +305,10 @@ try {
   assert.deepEqual((await searchProjectFiles(repo, 'café-readme', 0, undefined, true)).paths, []);
   assert.deepEqual((await searchProjectFiles(repo, 'Café-ReadMe', 0, undefined, true)).paths, [returnedPath]);
   assert.deepEqual((await searchProjectFiles(repo, 'CAFÉ', 0, undefined, false, false, true)).paths, [returnedPath]);
+  assert(returnedPath);
+  assert.deepEqual(await searchProjectFiles(repo, 'CAFÉ', 0, undefined, false, false, true, true), {
+    paths: [returnedPath], total: 1, ranges: [[[7, Buffer.byteLength(returnedPath.split('-')[0]!)]]],
+  });
   const preview = await previewProjectFile(repo, 'nested/unicode.txt');
   assert.equal(preview.text, 'first line\nCafe\u0301 MATCH\n');
   assert.equal(preview.sha256, createHash('sha256').update(preview.text).digest('hex'));

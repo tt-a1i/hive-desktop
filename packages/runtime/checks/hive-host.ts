@@ -3,29 +3,13 @@ import { createHash } from "node:crypto";
 import { mkdtemp, realpath, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DispatchMessageRecord } from "@tt-a1i/hive/dist/src/shared/team-collaboration.js";
-import { createHiveHost, HiveHttpError, withInboxDispatchBackends, withInboxMessageSenders, withInboxWaitingReports } from "../src/hive-host.js";
+import { createHiveHost, HiveHttpError, withInboxDispatchBackends, withInboxWaitingReports } from "../src/hive-host.js";
 
 const olderQuestion = {kind: 'question_waiting_answer', message_id: 'older-question', dispatch_id: 'first-dispatch'};
 const snapshot = {
 	workspace_id: 'workspace-a', recent_dispatch_messages: [],
 	attention: [olderQuestion, {...olderQuestion, dispatch_id: 'other-dispatch'}, {...olderQuestion, message_id: 'other-workspace'}],
 };
-const message: DispatchMessageRecord = {
-	id: 'older-question', workspaceId: 'workspace-a', dispatchId: 'first-dispatch',
-	sourceDispatchId: null, sequence: 1, fromAgentId: 'worker', recipientAgentId: 'orchestrator',
-	kind: 'question', replyTo: null, text: '', createdAt: 1, deliveryState: 'delivered',
-	deliveredAt: 1, deliveryError: null,
-};
-const source = {listActionableDispatchMessages(workspaceId: string) {
-	assert.equal(workspaceId, 'workspace-a');
-	return [message, {...message, id: 'other-workspace', workspaceId: 'workspace-b'}];
-}};
-assert.deepEqual(withInboxMessageSenders(snapshot, 'workspace-a', source), {
-	...snapshot,
-	attention: [{...olderQuestion, message_sender_id: 'worker', message_created_at: 1}, ...snapshot.attention.slice(1)],
-});
-assert.equal(withInboxMessageSenders(snapshot, 'workspace-b', source), snapshot);
 const dispatchId = '123e4567-e89b-12d3-a456-426614174000';
 const unattributed = '123e4567-e89b-12d3-a456-426614174001';
 const backendSnapshot = {...snapshot, attention: [

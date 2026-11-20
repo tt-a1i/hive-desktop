@@ -2,13 +2,14 @@ import WebSocket from "ws";
 import { isAbsolute, join } from "node:path";
 import { Database } from "@tt-a1i/hive/dist/src/server/sqlite.js";
 import { readDispatchMessage } from "@tt-a1i/hive/dist/src/server/dispatch-message-store.js";
+import { dispatchMessageEligibilitySql } from "@tt-a1i/hive/dist/src/server/dispatch-message-delivery-policy.js";
 import { serializeDispatchMessage } from "@tt-a1i/hive/dist/src/server/dispatch-message-serializer.js";
 import { readPackageVersion } from "@tt-a1i/hive/dist/src/server/package-version.js";
 import { createVersionService } from "@tt-a1i/hive/dist/src/server/version-service.js";
 import { runHiveCommand } from "@tt-a1i/hive/dist/src/cli/hive.js";
 import { HttpError } from "@tt-a1i/hive/dist/src/server/http-errors.js";
-import type { DesktopDraftCopyReceipt, DesktopDraftUploadCopy, WorkspaceUploadRecord } from "@tt-a1i/hive/dist/src/server/workspace-upload-store.js";
 import type { DispatchMessageRecord } from "@tt-a1i/hive/dist/src/shared/team-collaboration.js";
+import type { DesktopDraftCopyReceipt, DesktopDraftUploadCopy, WorkspaceUploadRecord } from "@tt-a1i/hive/dist/src/server/workspace-upload-store.js";
 import type { DispatchRecord } from "@tt-a1i/hive/dist/src/server/dispatch-ledger-store.js";
 import { getDefaultRoleDescription } from '@tt-a1i/hive/dist/src/server/role-templates.js';
 import { resolveWorkspaceUiLanguage } from '@tt-a1i/hive/dist/src/server/workspace-ui-language.js';
@@ -39,8 +40,25 @@ export interface HiveUploadLocation {
 
 export interface HiveUserInputRow { type: 'user_input' | 'user_input_cancelled'; text: string }
 interface InboxQuestion { workspaceId: string; dispatchId: string; messageId: string }
-interface InboxDispatchInput { dispatchId: string; sequence: number | null; createdAt: number | null }
 type ActionableMessageSource = {listActionableDispatchMessages(workspaceId: string): DispatchMessageRecord[]};
+interface InboxDispatchInput { dispatchId: string; sequence: number | null; createdAt: number | null }
+interface InboxActionableRow {
+    kind: 'question_waiting_answer' | 'message_delivery_pending';
+    dispatch_id: string;
+    message_id: string;
+    worker_id?: string;
+    message_sender_id?: string;
+    message_created_at?: number;
+    dispatch_backend?: ChatBackend | null;
+    severity?: 'warning';
+}
+interface InboxActionablePage {
+    workspaceId: string;
+    questionsOnly: boolean;
+    through: number;
+    nextAfter: number | null;
+    rows: InboxActionableRow[];
+}
 type WaitingReportDispatch = Pick<DispatchRecord, 'id' | 'workspaceId' | 'status' | 'submittedAt' | 'toAgentId' | 'label' | 'text'>;
 type OpenDispatchSource = {
     listOpenDispatches(workspaceId: string): WaitingReportDispatch[];
@@ -49,6 +67,7 @@ type OpenDispatchSource = {
 
 // Match Hive's action-center definition of a wait, not a task timeout.
 const WAITING_REPORT_MS = 10 * 60 * 1_000;
+const INBOX_ACTIONABLE_LIMIT = 100;
 
 function dispatchTitlePreview(dispatch: WaitingReportDispatch): string | null {
     for (const text of [dispatch.label, dispatch.text]) {
@@ -120,21 +139,57 @@ export function withInboxWaitingReports(
     };
 }
 
-export function withInboxMessageSenders(
-    result: unknown, workspaceId: string, store: ActionableMessageSource,
-): unknown {
+function withInboxActionablePage(result: unknown, page: InboxActionablePage): unknown {
+    const {workspaceId, through, nextAfter, rows} = page;
     if (!result || typeof result !== 'object' || !('workspace_id' in result) || result.workspace_id !== workspaceId
         || !('attention' in result) || !Array.isArray(result.attention)) return result;
-    const messages = new Map(store.listActionableDispatchMessages(workspaceId)
-        .filter(message => message.workspaceId === workspaceId)
-        .map(message => [message.id, message]));
-    return {...result, attention: result.attention.map(row => {
-        if ((row?.kind !== 'question_waiting_answer' && row?.kind !== 'message_delivery_pending')
-            || typeof row.message_id !== 'string') return row;
-        const message = messages.get(row.message_id);
-        return message && message.dispatchId === row.dispatch_id
-            ? {...row, message_sender_id: message.fromAgentId, message_created_at: message.createdAt}
-            : row;
+    const other = result.attention.filter(row => row?.kind !== 'question_waiting_answer' && row?.kind !== 'message_delivery_pending');
+    return {...result, attention: [...rows, ...other], inbox_actionable_cursor: {through, nextAfter}};
+}
+
+function readInboxActionablePage(
+    db: Database, workspaceId: string, questionsOnly: boolean, after: number, through: number,
+): InboxActionablePage {
+    const scope = questionsOnly
+        ? "m.kind = 'question' AND COALESCE(o.state, 'recorded') <> 'queued'"
+        : "(m.kind = 'question' OR o.state = 'queued')";
+    // The eligibility policy and unanswered predicate match Hive's actionable
+    // store. Classify before LIMIT so nonrows cannot consume a page slot.
+    // Use the rowid range directly instead of sorting the workspace time index
+    // on every page.
+    const projection = questionsOnly
+        ? ''
+        : ', m.recipient_agent_id AS worker_id, m.from_agent_id AS message_sender_id, m.created_at AS message_created_at';
+    const records = db.prepare(`
+        SELECT m.rowid AS cursor,
+            CASE WHEN o.state = 'queued' THEN 'message_delivery_pending' ELSE 'question_waiting_answer' END AS kind,
+            m.dispatch_id, m.id AS message_id ${projection}
+        FROM dispatch_messages m NOT INDEXED
+        LEFT JOIN dispatch_message_outbox o ON o.message_id = m.id
+        WHERE m.workspace_id = ? AND m.rowid > ? AND m.rowid <= ?
+          AND COALESCE(o.state, 'recorded') <> 'cancelled'
+          AND ${dispatchMessageEligibilitySql}
+          AND ((m.kind = 'question' AND NOT EXISTS (
+            SELECT 1 FROM dispatch_messages answer WHERE answer.reply_to = m.id AND answer.kind = 'answer'
+          )) OR o.state IN ('queued','delivering'))
+          AND ${scope}
+        ORDER BY m.rowid LIMIT ?
+    `).all(workspaceId, after, through, INBOX_ACTIONABLE_LIMIT + 1) as (InboxActionableRow & {cursor: number})[];
+    const page = records.slice(0, INBOX_ACTIONABLE_LIMIT);
+    const rows = page.map(({cursor: _cursor, ...row}): InboxActionableRow =>
+        questionsOnly ? row : {...row, severity: 'warning'});
+    const nextAfter = records.length > page.length ? page[page.length - 1]!.cursor : null;
+    return {workspaceId, questionsOnly, through, nextAfter, rows};
+}
+
+export function withInboxActionableBackends(
+    page: InboxActionablePage, lookup: (workspaceId: string, dispatchId: string) => ChatBackend | undefined,
+): InboxActionablePage {
+    if (page.questionsOnly) return page;
+    const backends = new Map<string, ChatBackend | null>();
+    return {...page, rows: page.rows.map(row => {
+        if (!backends.has(row.dispatch_id)) backends.set(row.dispatch_id, lookup(page.workspaceId, row.dispatch_id) ?? null);
+        return {...row, dispatch_backend: backends.get(row.dispatch_id) ?? null};
     })};
 }
 
@@ -162,6 +217,8 @@ export interface HiveHost {
     inboxDispatchMessage(workspaceId: string, dispatchId: string, messageId: string): ReturnType<typeof serializeDispatchMessage> | null;
     inboxDispatchInput(workspaceId: string, dispatchIds: unknown, timestampDispatchIds?: unknown): {workspaceId: string; inputs: InboxDispatchInput[]};
     inboxQuestions(workspaceIds: readonly string[]): InboxQuestion[];
+    inboxQuestionPages(workspaceIds: readonly string[]): InboxActionablePage[];
+    inboxActionablePage(workspaceId: string, after: unknown, through: unknown, questionsOnly: unknown): InboxActionablePage;
     readonly projectScriptState: import('./project-script-settings.js').ProjectScriptStatePort;
     desktopConversationSwitchState(workspaceId:string,agentId?:string): import('./hive-runtime-contract.js').DesktopConversationSwitchState;
     executionLedgerRevision(): string;
@@ -260,6 +317,14 @@ export async function createHiveHost({
 	let closing: Promise<void> | undefined;
 	let inboxStore: Database | undefined;
     const readInboxStore = () => inboxStore ??= new Database(join(dataDir, 'runtime.sqlite'), {readOnly: true});
+    const workspaceScope = () => {
+        const store = runtime.store as typeof runtime.store & {listWorkspaces(): {id: string}[]};
+        return new Set(store.listWorkspaces().map(workspace => workspace.id));
+    };
+    // Freeze the insertion boundary across a sweep. The desktop uses this
+    // handle only as a bound; rows are always scoped by workspace separately.
+    const actionableThrough = (db: Database) =>
+        (db.prepare('SELECT COALESCE(MAX(rowid), 0) AS cursor FROM dispatch_messages').get() as {cursor: number}).cursor;
 	return {
 		port: runtime.port,
         inboxDispatchMessage(workspaceId, dispatchId, messageId) {
@@ -308,17 +373,42 @@ export async function createHiveHost({
             });
             return {workspaceId, inputs};
         },
+        inboxActionablePage(workspaceId, after, through, questionsOnly) {
+            if (closing) throw new Error('Hive host is closed');
+            if (!workspaceScope().has(workspaceId)) {
+                throw new Error('Unknown Inbox workspace');
+            }
+            if (questionsOnly !== undefined && typeof questionsOnly !== 'boolean') {
+                throw new Error('Expected a boolean Inbox question mode');
+            }
+            const db = readInboxStore();
+            if (after === undefined && through === undefined) {
+                return readInboxActionablePage(db, workspaceId, questionsOnly === true, 0, actionableThrough(db));
+            }
+            if (typeof after !== 'number' || !Number.isSafeInteger(after) || after < 0
+                || typeof through !== 'number' || !Number.isSafeInteger(through) || through <= after
+                || through > actionableThrough(db)) {
+                throw new Error('Invalid Inbox pagination cursor');
+            }
+            return readInboxActionablePage(db, workspaceId, questionsOnly === true, after, through);
+        },
         inboxQuestions(workspaceIds) {
             if (closing) throw new Error('Hive host is closed');
-            const store = runtime.store as typeof runtime.store & ActionableMessageSource & {
-                listWorkspaces(): Array<{ id: string }>;
-            };
-            const workspaces = new Set(store.listWorkspaces().map(workspace => workspace.id));
+            const store = runtime.store as typeof runtime.store & ActionableMessageSource;
+            const workspaces = workspaceScope();
             return [...new Set(workspaceIds)].filter(workspaceId => workspaces.has(workspaceId)).flatMap(workspaceId =>
-                // Keep the Action Center's question vs. queued-delivery distinction.
                 store.listActionableDispatchMessages(workspaceId)
                     .filter(message => message.kind === 'question' && message.deliveryState !== 'queued')
                     .map(message => ({ workspaceId, dispatchId: message.dispatchId, messageId: message.id })));
+        },
+        inboxQuestionPages(workspaceIds) {
+            if (closing) throw new Error('Hive host is closed');
+            const workspaces = workspaceScope();
+            const scope = [...new Set(workspaceIds)].filter(workspaceId => workspaces.has(workspaceId));
+            if (!scope.length) return [];
+            const db = readInboxStore();
+            const through = actionableThrough(db);
+            return scope.map(workspaceId => readInboxActionablePage(db, workspaceId, true, 0, through));
         },
         projectScriptState: {
             read(key, workspaceId) {if (closing) throw new Error('Hive host is closed'); return runtime.store.settings.readProjectScriptState(key, workspaceId);},
@@ -435,13 +525,15 @@ export async function createHiveHost({
 						? JSON.parse(text)
 						: text;
 			if (!response.ok) throw new HiveHttpError(response.status, result);
-			// The preview is capped. Attach sender identity to every current
-			// attention message without another runtime request or more text.
+			// Attach a complete first desktop page. Keep the authenticated
+			// HTTP action center and its support preview unchanged.
 			const inbox = method === "GET" && /^\/api\/ui\/workspaces\/([^/]+)\/action-center$/.exec(url.pathname);
 			if (inbox) {
 				const workspace = decodeURIComponent(inbox[1]!);
-				const store = runtime.store as typeof runtime.store & ActionableMessageSource & OpenDispatchSource;
-				return withInboxMessageSenders(withInboxWaitingReports(result, workspace, store), workspace, store);
+				const store = runtime.store as typeof runtime.store & OpenDispatchSource;
+                const db = readInboxStore();
+                const page = readInboxActionablePage(db, workspace, false, 0, actionableThrough(db));
+				return withInboxActionablePage(withInboxWaitingReports(result, workspace, store), page);
 			}
 			return result;
 		},

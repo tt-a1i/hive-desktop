@@ -3,13 +3,12 @@ mod deadline;
 
 use self::deadline::DeadlineWake;
 use super::super::{
-    ActionCenter, Destination, Entry, Priority, SnoozeEdit, Wake, read_dispatch_inputs,
-    snoozes::Snoozes,
+    ActionCenter, ActionablePage, Attention, Destination, Entry, Priority, SnoozeEdit, Wake,
+    read_actionable_tail, read_dispatch_inputs, snoozes::Snoozes,
 };
 use super::{GlobalInbox, now_ms};
-use crate::app::HiveApp;
+use crate::{app::HiveApp, transport::Runtime};
 use gpui_kit::*;
-use serde::Deserialize;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -60,12 +59,21 @@ impl BadgeItem {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct Question {
     workspace_id: String,
     dispatch_id: String,
     message_id: String,
+}
+
+impl Question {
+    fn from_attention(workspace: &str, item: &Attention) -> Option<Self> {
+        item.is_question().then_some(())?;
+        Some(Self {
+            workspace_id: workspace.to_owned(),
+            dispatch_id: item.dispatch_id.clone()?,
+            message_id: item.message_id.clone()?,
+        })
+    }
 }
 
 fn collect_questions(scope: &[String], questions: Vec<Question>) -> HashSet<BadgeItem> {
@@ -88,6 +96,52 @@ fn collect_questions(scope: &[String], questions: Vec<Question>) -> HashSet<Badg
         .collect()
 }
 
+async fn read_badge_questions(
+    runtime: &Runtime,
+    scope: &[String],
+) -> BTreeMap<String, HashSet<BadgeItem>> {
+    let Ok(value) = runtime
+        .request(
+            "inbox.actionableQuestionPages",
+            json!({"workspaceIds":scope}),
+        )
+        .await
+    else {
+        return BTreeMap::new();
+    };
+    let Ok(first_pages) = serde_json::from_value::<Vec<ActionablePage>>(value) else {
+        return BTreeMap::new();
+    };
+    let mut exact = BTreeMap::new();
+    for page in first_pages {
+        if scope.contains(&page.workspace_id) {
+            exact
+                .entry(page.workspace_id.clone())
+                .and_modify(|duplicate| *duplicate = None)
+                .or_insert(Some(page));
+        }
+    }
+    let mut complete = BTreeMap::new();
+    for (workspace, page) in exact {
+        let Some(mut page) = page.filter(|page| page.questions_only) else {
+            continue;
+        };
+        if let Ok(tail) =
+            read_actionable_tail(runtime, &workspace, true, page.cursor, &page.rows).await
+        {
+            page.rows.extend(tail);
+            let questions = page
+                .rows
+                .iter()
+                .filter_map(|item| Question::from_attention(&workspace, item))
+                .collect();
+            let known = collect_questions(std::slice::from_ref(&workspace), questions);
+            complete.insert(workspace, known);
+        }
+    }
+    complete
+}
+
 #[derive(Default)]
 pub(in crate::collaboration) struct InboxBadge {
     connection: u64,
@@ -108,9 +162,9 @@ impl InboxBadge {
     }
 
     fn replace(&mut self, scope: &[String], fresh: Option<HashSet<BadgeItem>>) {
-        self.pending
-            .retain(|item| !scope.iter().any(|id| id == item.workspace()));
         if let Some(fresh) = fresh {
+            self.pending
+                .retain(|item| !scope.iter().any(|id| id == item.workspace()));
             self.pending.extend(fresh);
         }
     }
@@ -150,14 +204,7 @@ impl InboxBadge {
         let known = snapshot
             .attention
             .iter()
-            .filter_map(|item| {
-                (item.kind == "question_waiting_answer").then_some(())?;
-                Some(Question {
-                    workspace_id: snapshot.workspace_id.clone(),
-                    dispatch_id: item.dispatch_id.clone()?,
-                    message_id: item.message_id.clone()?,
-                })
-            })
+            .filter_map(|item| Question::from_attention(&snapshot.workspace_id, item))
             .collect();
         self.replace(&scope, Some(collect_questions(&scope, known)));
     }
@@ -265,9 +312,13 @@ mod tests {
         assert!(badge.sees(&old));
         assert!(!badge.sees(&new));
         badge.replace(&["beacon".into()], None);
-        assert_eq!(badge.pending, HashSet::from([other]));
+        assert_eq!(
+            badge.pending,
+            HashSet::from([old.clone(), other.clone(), new])
+        );
         assert!(badge.sees(&old));
         badge.replace(&["beacon".into()], Some(HashSet::new()));
+        assert_eq!(badge.pending, HashSet::from([other]));
         badge.replace(&["beacon".into()], Some(HashSet::from([old.clone()])));
         assert!(badge.sees(&old));
     }
@@ -474,11 +525,7 @@ impl HiveApp {
                     break;
                 };
                 if let Some((runtime, connection, scope, root)) = plan {
-                    let result = runtime
-                        .request("inbox.actionableQuestions", json!({"workspaceIds": scope}))
-                        .await
-                        .ok()
-                        .and_then(|value| Vec::<Question>::deserialize(value).ok());
+                    let mut fresh = read_badge_questions(&runtime, &scope).await;
                     let mut dispatch_inputs = BTreeMap::new();
                     for workspace in &scope {
                         if let Ok(saved) = Snoozes::load(&root, workspace) {
@@ -514,9 +561,11 @@ impl HiveApp {
                                 })
                                 .collect();
                             let before = app.has_new_global_inbox_items(cx);
-                            let fresh =
-                                result.map(|questions| collect_questions(&scope, questions));
                             for workspace in &scope {
+                                app.collaboration.inbox_badge.replace(
+                                    std::slice::from_ref(workspace),
+                                    fresh.remove(workspace),
+                                );
                                 if let Ok(saved) = Snoozes::load(root, workspace) {
                                     let saved = if let Some(inputs) = dispatch_inputs.get(workspace)
                                     {
@@ -531,7 +580,6 @@ impl HiveApp {
                                         .remember_reminders(workspace, &saved);
                                 }
                             }
-                            app.collaboration.inbox_badge.replace(&scope, fresh);
                             app.sync_inbox_deadlines(cx);
                             if before != app.has_new_global_inbox_items(cx) {
                                 cx.notify();

@@ -126,10 +126,14 @@ try {
     await writeFile(join(directory, 'cat_id.txt'), 'decoy');
     const result = await runtime.chats.projectFilesSearch(ws.id, 'c[ae]t', 0, sessionId, undefined, false, true, true);
     assert.deepEqual(result, {paths: ['cat.txt'], total: 1});
+    assert.deepEqual(await runtime.chats.projectFilesSearch(ws.id, 'c[ae]t', 0, sessionId, undefined, false, true, true, true), {
+      paths: ['cat.txt'], total: 1, ranges: [[[0, 3]]],
+    });
     assert.equal((await runtime.chats.projectFilesPreview(ws.id, result.paths[0], sessionId)).text, marker);
     await assert.rejects(runtime.chats.projectFilesSearch(otherWs.id, 'cat', 0, sessionId, undefined, false, false, true));
   }
   await assert.rejects(runtime.chats.projectFilesSearch(ws.id, 'cat', 0, a.id, undefined, false, false, 'true'), /Invalid project file search/);
+  await assert.rejects(runtime.chats.projectFilesSearch(ws.id, 'cat', 0, a.id, undefined, false, false, true, 'true'), /Invalid project file search/);
   const main = await runtime.chats.projectFilesAttach(ws.id, name);
   await assert.rejects(runtime.chats.projectFilesAttach(ws.id, name, a.id, bPreview.sha256), /文件在预览后已更改/);
   const aRef = await runtime.chats.projectFilesAttach(ws.id, name, a.id, aPreview.sha256);

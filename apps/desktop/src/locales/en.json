@@ -26,6 +26,7 @@
   "未命名派单": "Untitled dispatch",
   "成员已停止，仍有待办": "Stopped member with pending tasks",
   "收件箱返回了其他工作区的数据。": "The inbox returned data for a different workspace.",
+  "收件箱返回了无效的待办数据。": "The inbox returned invalid action items.",
   "收到的派单与所选派单不一致。": "The returned dispatch does not match the selected dispatch.",
   "等待你的操作": "Awaiting your response",
   "投递失败": "Delivery failed",

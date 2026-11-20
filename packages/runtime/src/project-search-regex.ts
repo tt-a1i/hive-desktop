@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads';
-import type { RegexRequest, RegexResult, RegexScan } from './project-search-regex-worker.js';
+import type { RegexRange, RegexRequest, RegexResult, RegexScan } from './project-search-regex-worker.js';
 
 export const REGEX_INVALID = 'Invalid regular expression.';
 export const REGEX_TIMEOUT = 'Regular expression search timed out.';
@@ -8,7 +8,7 @@ const COMPILE_MS = 1000;
 const FILE_MS = 300;
 const TOTAL_MS = 4000;
 
-type WorkerReply = {kind: 'ready' | 'invalid' | 'failed'} | RegexResult;
+type WorkerReply = {kind: 'ready'} | {kind: 'invalid'} | {kind: 'failed'} | RegexResult;
 type Slot = {resolve: (result: RegexResult) => void; reject: (reason: unknown) => void; timer: NodeJS.Timeout};
 
 let live: ProjectRegexSearch | undefined;
@@ -84,7 +84,7 @@ class ProjectRegexSearch {
           void this.close(new Error(REGEX_INVALID));
         } else if (reply.kind === 'failed') {
           void this.close(new Error(REGEX_UNAVAILABLE));
-        } else if ((reply.kind === 'scanned' || reply.kind === 'matchedPaths') && this.#pending) {
+        } else if (this.#pending) {
           const pending = this.#pending;
           this.#pending = undefined;
           clearTimeout(pending.timer);
@@ -107,6 +107,12 @@ class ProjectRegexSearch {
     const result = await this.#request({kind: 'matchPaths', paths});
     if (result.kind !== 'matchedPaths') throw new Error(REGEX_UNAVAILABLE);
     return result.indices;
+  }
+
+  async pathRanges(paths: readonly string[]): Promise<RegexRange[][]> {
+    const result = await this.#request({kind: 'pathRanges', paths});
+    if (result.kind !== 'pathRanges') throw new Error(REGEX_UNAVAILABLE);
+    return result.ranges;
   }
 
   async #request(request: RegexRequest): Promise<RegexResult> {

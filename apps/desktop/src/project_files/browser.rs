@@ -32,12 +32,13 @@ use gpui_kit::{
     *,
 };
 use image_preview::ImageViewport;
-use search_snippet::SearchSnippet;
+use search_snippet::{SearchSnippet, path_highlights};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
+    ops::Range,
     path::PathBuf,
     rc::Rc,
     sync::Arc,
@@ -225,17 +226,39 @@ struct SearchHit {
     selection: Match,
     #[serde(default)]
     snippet: Option<SearchSnippet>,
+    #[serde(skip)]
+    path_highlights: Vec<Range<usize>>,
 }
 
 #[derive(Default, Deserialize)]
 struct SearchPage {
     #[serde(default)]
     paths: Vec<String>,
+    #[serde(default, rename = "ranges")]
+    path_ranges: Value,
     #[serde(default)]
     matches: Vec<SearchHit>,
     total: usize,
     #[serde(default)]
     limited: bool,
+}
+
+impl SearchPage {
+    fn append_name_paths(&mut self) {
+        let mut ranges = match std::mem::take(&mut self.path_ranges) {
+            Value::Array(entries) if entries.len() == self.paths.len() => entries.into_iter(),
+            _ => Vec::new().into_iter(),
+        };
+        self.matches.extend(self.paths.drain(..).map(|path| {
+            SearchHit {
+                path_highlights: ranges
+                    .next()
+                    .map_or_else(Vec::new, |ranges| path_highlights(&path, ranges)),
+                selection: Match { path, line: None },
+                snippet: None,
+            }
+        }));
+    }
 }
 
 struct Preview {
@@ -1840,10 +1863,13 @@ impl FileBrowser {
         let runtime = self.runtime.clone().expect("current file runtime");
         let contents = self.contents;
         let offset = self.search_offset;
-        let params = scope.params(json!({
+        let mut params = scope.params(json!({
             "query":query,"offset":offset,"caseSensitive":self.search_flags.case_sensitive,
             "regex":self.search_flags.regex,"wholeWord":self.search_flags.whole_word,
         }));
+        if !contents {
+            params["includeRanges"] = json!(true);
+        }
         let scope_generation = self.scope_generation;
         let search_generation = self.search_generation;
         self.search_task = Some(cx.spawn(async move |this, cx| {
@@ -1866,11 +1892,7 @@ impl FileBrowser {
                 this.search_loading = false;
                 match result {
                     Ok(mut page) => {
-                        page.matches
-                            .extend(page.paths.drain(..).map(|path| SearchHit {
-                                selection: Match { path, line: None },
-                                snippet: None,
-                            }));
+                        page.append_name_paths();
                         if offset >= page.total && offset > 0 {
                             this.search_offset =
                                 page.total.saturating_sub(1) / PAGE_SIZE * PAGE_SIZE;
@@ -3073,15 +3095,27 @@ impl FileBrowser {
                 this.select(hit.clone(), cx);
             }
         }));
-        let Some((text, ranges)) = result.snippet.as_ref().and_then(SearchSnippet::display) else {
-            return row
-                .tooltip(label.clone())
-                .child(div().min_w_0().truncate().child(label));
-        };
         let mark = HighlightStyle {
             color: Some(Color::Accent.get(cx).into()),
             font_weight: Some(FontWeight::SEMIBOLD),
             ..Default::default()
+        };
+        let Some((text, ranges)) = result.snippet.as_ref().and_then(SearchSnippet::display) else {
+            let path = div().min_w_0().truncate();
+            let path = if result.path_highlights.is_empty() {
+                path.child(label.clone())
+            } else {
+                path.child(
+                    StyledText::new(label.clone()).with_highlights(
+                        result
+                            .path_highlights
+                            .iter()
+                            .cloned()
+                            .map(|range| (range, mark)),
+                    ),
+                )
+            };
+            return row.tooltip(label).child(path);
         };
         row.h(px(42.)).tooltip(format!("{label}\n{text}")).child(
             v_flex()
@@ -4572,6 +4606,37 @@ mod tests {
         assert_eq!(reduced.percent(300.), 67);
         let large_again = FileSplit::new(px(1008.), Some(80), false);
         assert_eq!(large_again.list, 800.);
+    }
+
+    #[test]
+    fn file_name_ranges_are_optional_and_checked_against_the_exact_ordered_path() {
+        let projection = |ranges| {
+            let mut page = serde_json::from_value::<SearchPage>(json!({
+                "paths": ["archive/readme.md", "docs/🙂-Cafe\u{301}.md", "plain.txt"],
+                "ranges": ranges,
+                "total": 103,
+            }))
+            .unwrap();
+            page.append_name_paths();
+            assert_eq!(page.total, 103);
+            assert_eq!(page.matches[1].selection.path, "docs/🙂-Cafe\u{301}.md");
+            assert_eq!(page.matches[1].selection.line, None);
+            page.matches
+                .into_iter()
+                .map(|hit| hit.path_highlights)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            projection(json!([[[0, 7]], [[10, 16]], "malformed"])),
+            [vec![0..7], vec![10..16], vec![]]
+        );
+        assert_eq!(
+            projection(json!([[[0, 7]], [[6, 9]], [[2, 1]]])),
+            [vec![0..7], vec![], vec![]]
+        );
+        for ranges in [json!(null), json!([[[0, 7]]]), json!({"wrong": "shape"})] {
+            assert!(projection(ranges).iter().all(Vec::is_empty));
+        }
     }
 
     #[test]

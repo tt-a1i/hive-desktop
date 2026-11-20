@@ -404,8 +404,23 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 在文件名中启用整词，`cat` 命中目录 `cat/README.md` 和文件 `docs/CAT-notes.md`，排除 `scatter` 与 `cat_id`，并返回分页结果。加上大小写匹配后排除大写文件。打开目录匹配核对了准确的项目文件内容。证据在 `.artifacts/batch29-files-qa`。
 - 288 项 Rust 测试通过，1 项原有忽略。TypeScript、桌面和运行时构建、桌面视图、Hive 附件、项目文件、工作树引用和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
 
+## 2026-11-21 第三十批
+
+本轮从 Hive Desktop `22445ba` 开始。参考 T3 Code `46b6262`、Cindy `90e373d`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **收件箱和后台提醒可读取第 101 条及之后的待答问题。** 项目和跨项目列表按工作区分批加载，关闭收件箱后的提醒也逐页读取。读取完整批次后才更新该工作区的待办，后续页失败时保留已有结果。旧 HTTP 和旧版桌面通信响应保留原格式。 [Hive 待办读取上限](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/dispatch-message-store.ts#L115-L126) · [Cindy 完整分区计数](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L181-L243)
+- **在空输入框用方向键取回本会话的已发送文字。** `↑` 回看，`↓` 向后回到空白。只取回当前已加载、由用户实际发送的文本。编辑文字、切换会话或存在附件时，方向键使用原有编辑行为。跨行定位按显示换行判断。 [T3 Code 提示词历史](https://github.com/pingdotgg/t3code/blob/46b626263fcfaa13d09448272dd749c82c95023a/docs/user/composer.md#L152-L163)
+- **文件名搜索高亮命中的相对路径片段。** 目录或文件名中的匹配位置沿用大小写、整词和正则设置，运行时只为当前页返回有限的 UTF‑8 范围。原路径、排序、键盘选择和打开方式保持一致。 [Beluga 文件名高亮](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L50-L65)
+
+- 生产运行时验证第 101 条问题能从普通和紧凑待办第二页读取，且保留确切成员和后端。另核对分页边界、后到数据、工作区隔离、原 HTTP 和旧版响应。Rust 检查后续页失败时保留原有待办。
+- macOS 先打开原有 100 条问题，再暂缓这些旧项以隔离提醒观察。关闭收件箱后，在同一工作区的另一派单新增第 101 条问题。入口显示新事项，打开后展示对应原文。通信记录显示关闭期间与打开后均读取了第二页。证据在 `.artifacts/batch30-inbox-qa`。
+- macOS 用本地受控 Codex 对端依次发送 A 和带附件的 B，从空输入框按 `↑`、`↑`、`↓`、`↓`，依次看到 B、A、B、空白。输入框始终没有恢复附件，对端仅收到原来的两次发送。冷开后另输入草稿 C，按 `↑` 时文字仍为 C。证据在 `.artifacts/batch30-history-qa`。
+- Rust 专项验证已发送文字的回看顺序、编辑后重置及消息来源。文件专项验证 Unicode、大小写和正则范围、当前页及原文件路径。
+- macOS 搜索 `archive` 并开启整词。实际请求启用高亮范围，前两条结果分别返回目录和文件名的准确字节范围。用方向键和 Return 打开了第二条的正确文件。实窗截图未取得，颜色待截图复验。证据在 `.artifacts/batch30-files-qa`。
+- 293 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、桌面视图、项目文件、工作树引用及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **补回第 101 条及之后的待答协作问题。** 实际 Hive 运行时显示，前 100 条旧问题会同时挤掉收件箱和后台新事项提示里的第 101 条。回答最旧的一条后，新问题才出现。验收须覆盖同一项目内的两条派单、按新事项进入、分页失败时保留已知状态。 [Hive 待办读取上限](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/dispatch-message-store.ts#L115-L126) · [Cindy 完整分区计数](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L181-L243)
-- **用方向键取回本会话已发送的提示词。** Hive 当前需要回到旧消息复制。用本地对端发送 A 和带附件的 B，从空输入框按 `↑`、`↑`、`↓`、`↓` 应依次看到 B、A、B、空白。验收只取回文字，覆盖已输入草稿、输入法和其他会话的历史。 [T3 Code 提示词历史](https://github.com/pingdotgg/t3code/blob/c53ac237a0af3d48229a509945edb0168fc92df1/docs/user/composer.md#L152-L163)
-- **高亮文件名搜索的命中部分。** 搜索 `archive` 会返回 `archive/readme.md` 和 `docs/archive-readme.md`，两行目前无法直接看出匹配的是目录还是文件名。验收需高亮相对路径上的确切位置，覆盖 Unicode、整词、正则、分页和 Return 打开原路径。 [Beluga 文件名高亮](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L50-L65)
+- **补齐旧协作问题的摘要和发问者。** macOS 在同一成员发出的 100 条问题中，当前只有最新 12 条显示摘要和发问者，其余显示收件人和编号。验收用两条不同旧问题及之后的 12 条普通消息，核对两个收件箱仍可按原文识别、打开及暂缓，同时按实际消息时间排列。 [Cindy 展示任务标题](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/apps/desktop/src/renderer/features/cc-agent/sidebar/SessionItem.tsx#L1062-L1067)
+- **用 `Shift+Enter` 续写 Markdown 列表。** Hive 在 `1. 确认文件` 后只换行。验收续写项目符号、递增序号、新待办保持未勾选，空项再次按键会退出，同时覆盖撤销、普通正文及代码块。 [T3 Code 列表续写](https://github.com/pingdotgg/t3code/blob/46b626263fcfaa13d09448272dd749c82c95023a/docs/user/composer.md#L31-L36)
+- **为文件源码预览显示原始行号。** 从正文搜索打开一份 700 行源码中的第 350 行，目前只能在结果或标题看到行号。验收逐行显示准确编号，翻页及在停靠和展开界面切换时保留原位置，跨行复制只复制源码。 [Beluga 源码行号](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/components/markdown/CodeLines.tsx#L34-L70)
