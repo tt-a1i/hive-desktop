@@ -675,11 +675,11 @@ impl HiveApp {
                 InputEvent::PressEnter {
                     secondary: false,
                     shift: false,
-                } if this.composer_can_submit
-                    && cx.global::<crate::composer::ComposerPreferences>().settings.mode
-                        == crate::composer::SendMode::Enter =>
+                } if this.composer_can_submit && this.composer_submit_on_enter =>
                 {
-                    this.submit_composer_key(crate::composer::SendIntent::Configured, window, cx)
+                    if this.composer_key_is_focused(window, cx) {
+                        this.submit_composer_key(crate::composer::SendIntent::Configured, window, cx)
+                    }
                 }
                 InputEvent::Change => {
                     this.schedule_draft_save(cx);
@@ -687,8 +687,9 @@ impl HiveApp {
                     if !this.prompt_history.on_change(this.open_request, &text) {
                         this.composer_commands_changed(cx);
                     }
+                    let enter_mode_changed = this.sync_composer_enter_mode(cx);
                     let has_text = !text.trim().is_empty();
-                    if this.composer_has_text != has_text {
+                    if enter_mode_changed || this.composer_has_text != has_text {
                         cx.notify();
                     }
                 }

@@ -23,7 +23,7 @@ pub(crate) fn backend_glyph(backend: Backend) -> Glyph {
     }
 }
 
-fn busy_send_hint(mode: BusySendMode) -> SharedString {
+fn busy_send_hint(mode: BusySendMode, shifted: bool) -> SharedString {
     let (default, alternate) = match mode {
         BusySendMode::Queue => (
             tr("加入队列，当前回复结束后按顺序处理"),
@@ -37,7 +37,12 @@ fn busy_send_hint(mode: BusySendMode) -> SharedString {
             return tr("Agent 正在运行中；当前设置为等待空闲后再发送").into();
         }
     };
-    let shortcut = if cfg!(target_os = "macos") { "⌘Enter" } else { "Ctrl+Enter" };
+    let shortcut = match (cfg!(target_os = "macos"), shifted) {
+        (true, false) => "⌘Enter",
+        (true, true) => "⌘⇧Enter",
+        (false, false) => "Ctrl+Enter",
+        (false, true) => "Ctrl+Shift+Enter",
+    };
     format!("{default}\n{shortcut} · {alternate}").into()
 }
 
@@ -279,7 +284,11 @@ impl HiveApp {
                                 .tooltip(if self.workspace.is_none() {
                                     tr("选择项目文件夹并发送").into()
                                 } else if running {
-                                    busy_send_hint(busy_mode)
+                                    let shifted = cx.global::<crate::composer::ComposerPreferences>()
+                                        .settings
+                                        .mode
+                                        .uses_shift_for_alternate(&self.input.read(cx).value());
+                                    busy_send_hint(busy_mode, shifted)
                                 } else {
                                     cx.global::<crate::composer::ComposerPreferences>()
                                         .settings

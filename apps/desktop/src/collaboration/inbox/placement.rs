@@ -31,13 +31,64 @@ impl RowId {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Section {
+pub(super) enum Section {
     Attention,
     Waiting,
     Snoozed,
 }
 
-type Row<'a> = (&'a str, Entry);
+pub(super) type Row<'a> = (&'a str, Entry);
+
+impl Section {
+    pub(super) const ALL: [Self; 3] = [Self::Attention, Self::Waiting, Self::Snoozed];
+
+    pub(super) fn title(self) -> &'static str {
+        match self {
+            Self::Attention => "需要你关注",
+            Self::Waiting => "等待 Agent",
+            Self::Snoozed => "已暂缓事项",
+        }
+    }
+
+    pub(super) fn control_id(self) -> &'static str {
+        match self {
+            Self::Attention => "inbox-attention-more",
+            Self::Waiting => "inbox-waiting-more",
+            Self::Snoozed => "inbox-snoozed-more",
+        }
+    }
+
+    pub(super) fn heading_id(self) -> &'static str {
+        match self {
+            Self::Attention => "inbox-attention-heading",
+            Self::Waiting => "inbox-waiting-heading",
+            Self::Snoozed => "inbox-snoozed-heading",
+        }
+    }
+}
+
+const SECTION_PAGE_SIZE: usize = 20;
+
+#[derive(Clone, Copy, Default)]
+pub(super) struct SectionDepth([usize; 3]);
+
+impl SectionDepth {
+    pub(super) fn limit(self, section: Section) -> usize {
+        self.0[section as usize].max(SECTION_PAGE_SIZE)
+    }
+
+    pub(super) fn show_more(&mut self, section: Section) {
+        self.0[section as usize] = self.limit(section).saturating_add(SECTION_PAGE_SIZE);
+    }
+
+    pub(super) fn include_row(&mut self, section: Section, index: usize) {
+        let needed = index
+            .saturating_add(1)
+            .div_ceil(SECTION_PAGE_SIZE)
+            .saturating_mul(SECTION_PAGE_SIZE);
+        self.0[section as usize] = self.limit(section).max(needed);
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum SnoozedUntil {
@@ -53,6 +104,34 @@ pub(super) struct InboxSections<'a> {
 }
 
 impl<'a> InboxSections<'a> {
+    pub(super) fn rows(&self, section: Section) -> &[Row<'a>] {
+        match section {
+            Section::Attention => &self.attention,
+            Section::Waiting => &self.waiting,
+            Section::Snoozed => &self.snoozed,
+        }
+    }
+
+    pub(super) fn position(
+        &self,
+        id: &RowId,
+        waiting: bool,
+        snoozed: bool,
+    ) -> Option<(Section, usize)> {
+        Section::ALL
+            .into_iter()
+            .filter(|section| match section {
+                Section::Attention => true,
+                Section::Waiting => waiting,
+                Section::Snoozed => snoozed,
+            })
+            .find_map(|section| {
+                self.rows(section)
+                    .iter()
+                    .position(|(workspace, entry)| &RowId::for_entry(workspace, entry) == id)
+                    .map(|index| (section, index))
+            })
+    }
     pub(super) fn from_rows(
         mut rows: Vec<Row<'a>>,
         mut snoozed_until: impl FnMut(&str, &Entry) -> Option<SnoozedUntil>,
@@ -265,7 +344,7 @@ impl RowPlacement {
 
 #[cfg(test)]
 mod tests {
-    use super::{InboxSections, Row, RowId, RowPlacement, SnoozedUntil};
+    use super::{InboxSections, Row, RowId, RowPlacement, Section, SectionDepth, SnoozedUntil};
     use crate::collaboration::inbox::{Destination, Entry, Priority, snoozes::Reminder};
 
     fn row(
@@ -295,6 +374,60 @@ mod tests {
         rows.iter()
             .map(|(_, entry)| entry.subject.as_str())
             .collect()
+    }
+
+    #[test]
+    fn expanded_sections_keep_full_totals_and_reveal_independent_pages() {
+        let entries = (0..151)
+            .map(|index| {
+                let priority = if index < 101 {
+                    Priority::NeedsUser
+                } else {
+                    Priority::Active
+                };
+                let (workspace, mut entry) =
+                    row("atlas", &format!("task-{index}"), priority, 151 - index);
+                entry.snooze_key = None;
+                (workspace, entry)
+            })
+            .collect();
+        let sections = InboxSections::from_rows(entries, |_, entry| {
+            (entry.updated_at <= 25).then_some(SnoozedUntil::Indefinitely)
+        });
+        assert_eq!(
+            Section::ALL.map(|section| sections.rows(section).len()),
+            [101, 25, 25]
+        );
+
+        let mut depth = SectionDepth::default();
+        assert_eq!(
+            Section::ALL.map(|section| depth.limit(section)),
+            [20, 20, 20]
+        );
+        let exact = RowId::from_key("atlas", "dispatch:task-20".into());
+        let attention = sections.rows(Section::Attention);
+        let shown = |depth: SectionDepth| {
+            attention
+                .iter()
+                .take(depth.limit(Section::Attention))
+                .any(|(workspace, entry)| RowId::for_entry(workspace, entry) == exact)
+        };
+        assert!(!shown(depth));
+        depth.show_more(Section::Attention);
+        assert!(shown(depth));
+        assert_eq!(depth.limit(Section::Waiting), 20);
+        assert_eq!(attention.len(), 101);
+
+        let deep = RowId::from_key("atlas", "dispatch:task-82".into());
+        let (section, at) = sections.position(&deep, false, false).unwrap();
+        depth.include_row(section, at);
+        assert_eq!(
+            Section::ALL.map(|section| depth.limit(section)),
+            [100, 20, 20]
+        );
+        let hidden_snooze = RowId::from_key("atlas", "dispatch:task-130".into());
+        assert!(sections.position(&hidden_snooze, true, false).is_none());
+        assert!(sections.position(&hidden_snooze, true, true).is_some());
     }
 
     #[test]

@@ -1,6 +1,10 @@
 use crate::palette::Color;
 use gpui_kit::{
-    component::{scroll::ScrollableElement, *},
+    component::{
+        scroll::{ScrollableElement, ScrollbarAxis},
+        *,
+    },
+    prelude::FluentBuilder,
     *,
 };
 
@@ -11,6 +15,28 @@ pub(crate) fn region(
     height: Pixels,
     cx: &App,
 ) -> Stateful<Div> {
+    reading_region(id, label, handle, height, false, cx)
+}
+
+pub(crate) fn source_region(
+    id: String,
+    label: String,
+    handle: &ScrollHandle,
+    height: Pixels,
+    wrap: bool,
+    cx: &App,
+) -> Stateful<Div> {
+    reading_region(id, label, handle, height, !wrap, cx)
+}
+
+fn reading_region(
+    id: String,
+    label: String,
+    handle: &ScrollHandle,
+    height: Pixels,
+    horizontal: bool,
+    cx: &App,
+) -> Stateful<Div> {
     let scroll = handle.clone();
     v_flex()
         .id(SharedString::from(id))
@@ -19,7 +45,15 @@ pub(crate) fn region(
         .overflow_y_scroll()
         .track_scroll(handle)
         .relative()
-        .vertical_scrollbar(handle)
+        .when(horizontal, |view| view.overflow_x_scroll().w_full())
+        .scrollbar(
+            handle,
+            if horizontal {
+                ScrollbarAxis::Both
+            } else {
+                ScrollbarAxis::Vertical
+            },
+        )
         .tab_index(0)
         .border_1()
         .border_color(Color::Divider.get(cx))
@@ -42,11 +76,21 @@ pub(crate) fn region(
                 "pagedown" => scroll.set_offset(point(offset.x, offset.y - page)),
                 "home" => scroll.set_offset(point(offset.x, px(0.))),
                 "end" => scroll.scroll_to_bottom(),
+                "left" | "right" if horizontal && scroll.max_offset().x > px(0.) => {
+                    let x =
+                        horizontal_offset(&event.keystroke.key, offset.x, scroll.max_offset().x);
+                    scroll.set_offset(point(x, offset.y));
+                }
                 _ => return,
             }
             window.refresh();
             cx.stop_propagation();
         })
+}
+
+fn horizontal_offset(key: &str, offset: Pixels, maximum: Pixels) -> Pixels {
+    let step = if key == "left" { px(48.) } else { px(-48.) };
+    (offset + step).clamp(-maximum, px(0.))
 }
 
 /// Preserve native selection. AccessKit Label text belongs in its value, which
@@ -65,7 +109,7 @@ pub(crate) fn selectable_text(
         .child(gpui_kit::base::SelectableText::new(id, text))
 }
 
-pub(crate) fn numbered_source(id: &'static str, page: &TextPages, cx: &App) -> Div {
+pub(crate) fn numbered_source(id: &'static str, page: &TextPages, wrap: bool, cx: &App) -> Div {
     let numbers = page.line_numbers();
     let digits = numbers.end.saturating_sub(1).to_string().len().max(2) as f32;
     let gutter = rems(0.6 * digits + 0.625);
@@ -76,7 +120,8 @@ pub(crate) fn numbered_source(id: &'static str, page: &TextPages, cx: &App) -> D
         .child(div().w(gutter).flex_shrink_0())
         .child(
             v_flex()
-                .flex_1()
+                .when(wrap, |view| view.flex_1())
+                .when(!wrap, |view| view.flex_none())
                 .min_w_0()
                 .relative()
                 .child(selectable_text(id, text.clone()))
@@ -306,7 +351,8 @@ fn page_boundaries(text: &str) -> Vec<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PAGE_BYTES, PAGE_LINES, TextPages, page_boundaries};
+    use super::{PAGE_BYTES, PAGE_LINES, TextPages, horizontal_offset, page_boundaries};
+    use gpui_kit::px;
 
     #[test]
     fn text_pages_preserve_every_byte_and_bound_each_layout() {
@@ -392,5 +438,13 @@ mod tests {
             source.push_str(&pages.visible);
         }
         assert_eq!(source, full);
+    }
+
+    #[test]
+    fn horizontal_source_scroll_follows_arrow_direction_and_clamps_to_text() {
+        assert_eq!(horizontal_offset("right", px(0.), px(80.)), px(-48.));
+        assert_eq!(horizontal_offset("right", px(-48.), px(80.)), px(-80.));
+        assert_eq!(horizontal_offset("left", px(-80.), px(80.)), px(-32.));
+        assert_eq!(horizontal_offset("left", px(-32.), px(80.)), px(0.));
     }
 }

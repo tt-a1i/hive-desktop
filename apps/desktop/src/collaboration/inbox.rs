@@ -24,14 +24,16 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
-use placement::{InboxSections, SnoozedUntil};
+use placement::{InboxSections, Row, RowId, Section, SectionDepth, SnoozedUntil};
 use serde::Deserialize;
 use serde_json::json;
 use snoozes::{Delay, Reminder, Snoozes, Wake, now_ms, unread_session_key};
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashSet},
     io,
     path::Path,
+    rc::Rc,
 };
 use undo::{UNDO_CHANGED, UndoChange, UndoSlot, VerifiedUndo, expire_later};
 
@@ -45,7 +47,22 @@ pub(super) struct Inbox {
     error: Option<String>,
     reminders: Reminders,
     show_snoozed: bool,
+    section_depth: SectionDepth,
+    return_position: Option<ProjectInboxPosition>,
     undo: UndoSlot,
+}
+
+#[derive(Clone, PartialEq)]
+struct ProjectInboxPosition {
+    row: RowId,
+    viewport_offset: Option<Pixels>,
+    previous_offset: Pixels,
+}
+
+enum ProjectInboxItem<'a> {
+    Heading(Section, usize),
+    Row(Row<'a>),
+    More(Section, usize),
 }
 
 impl Inbox {
@@ -1078,7 +1095,12 @@ impl HiveApp {
         .detach();
     }
 
-    fn open_inbox_dispatch(&mut self, destination: &Destination, cx: &mut Context<Self>) {
+    fn open_inbox_dispatch(
+        &mut self,
+        destination: &Destination,
+        return_position: Option<ProjectInboxPosition>,
+        cx: &mut Context<Self>,
+    ) {
         let (id, message) = match destination {
             Destination::Dispatch(id) => (id.clone(), None),
             Destination::DispatchMessage { dispatch, message } => {
@@ -1126,6 +1148,9 @@ impl HiveApp {
                     Ok(dispatch) if dispatch.id == id => {
                         this.show_dispatch(dispatch, cx);
                         this.collaboration.selected_message = selected_message;
+                        if return_position.is_some() {
+                            this.collaboration.inbox.return_position = return_position;
+                        }
                     }
                     Ok(_) => this.error = Some("收到的派单与所选派单不一致。".into()),
                     Err(error) => this.error = Some(ErrorNotice::Detail("无法打开派单", error)),
@@ -1320,11 +1345,102 @@ impl HiveApp {
         let has_items = !sections.attention.is_empty()
             || !sections.waiting.is_empty()
             || (show_snoozed && has_snoozed);
-        let rows = sections
-            .attention
-            .into_iter()
-            .chain(sections.waiting)
-            .chain(sections.snoozed.into_iter().filter(move |_| show_snoozed));
+        let mut depth = if current {
+            inbox.section_depth
+        } else {
+            SectionDepth::default()
+        };
+        let restore = inbox
+            .return_position
+            .clone()
+            .filter(|_| current && !inbox.loading && inbox.action_center.is_some());
+        if let Some(position) = &restore
+            && let Some((section, index)) = sections.position(&position.row, true, show_snoozed)
+        {
+            depth.include_row(section, index);
+        }
+        let mut rows = Vec::new();
+        for (section, items) in [
+            (Section::Attention, sections.attention),
+            (Section::Waiting, sections.waiting),
+            (
+                Section::Snoozed,
+                if show_snoozed {
+                    sections.snoozed
+                } else {
+                    Vec::new()
+                },
+            ),
+        ] {
+            if items.is_empty() {
+                continue;
+            }
+            let count = items.len();
+            rows.push(ProjectInboxItem::Heading(section, count));
+            rows.extend(
+                items
+                    .into_iter()
+                    .take(depth.limit(section))
+                    .map(ProjectInboxItem::Row),
+            );
+            if count > depth.limit(section) {
+                rows.push(ProjectInboxItem::More(
+                    section,
+                    count - depth.limit(section),
+                ));
+            }
+        }
+        let restore_index = restore.as_ref().and_then(|position| {
+            rows.iter().position(|row| {
+                matches!(row, ProjectInboxItem::Row((workspace, entry))
+                if RowId::for_entry(workspace, entry) == position.row)
+            })
+        });
+        let bounds = Rc::new(RefCell::new(Vec::<Bounds<Pixels>>::new()));
+        let observed = bounds.clone();
+        let viewport = scroll.clone();
+        let scope = workspace.to_owned();
+        let connection = self.connection_generation;
+        let app = cx.weak_entity();
+        let row_list =
+            v_flex()
+                .gap_2()
+                .min_w_0()
+                .on_children_prepainted(move |bounds, window, cx| {
+                    if let Some(position) = &restore {
+                        let exact = position
+                            .viewport_offset
+                            .zip(restore_index.and_then(|index| bounds.get(index)));
+                        let offset = exact
+                            .map_or(position.previous_offset, |(desired, actual)| {
+                                viewport.offset().y + viewport.bounds().top() + desired
+                                    - actual.top()
+                            })
+                            .clamp(-viewport.max_offset().y, px(0.));
+                        let viewport = viewport.clone();
+                        let scope = scope.clone();
+                        let app = app.clone();
+                        let expected = position.clone();
+                        window.defer(cx, move |window, cx| {
+                            let _ = app.update(cx, |app, cx| {
+                                if app.connection_generation == connection
+                                    && app.workspace.as_deref() == Some(&scope)
+                                    && app.collaboration.visible
+                                    && app.collaboration.selected.is_none()
+                                    && app.collaboration.inbox.return_position.as_ref()
+                                        == Some(&expected)
+                                {
+                                    app.collaboration.inbox.return_position = None;
+                                    app.collaboration.inbox.section_depth = depth;
+                                    viewport.set_offset(point(px(0.), offset));
+                                    window.refresh();
+                                    cx.notify();
+                                }
+                            });
+                        });
+                    }
+                    *observed.borrow_mut() = bounds;
+                });
         let status = if current && inbox.error.is_some() {
             Some("无法刷新协作收件箱")
         } else if !has_items {
@@ -1387,150 +1503,202 @@ impl HiveApp {
                     ))
                 },
             )
-            .children(rows.map(|(workspace, entry)| {
-                let reminder = current
-                    .then(|| inbox.reminders.active_reminder(&entry, now))
-                    .flatten();
-                let workspace = workspace.to_owned();
-                let snooze_workspace = workspace.clone();
-                let connection = self.connection_generation;
-                let archive = ArchiveInboxSession::for_entry(
-                    self,
-                    &workspace,
-                    &entry,
-                    &self.members,
-                    &inbox.reminders,
-                    reminder.is_some(),
-                )
-                .map(|archive| {
-                    Button::new("archive-inbox-session").on_click(cx.listener(
-                        move |this, _, window, cx| {
-                            let target = archive.clone();
-                            this.request_inbox_session_archive(
-                                archive.session.clone(),
-                                archive.revision,
-                                false,
-                                move |app, _| {
-                                    let workspace = target.session.workspace_id.as_str();
-                                    let inbox = &app.collaboration.inbox;
-                                    app.connection_generation == connection
-                                        && app.collaboration.visible
-                                        && app.workspace.as_deref() == Some(workspace)
-                                        && inbox.workspace.as_deref() == Some(workspace)
-                                        && app.scoped_entries(workspace).iter().any(|entry| {
-                                            ArchiveInboxSession::for_entry(
-                                                app,
-                                                workspace,
-                                                entry,
-                                                &app.members,
-                                                &inbox.reminders,
-                                                is_snoozed(entry, &inbox.reminders, now_ms()),
-                                            )
-                                            .is_some_and(|current| target.matches(&current))
-                                        })
-                                },
-                                window,
+            .child(
+                row_list.children(rows.into_iter().enumerate().map(|(index, row)| {
+                    let (workspace, entry) = match row {
+                        ProjectInboxItem::Row(row) => row,
+                        ProjectInboxItem::Heading(section, count) => {
+                            return global::section_title(
+                                section.heading_id(),
+                                tr(section.title()),
+                                count,
                                 cx,
-                            );
-                        },
-                    ))
-                });
-                let mark_read =
-                    MarkInboxRead::for_entry(self, &workspace, &entry, &inbox.reminders).map(
-                        |mark| {
-                            Button::new("mark-inbox-session-read")
-                                .disabled(!self.connected || self.closing)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if this.connected
-                                        && !this.closing
-                                        && this.connection_generation == connection
-                                        && this.workspace.as_deref()
-                                            == Some(mark.workspace.as_str())
-                                        && this.workspace_removing.as_deref()
-                                            != Some(mark.workspace.as_str())
-                                        && this
-                                            .scoped_entries(&mark.workspace)
-                                            .iter()
-                                            .any(|entry| mark.matches(entry))
+                            )
+                            .into_any_element();
+                        }
+                        ProjectInboxItem::More(section, remaining) => {
+                            let scope = workspace.to_owned();
+                            let more = show_more_button(
+                                section,
+                                section.title(),
+                                remaining,
+                                cx.listener(move |this, _, _, cx| {
+                                    if this.workspace.as_deref() == Some(&scope)
+                                        && this.collaboration.inbox.workspace.as_deref()
+                                            == Some(&scope)
                                     {
-                                        let _ = mark.clear(this, cx);
+                                        this.collaboration.inbox.section_depth.show_more(section);
+                                        cx.notify();
                                     }
-                                }))
-                        },
+                                }),
+                            );
+                            return Reveal::new(section.control_id(), scroll, more)
+                                .into_any_element();
+                        }
+                    };
+                    let reminder = current
+                        .then(|| inbox.reminders.active_reminder(&entry, now))
+                        .flatten();
+                    let workspace = workspace.to_owned();
+                    let snooze_workspace = workspace.clone();
+                    let connection = self.connection_generation;
+                    let archive = ArchiveInboxSession::for_entry(
+                        self,
+                        &workspace,
+                        &entry,
+                        &self.members,
+                        &inbox.reminders,
+                        reminder.is_some(),
+                    )
+                    .map(|archive| {
+                        Button::new("archive-inbox-session").on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                let target = archive.clone();
+                                this.request_inbox_session_archive(
+                                    archive.session.clone(),
+                                    archive.revision,
+                                    false,
+                                    move |app, _| {
+                                        let workspace = target.session.workspace_id.as_str();
+                                        let inbox = &app.collaboration.inbox;
+                                        app.connection_generation == connection
+                                            && app.collaboration.visible
+                                            && app.workspace.as_deref() == Some(workspace)
+                                            && inbox.workspace.as_deref() == Some(workspace)
+                                            && app.scoped_entries(workspace).iter().any(|entry| {
+                                                ArchiveInboxSession::for_entry(
+                                                    app,
+                                                    workspace,
+                                                    entry,
+                                                    &app.members,
+                                                    &inbox.reminders,
+                                                    is_snoozed(entry, &inbox.reminders, now_ms()),
+                                                )
+                                                .is_some_and(|current| target.matches(&current))
+                                            })
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            },
+                        ))
+                    });
+                    let mark_read =
+                        MarkInboxRead::for_entry(self, &workspace, &entry, &inbox.reminders).map(
+                            |mark| {
+                                Button::new("mark-inbox-session-read")
+                                    .disabled(!self.connected || self.closing)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if this.connected
+                                            && !this.closing
+                                            && this.connection_generation == connection
+                                            && this.workspace.as_deref()
+                                                == Some(mark.workspace.as_str())
+                                            && this.workspace_removing.as_deref()
+                                                != Some(mark.workspace.as_str())
+                                            && this
+                                                .scoped_entries(&mark.workspace)
+                                                .iter()
+                                                .any(|entry| mark.matches(entry))
+                                        {
+                                            let _ = mark.clear(this, cx);
+                                        }
+                                    }))
+                            },
+                        );
+                    let target = entry.target.clone();
+                    let origin = self.history_link_target();
+                    let row_id = RowId::for_entry(&workspace, &entry);
+                    let bounds = bounds.clone();
+                    let viewport = scroll.clone();
+                    let action = inbox_open_button(
+                        "open-inbox-item",
+                        !self.connected || self.closing,
+                        cx.listener(move |this, _, window, cx| {
+                            if !this.connected
+                                || this.closing
+                                || this.workspace.as_deref() != Some(&workspace)
+                                || !origin.as_ref().is_some_and(|origin| origin.current(this))
+                            {
+                                return;
+                            }
+                            let position = ProjectInboxPosition {
+                                row: row_id.clone(),
+                                viewport_offset: bounds
+                                    .borrow()
+                                    .get(index)
+                                    .map(|bounds| bounds.top() - viewport.bounds().top()),
+                                previous_offset: viewport.offset().y,
+                            };
+                            match &target {
+                                Destination::Dispatch(_) | Destination::DispatchMessage { .. } => {
+                                    this.open_inbox_dispatch(&target, Some(position), cx);
+                                }
+                                Destination::Session(session) => {
+                                    this.open_member_session(session.id.clone(), window, cx);
+                                    if !this.collaboration.visible {
+                                        this.collaboration.inbox.return_position = Some(position);
+                                    }
+                                }
+                                Destination::Member(_) => {
+                                    this.show_team(window, cx);
+                                    this.collaboration.inbox.return_position = Some(position);
+                                }
+                            }
+                        }),
                     );
-                let target = entry.target.clone();
-                let origin = self.history_link_target();
-                let action = inbox_open_button(
-                    "open-inbox-item",
-                    !self.connected || self.closing,
-                    cx.listener(move |this, _, window, cx| {
-                        if !this.connected
-                            || this.closing
-                            || this.workspace.as_deref() != Some(&workspace)
-                            || !origin.as_ref().is_some_and(|origin| origin.current(this))
-                        {
-                            return;
-                        }
-                        match &target {
-                            Destination::Dispatch(_) | Destination::DispatchMessage { .. } => {
-                                this.open_inbox_dispatch(&target, cx);
+                    inbox_row(
+                        &snooze_workspace,
+                        None,
+                        entry,
+                        reminder,
+                        current && inbox.reminders.saved.is_some() && !self.closing,
+                        action,
+                        mark_read,
+                        archive,
+                        scroll,
+                        cx,
+                        None,
+                        |this, edit, delay, cx| {
+                            let workspace = edit.workspace.as_str();
+                            if !this.connected
+                                || this.closing
+                                || this.workspace.as_deref() != Some(workspace)
+                                || this.workspace_removing.as_deref() == Some(workspace)
+                                || this.collaboration.inbox.workspace.as_deref() != Some(workspace)
+                                || this.collaboration.inbox.connection != this.connection_generation
+                                || !edit.reply_is_current(this)
+                                || !this
+                                    .scoped_entries(workspace)
+                                    .iter()
+                                    .any(|entry| edit.matches(entry))
+                            {
+                                return Err(SNOOZE_CHANGED);
                             }
-                            Destination::Session(session) => {
-                                this.open_member_session(session.id.clone(), window, cx)
+                            let root = this.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
+                            let result = this.collaboration.inbox.reminders.set(root, edit, delay);
+                            if result.is_ok()
+                                && let Some(saved) = &this.collaboration.inbox.reminders.saved
+                            {
+                                this.collaboration
+                                    .inbox_badge
+                                    .remember_reminders(workspace, saved);
+                                if delay.is_some() {
+                                    this.collaboration.inbox_badge.forget_snoozed(edit);
+                                }
                             }
-                            Destination::Member(_) => this.show_team(window, cx),
-                        }
-                    }),
-                );
-                inbox_row(
-                    &snooze_workspace,
-                    None,
-                    entry,
-                    reminder,
-                    current && inbox.reminders.saved.is_some() && !self.closing,
-                    action,
-                    mark_read,
-                    archive,
-                    scroll,
-                    cx,
-                    None,
-                    |this, edit, delay, cx| {
-                        let workspace = edit.workspace.as_str();
-                        if !this.connected
-                            || this.closing
-                            || this.workspace.as_deref() != Some(workspace)
-                            || this.workspace_removing.as_deref() == Some(workspace)
-                            || this.collaboration.inbox.workspace.as_deref() != Some(workspace)
-                            || this.collaboration.inbox.connection != this.connection_generation
-                            || !edit.reply_is_current(this)
-                            || !this
-                                .scoped_entries(workspace)
-                                .iter()
-                                .any(|entry| edit.matches(entry))
-                        {
-                            return Err(SNOOZE_CHANGED);
-                        }
-                        let root = this.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
-                        let result = this.collaboration.inbox.reminders.set(root, edit, delay);
-                        if result.is_ok()
-                            && let Some(saved) = &this.collaboration.inbox.reminders.saved
-                        {
-                            this.collaboration
-                                .inbox_badge
-                                .remember_reminders(workspace, saved);
-                            if delay.is_some() {
-                                this.collaboration.inbox_badge.forget_snoozed(edit);
+                            cx.notify();
+                            if let Some(change) = result? {
+                                let generation = this.collaboration.inbox.undo.offer(change);
+                                expire_later(cx, generation, |app| {
+                                    &mut app.collaboration.inbox.undo
+                                });
                             }
-                        }
-                        cx.notify();
-                        if let Some(change) = result? {
-                            let generation = this.collaboration.inbox.undo.offer(change);
-                            expire_later(cx, generation, |app| &mut app.collaboration.inbox.undo);
-                        }
-                        Ok(())
-                    },
-                )
-            }))
+                            Ok(())
+                        },
+                    )
+                })),
+            )
             .when_some(
                 current
                     .then(|| inbox.undo.render(cx, Self::undo_workspace_snooze))
@@ -1684,6 +1852,18 @@ fn inbox_open_button(
                 confirm(&ClickEvent::default(), window, cx);
             }
         })
+}
+
+fn show_more_button(
+    section: Section,
+    title: &'static str,
+    remaining: usize,
+    show: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Button {
+    inbox_open_button(section.control_id(), false, show)
+        .px_2()
+        .py_1()
+        .label(format!("{} · {} ({remaining})", tr("显示更多"), tr(title)))
 }
 
 fn inbox_row<T: 'static>(

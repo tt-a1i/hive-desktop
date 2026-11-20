@@ -89,6 +89,7 @@ impl HiveApp {
                     id,
                     &self.chat_settings_scroll,
                     crate::settings::settings_segmented_bar(cx)
+                        .when(choices.len() > 2, |bar| bar.max_w_full().flex_wrap())
                         .id(SharedString::from(format!("{id}-choices")))
                         .role(Role::Group)
                         .aria_label(title)
@@ -133,6 +134,7 @@ impl HiveApp {
                     vec![
                         ("send-mode-enter", tr("Enter 发送"), mode == SendMode::Enter, Change::Send(SendMode::Enter)),
                         ("send-mode-modifier", modifier, mode == SendMode::ModifierEnter, Change::Send(SendMode::ModifierEnter)),
+                        ("send-mode-multiline", SendMode::multiline_label(), mode == SendMode::ModifierEnterMultiline, Change::Send(SendMode::ModifierEnterMultiline)),
                     ], false, cx))
                 .child(self.chat_setting_choices("chat-tools-mode-reveal", tr("工具活动"),
                     tr("连续成功的工具可合并为工作过程，也可逐项展示。失败、中断和执行中的工具始终单独显示；详情仍可展开。"),

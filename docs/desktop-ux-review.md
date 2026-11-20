@@ -434,8 +434,22 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - Rust 专项验证待答问题按实际提问时间排序，以及列表的连续编号、缩进、任务框、UTF‑8 与 CRLF、插入位置和代码围栏。文件专项核对从第 350 行定位、后页第 513 行、空行，以及超长源码跨页时保留同一个行号。
 - 300 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、Hive HTTP 与 SQLite、桌面视图和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
 
+## 2026-11-21 第三十二批
+
+本轮从 Hive Desktop `7af78fe` 开始。参考 T3 Code `21d7fea`、Cindy `6b05493`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **收件箱各分区先显示 20 条。** 项目与跨项目收件箱保留完整计数，点击或用键盘激活「显示更多」逐次显示 20 条。打开已展开的条目后返回，恢复对应的展开范围和阅读位置。已处理会话沿用原有分页。 [Cindy 分区显示上限](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L186-L248)
+- **草稿可按实际行数选用发送键。** 新设置允许单行用 `Enter` 发送，窗口宽度造成的折行仍按单行处理。含实际换行时，`Enter` 继续编辑，`Cmd/Ctrl+Enter` 发送。多行草稿在忙碌时可加 `Shift` 执行另一种跟进方式，原有两种设置继续生效。 [T3 Code 发送键规则](https://github.com/pingdotgg/t3code/blob/21d7feaff7edb445855c91e0d4526b9cce63d83a/docs/user/keybindings.md#L14-L18) · [T3 Code 多行跟进](https://github.com/pingdotgg/t3code/blob/21d7feaff7edb445855c91e0d4526b9cce63d83a/docs/user/composer.md#L69-L74)
+- **展开源码阅读器可关闭长行换行。** 关闭后可用横向滚动条或方向键读到长行结尾，保留当前文件、页码和原始行号。展开阅读器会记住设置，紧凑预览继续换行。 [Beluga 阅读器换行开关](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/reader/FileFocus.tsx#L193-L213)
+
+- macOS 跨项目收件箱有 103 项需关注，首批只提供 20 项的操作入口，并提示还可显示 83 项。点击和按空格可逐次增加 20 条，等待和已处理入口排在首批行之后。项目与跨项目入口均实际滚动并打开第 21 条，返回后该行的坐标和展开范围一致。始终未显示的第 101 个问题仍能从「新事项」找到。证据在 `.artifacts/batch32-inbox-qa`。
+- macOS 用本地受控 Codex 对端验证短单行和自动折行的单行均用 `Enter` 发送。一个新草稿输入 `Shift+Enter` 后立即按 `Enter`，两个换行完整保留，对端没有收到新请求。`Cmd+Enter` 发送这一草稿一次，冷开后设置文件保留所选模式。证据在 `.artifacts/batch32-composer-qa`。
+- macOS 从正文搜索打开第 350 行。关闭换行后，正文宽度由 1,029 像素变为 3,710 像素。方向键移动了 1,200 像素，横向滚动事件到达右边界。冷开仍关闭换行，开启后回到同一命中与原宽度，紧凑预览继续换行。关闭换行时翻到第 513 行并跨行复制，结果与原文的 49 字节完全一致。滚动范围通过实窗无障碍坐标核验，未取得截图。证据在 `.artifacts/batch32-source-qa`。
+- Rust 专项覆盖三个分区独立的展开上限、101 条待答时保留完整计数与较深的返回位置。另核对旧发送设置、多行按键分派、源码横向滚动边界及旧外观设置默认继续换行。
+- 305 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、桌面视图、收件箱通信及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **让长收件箱里的后续分区容易到达。** 目前第 30 批的 macOS 窗口把 100 条待答都展开放在前面，等待事项和已处理入口落在窗口下方约 4,500 像素。验收保留完整计数，默认显示前 20 条，键盘可加载更多。打开第 21 条后可返回原位置，暂时隐藏的条目保持未查看。 [Cindy 分区显示上限](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L181-L243)
-- **允许单行按 `Enter` 发送，多行用 `Cmd/Ctrl+Enter` 发送。** 目前所有草稿共用同一种发送键。验收短消息和只有显示换行的草稿仍用 `Enter` 发送，真正多行时普通 `Enter` 继续换行，组合键只发送一次。原有两项设置可继续使用。 [T3 Code 发送键规则](https://github.com/pingdotgg/t3code/blob/21d7feaff7edb445855c91e0d4526b9cce63d83a/docs/user/keybindings.md#L14-L18)
-- **展开源码阅读器可关闭长行换行。** 目前打开超长日志行后只能分段读。验收关闭换行后可横向读到原行结尾，重新开启后保留文件、页码及搜索命中。跨行复制只包含源码，紧凑面板继续换行。 [Beluga 阅读器换行开关](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/reader/FileFocus.tsx#L193-L213)
+- **从项目收件箱打开具体成员。** 当两个已停止成员都有未结派单时，从项目收件箱打开其中一项只会进入通用团队页。跨项目入口会展开对应成员。验收在团队筛选会挡住目标的情况下，点击后仍可直接定位目标，并能返回原收件箱位置。 [Cindy 伙伴收件箱规则](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/docs/product-rules/task-inbox.md#L90-L106)
+- **按快捷键提高或降低当前会话的推理强度。** 目前需要打开选择器。为两个动作提供可自定义的键位，默认留空。用三个档位验证两端循环、一次按键只改一次，并保留草稿光标和另一会话的设置。 [T3 Code 推理强度快捷键](https://github.com/pingdotgg/t3code/blob/21d7feaff7edb445855c91e0d4526b9cce63d83a/docs/user/keybindings.md#L41-L44)
+- **在展开的源码阅读器内查找。** 目前能回到原项目搜索命中，无法在同一文件寻找下一处。验收文件内查找跨页，同一行的两个命中可单独定位，换行关闭时也能滚到命中。先按 Esc 关闭查找，再按一次返回文件面板并保留原筛选。 [Beluga 文件内查找](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/components/markdown/DocFind.tsx#L42-L134)

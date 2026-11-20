@@ -917,6 +917,7 @@ impl HiveApp {
                                         },
                                     ))
                                     .capture_action(cx.listener(Self::composer_enter))
+                                    .capture_action(cx.listener(Self::alternate_multiline_send))
                                     .capture_action(cx.listener(Self::edit_latest_queued_input))
                                     .capture_action(cx.listener(Self::paste_composer_text))
                                     .capture_action(cx.listener(Self::composer_up))
@@ -1272,18 +1273,7 @@ impl Render for HiveApp {
             && !self.loading
             && !self.closing;
         self.composer_can_submit = can_submit || can_pick_project_to_send;
-        let submit_on_enter = (can_submit || can_pick_project_to_send)
-            && cx
-                .global::<crate::composer::ComposerPreferences>()
-                .settings
-                .mode
-                == crate::composer::SendMode::Enter;
-        if submit_on_enter != self.composer_submit_on_enter {
-            self.composer_submit_on_enter = submit_on_enter;
-            self.input.update(cx, |input, cx| {
-                input.set_submit_on_enter(submit_on_enter, cx)
-            });
-        }
+        self.sync_composer_enter_mode(cx);
         self.sync_conversation_list(cx);
         let welcome = self.showing_welcome_guide
             || (self

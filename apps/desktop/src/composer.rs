@@ -5,11 +5,25 @@ use crate::app::HiveApp;
 use gpui_kit::{component::{WindowExt, input::Enter}, *};
 pub use preferences::{ComposerPreferences, SendMode, ToolActivity, restore};
 
-#[derive(Clone, Copy)]
+gpui_kit::actions!(hive_desktop, [AlternateMultilineSend]);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SendIntent {
     Configured,
     AlternateWhenBusy,
     AndStartDraft,
+}
+
+fn modifier_send_intent(mode: SendMode, text: &str, shift: bool, busy: bool) -> Option<SendIntent> {
+    if mode.uses_shift_for_alternate(text) {
+        if shift {
+            busy.then_some(SendIntent::AlternateWhenBusy)
+        } else {
+            Some(SendIntent::Configured)
+        }
+    } else {
+        (!shift).then_some(SendIntent::AlternateWhenBusy)
+    }
 }
 
 impl HiveApp {
@@ -19,6 +33,9 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.composer_key_is_focused(window, cx) {
+            return;
+        }
         if action.shift && !action.secondary {
             if self.continue_composer_list(window, cx) {
                 cx.stop_propagation();
@@ -32,12 +49,62 @@ impl HiveApp {
             }
             self.command_picker.open = false;
         }
-        // Other fields keep their native Enter behavior.
         if action.secondary && !action.shift {
             cx.stop_propagation();
-            self.submit_composer_key(SendIntent::AlternateWhenBusy, window, cx);
+            if let Some(intent) = self.composer_modifier_intent(false, cx) {
+                self.submit_composer_key(intent, window, cx);
+            }
+        } else if !action.shift {
+            // Capturing the action precedes GPUI's decision to insert a newline.
+            // Consult the live draft even if the last render saw another line count.
+            self.sync_composer_enter_mode(cx);
         }
     }
+
+    pub(crate) fn alternate_multiline_send(
+        &mut self,
+        _: &AlternateMultilineSend,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.composer_key_is_focused(window, cx)
+            && !self.command_picker.open
+            && let Some(intent) = self.composer_modifier_intent(true, cx)
+        {
+            cx.stop_propagation();
+            self.submit_composer_key(intent, window, cx);
+        }
+    }
+
+    pub(crate) fn composer_key_is_focused(&self, window: &mut Window, cx: &mut App) -> bool {
+        self.draft_owner == self.draft_target
+            && !window.has_active_dialog(cx)
+            && self.input.read(cx).focus_handle(cx).is_focused(window)
+    }
+
+    fn composer_modifier_intent(&self, shift: bool, cx: &App) -> Option<SendIntent> {
+        let mode = cx.global::<ComposerPreferences>().settings.mode;
+        let busy = self
+            .session
+            .as_ref()
+            .is_some_and(|session| self.busy.contains(&session.id));
+        modifier_send_intent(mode, &self.input.read(cx).value(), shift, busy)
+    }
+
+    pub(crate) fn sync_composer_enter_mode(&mut self, cx: &mut Context<Self>) -> bool {
+        let mode = cx.global::<ComposerPreferences>().settings.mode;
+        let submit_on_enter =
+            self.composer_can_submit && !mode.requires_modifier(&self.input.read(cx).value());
+        if submit_on_enter == self.composer_submit_on_enter {
+            return false;
+        }
+        self.composer_submit_on_enter = submit_on_enter;
+        self.input.update(cx, |input, cx| {
+            input.set_submit_on_enter(submit_on_enter, cx)
+        });
+        true
+    }
+
     pub(crate) fn send_and_start_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !window.has_active_dialog(cx) && self.can_send_and_start_draft(cx) {
             self.submit_composer_key(SendIntent::AndStartDraft, window, cx);
@@ -94,6 +161,28 @@ impl HiveApp {
                 return;
             }
             self.send(intent, window, cx);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SendIntent, SendMode, modifier_send_intent};
+
+    #[test]
+    fn native_modifier_routes_follow_up_only_in_the_selected_mode() {
+        let configured = Some(SendIntent::Configured);
+        let alternate = Some(SendIntent::AlternateWhenBusy);
+        let multiline = SendMode::ModifierEnterMultiline;
+        assert_eq!(modifier_send_intent(multiline, "one\ntwo", false, true), configured);
+        assert_eq!(modifier_send_intent(multiline, "one\ntwo", true, true), alternate);
+        assert_eq!(modifier_send_intent(multiline, "one\ntwo", false, false), configured);
+        assert_eq!(modifier_send_intent(multiline, "one\ntwo", true, false), None);
+        assert_eq!(modifier_send_intent(multiline, "one", false, true), alternate);
+        assert_eq!(modifier_send_intent(multiline, "one", true, true), None);
+        for mode in [SendMode::Enter, SendMode::ModifierEnter] {
+            assert_eq!(modifier_send_intent(mode, "one\ntwo", false, true), alternate);
+            assert_eq!(modifier_send_intent(mode, "one\ntwo", true, true), None);
         }
     }
 }

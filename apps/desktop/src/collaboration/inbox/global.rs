@@ -17,13 +17,13 @@ use self::{
     badge::BadgeItem,
     completed::{Completed, Scope as CompletedScope},
 };
-use super::placement::{InboxSections, RowId, RowPlacement};
+use super::placement::{InboxSections, RowId, RowPlacement, Section, SectionDepth};
 use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
 use super::{
     ActionCenter, ArchiveInboxSession, Destination, Entry, InboxRowInteraction, MarkInboxRead,
     Reminders, SNOOZE_CHANGED, activity_matches, inbox_open_button, inbox_row, inbox_status,
-    is_snoozed, read_action_center, session_inbox_activity, toggle_button,
+    is_snoozed, read_action_center, session_inbox_activity, show_more_button, toggle_button,
 };
 use crate::{
     app::HiveApp,
@@ -55,6 +55,7 @@ use std::{
 #[derive(Clone, Default)]
 pub(in crate::collaboration) struct GlobalInboxView {
     preferences: ViewPreferences,
+    section_depth: SectionDepth,
     reading_position: Option<ReadingPosition>,
     intro_progress: IntroProgress,
     workspaces_loaded: Option<u64>,
@@ -87,6 +88,13 @@ impl ReadingPosition {
 
 struct NewItemsReview {
     previous_position: Option<ReadingPosition>,
+    previous_depth: SectionDepth,
+}
+
+struct GlobalInboxRowFocus {
+    group: FocusHandle,
+    open: FocusHandle,
+    _subscriptions: [Subscription; 2],
 }
 
 struct GlobalInbox {
@@ -97,7 +105,9 @@ struct GlobalInbox {
     projects: HashMap<String, ProjectInbox>,
     preferences: ViewPreferences,
     placement: RowPlacement,
-    row_focus: HashMap<RowId, (FocusHandle, [Subscription; 2])>,
+    section_depth: SectionDepth,
+    reveal_more: Option<RowId>,
+    row_focus: HashMap<RowId, GlobalInboxRowFocus>,
     row_ids: Vec<Option<RowId>>,
     restore_position: Option<ReadingPosition>,
     new_items: HashSet<BadgeItem>,
@@ -499,6 +509,8 @@ impl HiveApp {
                 projects: HashMap::new(),
                 preferences: saved.preferences,
                 placement: RowPlacement::default(),
+                section_depth: saved.section_depth,
+                reveal_more: None,
                 row_focus: HashMap::new(),
                 row_ids: Vec::new(),
                 restore_position: saved.reading_position,
@@ -589,7 +601,7 @@ impl HiveApp {
                 if window.viewport_size().width < px(820.) {
                     self.sidebar_open = false;
                 }
-                self.open_inbox_dispatch(target, cx);
+                self.open_inbox_dispatch(target, None, cx);
             }
         }
     }
@@ -842,7 +854,9 @@ impl GlobalInbox {
         let pending = self.restore_position.take();
         self.reviewing_new = Some(NewItemsReview {
             previous_position: self.reading_position().or(pending),
+            previous_depth: std::mem::take(&mut self.section_depth),
         });
+        self.reveal_more = None;
         self.sync_completed(cx);
         self.placement.clear();
         self.scroll.set_offset(point(px(0.), px(0.)));
@@ -854,6 +868,8 @@ impl GlobalInbox {
             return;
         };
         self.restore_position = review.previous_position;
+        self.section_depth = review.previous_depth;
+        self.reveal_more = None;
         self.sync_completed(cx);
         self.placement.clear();
         self.scroll.set_offset(point(px(0.), px(0.)));
@@ -1000,6 +1016,10 @@ impl GlobalInbox {
             app.update(cx, |app, cx| {
                 app.collaboration.inbox_view = GlobalInboxView {
                     preferences: self.preferences.clone(),
+                    section_depth: self
+                        .reviewing_new
+                        .as_ref()
+                        .map_or(self.section_depth, |review| review.previous_depth),
                     reading_position: if let Some(review) = &self.reviewing_new {
                         review.previous_position.clone()
                     } else {
@@ -1309,9 +1329,12 @@ impl GlobalInbox {
 
     fn clear_filter_position(&mut self) {
         self.restore_position = None;
+        self.reveal_more = None;
         if let Some(review) = self.reviewing_new.as_mut() {
             review.previous_position = None;
+            review.previous_depth = SectionDepth::default();
         } else {
+            self.section_depth = SectionDepth::default();
             self.placement.clear();
             self.scroll.set_offset(point(px(0.), px(0.)));
         }
@@ -1806,7 +1829,12 @@ fn matches_member(workspace: &str, entry: &Entry, selected: Option<&MemberFilter
     })
 }
 
-fn section_title(id: &'static str, title: &str, count: usize, cx: &App) -> impl IntoElement {
+pub(super) fn section_title(
+    id: &'static str,
+    title: &str,
+    count: usize,
+    cx: &App,
+) -> impl IntoElement {
     div()
         .id(id)
         .role(Role::Heading)
@@ -1930,6 +1958,7 @@ impl Render for GlobalInbox {
         let fresh = InboxSections::from_rows(rows, |id, entry| {
             self.projects[id].reminders.snoozed_until(entry, now)
         });
+        let section_counts = Section::ALL.map(|section| fresh.rows(section).len());
         let has_snoozed = !fresh.snoozed.is_empty();
         let loading = projects
             .iter()
@@ -1966,23 +1995,45 @@ impl Render for GlobalInbox {
             .then(|| {
                 self.row_focus
                     .iter()
-                    .find_map(|(id, (focus, _))| focus.contains_focused(window, cx).then_some(id))
+                    .find_map(|(id, focus)| focus.group.contains_focused(window, cx).then_some(id))
             })
             .flatten();
-        let sections = self.placement.arrange(
-            fresh,
-            focused,
-            self.preferences.values.show_waiting,
-            self.preferences.values.show_snoozed,
-        );
+        let show_waiting = self.preferences.values.show_waiting;
+        let show_snoozed = self.preferences.values.show_snoozed;
+        let sections = self
+            .placement
+            .arrange(fresh, focused, show_waiting, show_snoozed);
+        if let Some(position) = self.restore_position.as_ref().filter(|_| ready && !loading)
+            && let Some((section, index)) = position
+                .0
+                .iter()
+                .find_map(|anchor| sections.position(&anchor.row, show_waiting, show_snoozed))
+        {
+            self.section_depth.include_row(section, index);
+        }
+        let depth = self.section_depth;
         let has_snoozed = !sections.snoozed.is_empty();
-        self.row_focus.retain(|id, _| self.placement.shows(id));
-        for id in self.placement.visible_rows() {
-            self.row_focus.entry(id.clone()).or_insert_with(|| {
+        let rendered: HashSet<_> = [
+            (Section::Attention, true),
+            (Section::Waiting, show_waiting),
+            (Section::Snoozed, show_snoozed),
+        ]
+        .into_iter()
+        .filter(|(_, shown)| *shown)
+        .flat_map(|(section, _)| sections.rows(section).iter().take(depth.limit(section)))
+        .map(|(workspace, entry)| RowId::for_entry(workspace, entry))
+        .collect();
+        self.row_focus.retain(|id, _| rendered.contains(id));
+        for id in rendered {
+            self.row_focus.entry(id).or_insert_with(|| {
                 let focus = cx.focus_handle();
                 let enter = cx.on_focus_in(&focus, window, |_, _, cx| cx.notify());
                 let exit = cx.on_focus_out(&focus, window, |_, _, _, cx| cx.notify());
-                (focus, [enter, exit])
+                GlobalInboxRowFocus {
+                    group: focus,
+                    open: cx.focus_handle(),
+                    _subscriptions: [enter, exit],
+                }
             });
         }
         let app = parent.read(cx);
@@ -2109,6 +2160,7 @@ impl Render for GlobalInbox {
         }
 
         let connection = self.connection;
+        let reveal_more = self.reveal_more.take();
         let mut candidates = HashMap::new();
         let awaiting_position = self.restore_position.is_some() && (!ready || loading);
         let mut render_row = |(id, entry): (&str, Entry)| {
@@ -2195,10 +2247,11 @@ impl Render for GlobalInbox {
                     });
                 }),
             );
-            let (focus, _) = self.row_focus.get(&row_id)?;
+            let focus = self.row_focus.get(&row_id)?;
+            let open = open.track_focus(&focus.open);
             let hovered_id = row_id.clone();
             let interaction = InboxRowInteraction {
-                focus: focus.clone(),
+                focus: focus.group.clone(),
                 hover: std::rc::Rc::new(cx.listener(move |this, over, _, cx| {
                     if this.placement.hover(&hovered_id, *over) {
                         cx.notify();
@@ -2282,25 +2335,59 @@ impl Render for GlobalInbox {
             );
             Some((Some(layout_id), row))
         };
-        if !sections.attention.is_empty() {
+        let more = |section,
+                    rows: &[super::placement::Row<'_>],
+                    title: &'static str,
+                    cx: &Context<Self>| {
+            let (workspace, entry) = rows.get(depth.limit(section))?;
+            let first_new_row = RowId::for_entry(workspace, entry);
+            let more = show_more_button(
+                section,
+                title,
+                rows.len() - depth.limit(section),
+                cx.listener(move |this, _, window, cx| {
+                    this.section_depth.show_more(section);
+                    if window.last_input_was_keyboard() {
+                        this.reveal_more = Some(first_new_row.clone());
+                    }
+                    cx.notify();
+                }),
+            );
+            Some((
+                None,
+                Reveal::new(section.control_id(), &self.scroll, more).into_any_element(),
+            ))
+        };
+        if !sections.attention.is_empty() || section_counts[Section::Attention as usize] > 0 {
+            let section = Section::Attention;
+            let title = if reviewing {
+                "新事项"
+            } else {
+                section.title()
+            };
             items.push((
                 None,
                 section_title(
                     "global-inbox-attention",
-                    if reviewing {
-                        tr("新事项")
-                    } else {
-                        tr("需要你关注")
-                    },
-                    sections.attention.len(),
+                    tr(title),
+                    section_counts[section as usize],
                     cx,
                 )
                 .into_any_element(),
             ));
-            items.extend(sections.attention.into_iter().filter_map(&mut render_row));
+            let more = more(section, &sections.attention, title, cx);
+            items.extend(
+                sections
+                    .attention
+                    .into_iter()
+                    .take(depth.limit(section))
+                    .filter_map(&mut render_row),
+            );
+            items.extend(more);
         }
-        if !sections.waiting.is_empty() {
-            let count = sections.waiting.len();
+        if !sections.waiting.is_empty() || section_counts[Section::Waiting as usize] > 0 {
+            let section = Section::Waiting;
+            let count = section_counts[section as usize];
             let (icon, action) = if self.preferences.values.show_waiting {
                 (Glyph::ChevronDown, tr("收起等待 Agent 的事项"))
             } else {
@@ -2330,21 +2417,38 @@ impl Render for GlobalInbox {
                 .into_any_element(),
             ));
             if self.preferences.values.show_waiting {
-                items.extend(sections.waiting.into_iter().filter_map(&mut render_row));
+                let more = more(section, &sections.waiting, section.title(), cx);
+                items.extend(
+                    sections
+                        .waiting
+                        .into_iter()
+                        .take(depth.limit(section))
+                        .filter_map(&mut render_row),
+                );
+                items.extend(more);
             }
         }
         if self.preferences.values.show_snoozed && has_snoozed {
+            let section = Section::Snoozed;
             items.push((
                 None,
                 section_title(
                     "global-inbox-snoozed",
                     tr("已暂缓事项"),
-                    sections.snoozed.len(),
+                    section_counts[section as usize],
                     cx,
                 )
                 .into_any_element(),
             ));
-            items.extend(sections.snoozed.into_iter().filter_map(&mut render_row));
+            let more = more(section, &sections.snoozed, section.title(), cx);
+            items.extend(
+                sections
+                    .snoozed
+                    .into_iter()
+                    .take(depth.limit(section))
+                    .filter_map(&mut render_row),
+            );
+            items.extend(more);
         }
         if !reviewing {
             items.extend(self.completed.elements(app, &self.scroll, cx));
@@ -2356,6 +2460,16 @@ impl Render for GlobalInbox {
             .filter_map(|(index, id)| Some((index, candidates.remove(id.as_ref()?)?)))
             .collect();
         self.row_ids = ids;
+        if let Some(target) = reveal_more
+            && let Some(index) = self
+                .row_ids
+                .iter()
+                .position(|row| row.as_ref() == Some(&target))
+            && let Some(focus) = self.row_focus.get(&target).map(|focus| focus.open.clone())
+        {
+            self.scroll.scroll_to_item(index);
+            window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        }
         let restore = if ready && !loading {
             self.restore_position.take().and_then(|position| {
                 let (index, viewport_offset) = position.first_visible(&self.row_ids)?;

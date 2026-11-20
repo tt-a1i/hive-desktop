@@ -186,6 +186,11 @@ fn main() {
                 ),
                 KeyBinding::new(
                     if cfg!(target_os = "macos") { "cmd-shift-enter" } else { "ctrl-shift-enter" },
+                    composer::AlternateMultilineSend,
+                    Some("HiveComposer"),
+                ),
+                KeyBinding::new(
+                    if cfg!(target_os = "macos") { "cmd-shift-enter" } else { "ctrl-shift-enter" },
                     queued_inputs::SteerPendingInput,
                     Some("HiveQueuedInputs"),
                 ),

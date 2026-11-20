@@ -141,6 +141,7 @@ struct Preferences {
     #[serde(default = "default_code_font_size")]
     code_font_size: u8,
     code_word_wrap: bool,
+    reader_word_wrap: bool,
     terminal_font_family: MonoFontPreset,
     #[serde(default = "default_terminal_font_size")]
     terminal_font_size: u8,
@@ -154,6 +155,7 @@ impl Default for Preferences {
             code_font_family: MonoFontPreset::System,
             code_font_size: DEFAULT_CODE_FONT_SIZE,
             code_word_wrap: false,
+            reader_word_wrap: true,
             terminal_font_family: MonoFontPreset::System,
             terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
         }
@@ -212,6 +214,9 @@ impl Appearance {
     }
     pub fn code_word_wrap(&self) -> bool {
         self.preferences.code_word_wrap
+    }
+    pub fn reader_word_wrap(&self) -> bool {
+        self.preferences.reader_word_wrap
     }
     pub fn terminal_font_family(&self) -> MonoFontPreset {
         self.preferences.terminal_font_family
@@ -468,6 +473,14 @@ pub fn choose_code_word_wrap(wrap: bool, window: &mut Window, cx: &mut App) {
     choose_preferences(preferences, window, cx);
 }
 
+pub fn choose_reader_word_wrap(wrap: bool, window: &mut Window, cx: &mut App) {
+    let preferences = Preferences {
+        reader_word_wrap: wrap,
+        ..cx.global::<Appearance>().preferences
+    };
+    choose_preferences(preferences, window, cx);
+}
+
 pub fn choose_terminal_font_family(family: MonoFontPreset, window: &mut Window, cx: &mut App) {
     let preferences = Preferences {
         terminal_font_family: family,
@@ -605,6 +618,7 @@ mod tests {
                 code_font_family: MonoFontPreset::JetBrainsMono,
                 code_font_size: 14,
                 code_word_wrap: true,
+                reader_word_wrap: false,
                 terminal_font_family: MonoFontPreset::FiraCode,
                 terminal_font_size: 15,
             };
@@ -629,6 +643,27 @@ mod tests {
         fs::write(&file, "broken").unwrap();
         assert!(load(root.path()).is_err());
         assert_eq!(fs::read_to_string(file).unwrap(), "broken");
+    }
+
+    #[test]
+    fn older_file_preserves_reader_wrap_default_independent_of_diff_wrap() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("desktop-appearance.json");
+        fs::write(&file, r#"{"mode":"dark","code_word_wrap":false}"#).unwrap();
+        let old = load(root.path()).unwrap();
+        assert!(old.reader_word_wrap);
+        save(
+            root.path(),
+            Preferences {
+                reader_word_wrap: false,
+                ..old
+            },
+        )
+        .unwrap();
+        let reopened = load(root.path()).unwrap();
+        assert!(!reopened.reader_word_wrap);
+        assert!(!reopened.code_word_wrap);
+        assert_eq!(reopened.mode, Mode::Dark);
     }
 
     #[test]

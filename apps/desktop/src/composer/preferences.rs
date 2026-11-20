@@ -12,13 +12,32 @@ pub enum SendMode {
     #[default]
     Enter,
     ModifierEnter,
+    ModifierEnterMultiline,
 }
 impl SendMode {
+    pub(crate) fn requires_modifier(self, text: &str) -> bool {
+        self == Self::ModifierEnter
+            || (self == Self::ModifierEnterMultiline && text.contains(['\r', '\n']))
+    }
+
+    pub(crate) fn uses_shift_for_alternate(self, text: &str) -> bool {
+        self == Self::ModifierEnterMultiline && self.requires_modifier(text)
+    }
+
+    pub(crate) fn multiline_label() -> &'static str {
+        if cfg!(target_os = "macos") {
+            tr("单行 Enter 发送，多行 ⌘Enter 发送")
+        } else {
+            tr("单行 Enter 发送，多行 Ctrl+Enter 发送")
+        }
+    }
+
     pub fn hint(self) -> &'static str {
         match self {
             Self::Enter => tr("Enter 发送，Shift+Enter 换行"),
             Self::ModifierEnter if cfg!(target_os = "macos") => tr("⌘Enter 发送，Enter 换行"),
             Self::ModifierEnter => tr("Ctrl+Enter 发送，Enter 换行"),
+            Self::ModifierEnterMultiline => Self::multiline_label(),
         }
     }
 }
@@ -159,6 +178,26 @@ mod tests {
                     .is_object()
             );
         }
+    }
+    #[test]
+    fn multiline_mode_persists_and_distinguishes_real_breaks() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = ChatSettings {
+            mode: SendMode::ModifierEnterMultiline,
+            ..ChatSettings::default()
+        };
+        save(root.path(), settings).unwrap();
+        let mode = load(root.path()).unwrap().mode;
+        assert_eq!(mode, SendMode::ModifierEnterMultiline);
+        assert_eq!(serde_json::to_value(mode).unwrap(), "modifier_enter_multiline");
+        assert!(!mode.requires_modifier(&"会折行 🐝 ".repeat(80)));
+        assert!(!mode.requires_modifier(""));
+        for text in ["A\nB", "A\rB", "A\r\nB", "A\n"] {
+            assert!(mode.requires_modifier(text));
+            assert!(mode.uses_shift_for_alternate(text));
+        }
+        assert!(!SendMode::Enter.requires_modifier("A\nB"));
+        assert!(SendMode::ModifierEnter.requires_modifier("A"));
     }
     #[test]
     fn preference_reopens_and_failed_write_retains_effective_settings_and_original_target() {

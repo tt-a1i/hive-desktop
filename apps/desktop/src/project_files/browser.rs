@@ -567,7 +567,7 @@ fn expand_preview_hint(cx: &App) -> String {
     format!("{} ({shortcut})", tr("展开预览"))
 }
 
-fn preview_text(id: &'static str, text: &TextPages, cx: &App) -> Stateful<Div> {
+fn preview_text(id: &'static str, text: &TextPages, wrap: bool, cx: &App) -> Stateful<Div> {
     let appearance = cx.global::<crate::appearance::Appearance>();
     let font = appearance
         .code_font_family()
@@ -577,11 +577,15 @@ fn preview_text(id: &'static str, text: &TextPages, cx: &App) -> Stateful<Div> {
     let view = div()
         .id(SharedString::from(format!("{id}-container")))
         .text_sm()
-        .font_family(font);
+        .font_family(font)
+        // Let the source's intrinsic width reach the two-axis scroll container.
+        .when(!wrap, |view| {
+            view.whitespace_nowrap().self_start().flex_none()
+        });
     if text.full.is_empty() {
         view.child(text_reading::selectable_text(id, tr("此文件为空")))
     } else {
-        view.child(text_reading::numbered_source(id, text, cx))
+        view.child(text_reading::numbered_source(id, text, wrap, cx))
     }
 }
 
@@ -659,7 +663,7 @@ impl ProjectFilePreviewText {
                     cx,
                 )
                 .child(rendered.map_or_else(
-                    || preview_text("git-current-source", &self.text, cx),
+                    || preview_text("git-current-source", &self.text, true, cx),
                     |markdown| markdown.render("git-current-markdown", cx),
                 )),
             )
@@ -3807,7 +3811,7 @@ impl FileBrowser {
                 text_reading::region("browser-preview".into(), path, scroll, height, cx)
                     .when(stretch, |region| region.flex_1().min_h_0())
                     .child(rendered.map_or_else(
-                        || preview_text("browser-text-preview", text, cx),
+                        || preview_text("browser-text-preview", text, true, cx),
                         |markdown| markdown.render("browser-markdown-preview", cx),
                     )),
             )
@@ -3990,6 +3994,22 @@ impl ExpandedFilePreview {
         }
     }
 
+    fn toggle_source_wrap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.current(cx)
+            || self.markdown.as_ref().is_some_and(MarkdownPreview::active)
+            || self.text.as_ref().is_none_or(|text| text.full.is_empty())
+        {
+            return;
+        }
+        let wrap = cx.global::<crate::appearance::Appearance>().reader_word_wrap();
+        crate::appearance::choose_reader_word_wrap(!wrap, window, cx);
+        if wrap != cx.global::<crate::appearance::Appearance>().reader_word_wrap() {
+            let y = self.scroll.offset().y;
+            self.scroll.set_offset(point(px(0.), y));
+        }
+        cx.notify();
+    }
+
     fn set_mode(&mut self, mode: FilePreviewMode, cx: &mut Context<Self>) {
         if self.current(cx)
             && let Some(markdown) = &mut self.markdown
@@ -4030,13 +4050,14 @@ impl Render for ExpandedFilePreview {
         let markdown_limited = self.markdown.is_none()
             && is_markdown_file(&self.selection.path)
             && self.text.as_ref().is_some_and(|text| !text.full.is_empty());
-        let header = if self.markdown.is_some() || markdown_limited {
-            px(226.)
-        } else {
-            px(194.)
-        };
-        let height = (window.viewport_size().height - header).max(px(112.));
         let rendered = self.markdown.as_ref().filter(|markdown| markdown.active());
+        let source_visible =
+            rendered.is_none() && self.text.as_ref().is_some_and(|text| !text.full.is_empty());
+        let wrap = !source_visible || cx.global::<crate::appearance::Appearance>().reader_word_wrap();
+        let extra_rows = u8::from(self.markdown.is_some() || source_visible)
+            + u8::from(markdown_limited);
+        let header = px(194. + 32. * f32::from(extra_rows));
+        let height = (window.viewport_size().height - header).max(px(112.));
         // Wait for the background parser so the empty first layout cannot
         // clamp the inherited scroll position to zero.
         if self.markdown_start_offset.is_some()
@@ -4122,17 +4143,40 @@ impl Render for ExpandedFilePreview {
         let Some(text) = &self.text else {
             return view;
         };
-        view.when_some(self.markdown.as_ref(), |view, markdown| {
-            view.child(markdown_mode_controls(markdown.mode, Self::set_mode, cx))
+        view.when(self.markdown.is_some() || source_visible, |view| {
+            view.child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .when_some(self.markdown.as_ref(), |row, markdown| {
+                        row.child(markdown_mode_controls(markdown.mode, Self::set_mode, cx))
+                    })
+                    .when(source_visible, |row| {
+                        row.child(
+                            Button::new("file-reader-wrap-source")
+                                .outline()
+                                .small()
+                                .label(tr("自动换行"))
+                                .tooltip(tr("切换文件源码自动换行"))
+                                .accessibility_label(tr("切换文件源码自动换行"))
+                                .selected(wrap)
+                                .toggled(wrap)
+                                .disabled(!crate::appearance::available(cx))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_source_wrap(window, cx)
+                                })),
+                        )
+                    }),
+            )
         })
         .when(markdown_limited, |view| {
             view.child(markdown_limit_notice(cx))
         })
         .child(
-            text_reading::region("file-reader".into(), path, scroll, height, cx)
+            text_reading::source_region("file-reader".into(), path, scroll, height, wrap, cx)
                 .track_focus(&self.focus)
                 .child(rendered.map_or_else(
-                    || preview_text("file-reader-text", text, cx),
+                    || preview_text("file-reader-text", text, wrap, cx),
                     |markdown| markdown.render("file-reader-markdown", cx),
                 )),
         )
