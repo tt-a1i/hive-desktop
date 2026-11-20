@@ -253,8 +253,22 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 折叠 `one/same.txt` 时预览仍停在第 3 行。翻到第二页仍折叠，另一个目录的 `two/same.txt` 独立展开。原生结果区用右键展开、左键折叠，搜索框用方向键和回车打开 `two/same.txt` 的第 3 行。切换到独立工作树后恢复默认展开并显示该工作树的原文。证据在 `.artifacts/grouped-search-qa`。
 - 261 项桌面 Rust 测试通过，1 项原有忽略。TypeScript、Windows x64 MSVC 交叉检查、归档分页、派单来源和工作树文件搜索专项均通过。派单来源检查在冷启动和成员从 Pi 换到 Codex 后，仍确认旧派单归原 Pi 会话。Windows 原生交互待实机复验。
 
+## 2026-11-21 第二十批
+
+本轮从 Hive Desktop `367c940` 开始。参考 T3 Code `338352d`、Cindy `e035080`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **在当前独立工作树开启新会话。** 聊天目录菜单和 Git 分支面板都提供入口。两条会话使用同一个工作树，分别保存会话、草稿和历史。打开新会话时延迟连接 Agent。目录归属和路径会重新校验，尚有会话引用时禁止清理。共享期间，Hive 会阻止分支切换和检查点文件恢复。 [T3 Code 在现有工作树新建](https://github.com/pingdotgg/t3code/blob/338352dee2f43079482e054e8229a2ba055641d9/docs/user/thread-sidebar.md#L8-L13)
+- **恢复已处理会话时留在原位置。** 确认后移除目标行，已加载的相邻会话留在窗口。刷新完成时重算下一页边界，保持当前可见会话的位置。切换项目、成员或后端时从该范围的第一页加载。 [Cindy 恢复后的列表补位](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/docs/product-rules/task-inbox.md#L57-L63)
+- **正文搜索支持整词匹配。** `ab` 默认关闭，可和 `Aa` 同时使用。字母、数字、下划线和组合字符参与 Unicode 词边界判断。切换时保留查询和现有预览，结果回到第一页。筛选和原文片段只标记符合相同边界的匹配。 [Beluga 整词筛选](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L114-L125)
+
+- macOS 从聊天目录菜单在工作树 A 新建会话，新旧草稿分别保存。新会话预览打开 A 独有的文件内容，重启后恢复新会话及它的草稿。原所有者的清理对话框仍提示其他会话正在使用这个目录，确认按钮不可用。证据在 `.artifacts/whole-word-qa`。
+- 独立运行时复验使用本地模拟 Codex 对端。重启后台后，新会话在原工作树创建了自己的原生对话，首次请求保留 Hive 协作上下文且没有带入原会话的消息。把工作树根目录和其子目录分别登记为项目后，两条分支切换请求都被阻止，工作树仍处于原分支。证据在 `.artifacts/shared-worktree-runtime-audit`。
+- macOS 从已处理的第二页恢复 Beacon 一条记录。阻断刷新回包期间相邻两条会话和编辑草稿保留。回包后继续加载，剩余 47 条归档各出现一次。另将一次旧回包留到切换 Atlas 后释放，结果仍只在 Atlas 范围。补验滚动条拖到列表底部后恢复屏内一项，相邻会话在请求前、拦截期和回包后均保持在同一位置。证据在 `.artifacts/completed-depth-qa`。
+- macOS 验证了 `cat`、`scatter cat`、带表情的 `cat`、下划线、CJK 相邻字母及 `C++`。整词与区分大小写一起开启后，`CAT` 只返回大写命中。第二页切换整词回到第一页，原预览保留，命中打开准确的行。证据在 `.artifacts/whole-word-qa`。
+- 263 项 Rust 测试通过，1 项原有忽略。TypeScript、Windows x64 MSVC 交叉检查、工作树、终端、归档分页、Codex 冷启动与历史回退专项通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **在当前独立工作树开启新会话。** 从已有会话的分支工具栏打开一条新会话。用根目录和独立工作树各写入不同标记，核对新会话只在所选工作树执行，旧会话草稿、历史和工作树归属保留。 [T3 Code 在现有工作树新建](https://github.com/pingdotgg/t3code/blob/338352dee2f43079482e054e8229a2ba055641d9/docs/user/thread-sidebar.md#L8-L13)
-- **恢复已处理会话时留在列表原位置。** 从第 2 页恢复中间一条，再核对紧邻条目、已加载的下一页条件和当前草稿。切换筛选时仍应从新范围首屏读取。 [Cindy 恢复后的列表补位](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/docs/product-rules/task-inbox.md#L57-L63)
-- **正文搜索支持整词匹配。** 用 `error`、`errors`、`error_code`、标点和重音字符检验匹配边界。切换时保留查询，回到第一页，仍能打开准确的行。 [Beluga 整词筛选](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L114-L125)
+- **解除会话对共用工作树的引用。** 保留原会话的可读历史，明确解除后可进行的操作。先用两个引用验收，解除其中一个时清理仍受保护，最后一个解除后原所有者可以重新预检。 [T3 Code 任务结束后的工作树清理](https://github.com/pingdotgg/t3code/blob/338352dee2f43079482e054e8229a2ba055641d9/docs/user/thread-sidebar.md#L163-L180)
+- **按最近活跃时间筛选跨项目收件箱。** 用不同日期的两个同名会话和一个缺少活动时间的派单验收，与项目、成员和后端条件组合，复验已处理分页、重启和回到全部时间。 [Cindy 组合筛选](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/docs/product-rules/task-inbox.md#L19-L23)
+- **正文搜索支持正则表达式。** 验收字面模式原样工作、无效表达式清楚报错、超时或切换工作树后旧查询无法覆盖新结果。有效查询的高亮与打开位置使用原始行。 [Beluga 正则筛选](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/src/core/workspace-files.ts#L163-L182)

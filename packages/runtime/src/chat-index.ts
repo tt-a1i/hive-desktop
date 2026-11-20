@@ -16,7 +16,7 @@ export function isUnsetPiModel(model: { provider: string; id: string } | undefin
 }
 
 export interface DeliveryFailure {deliveryId:string;message:string}
-export interface ChatExecution { kind: 'worktree'; path: string; branch: string }
+export interface ChatExecution { kind: 'worktree'; path: string; branch: string; ownerSessionId?: string }
 export interface PinnedSessionRef { workspaceId: string; sessionId: string }
 export class SessionIdentityError extends Error {
   constructor(readonly code: string, message: string) { super(`[${code}] ${message}`); this.name = 'SessionIdentityError'; }
@@ -26,6 +26,7 @@ export interface ChatRecord {
   backend: ChatBackend;
   deferFirstConnection?: true;
   draftCopy?: string;
+  worktreeReuse?: {sourceSessionId: string; ownerFingerprint: string};
   handoff?: {operationId:string;snapshotId:string;snapshotHash:string;sourceSessionId:string};
   profile?: AgentProfileRef;
   legacyConfiguration?: true;
@@ -112,6 +113,9 @@ export class ChatIndex {
       Number(!!b.pinned) - Number(!!a.pinned) || (a.pinned && b.pinned ? comparePinnedSessions(a, b) : b.updatedAt - a.updatedAt));
   }
   peek(id:string):ChatRecord|undefined {const record=this.records.find(record=>record.id===id);return record && recordSnapshot(record);}
+  hasWorktreeBorrowers(workspaceId: string, ownerId: string): boolean {
+    return this.records.some(record => record.workspaceId === workspaceId && record.execution?.ownerSessionId === ownerId);
+  }
   get(id: string): ChatRecord {
     const record = this.peek(id);
     if (!record) throw new Error('Conversation not found');
@@ -140,6 +144,12 @@ export class ChatIndex {
     const existing = this.peek(record.id);
     if (existing && existing.draftCopy !== record.draftCopy)
       throw new SessionIdentityError('DRAFT_COPY_CONFLICT', '该草稿复制请求已用于其他会话。');
+    if (existing && (!isDeepStrictEqual(existing.worktreeReuse, record.worktreeReuse)
+      || existing.execution?.ownerSessionId !== record.execution?.ownerSessionId
+      || record.worktreeReuse && (existing.workspaceId !== record.workspaceId || !isDeepStrictEqual(existing.execution, record.execution))))
+      throw new SessionIdentityError('WORKTREE_REUSE_CONFLICT', '共享工作树的会话身份不能更改。');
+    if (!validWorktreeReuse(record))
+      throw new SessionIdentityError('WORKTREE_REUSE_CONFLICT', '共享工作树的会话身份无效。');
     if (existing && (existing.scratch !== record.scratch || existing.scratch && existing.workspaceId !== record.workspaceId))
       throw new SessionIdentityError('SCRATCH_IDENTITY_CONFLICT', 'A Scratch conversation’s directory ownership cannot be changed.');
     if (record.scratch !== undefined && !isScratchRecord(record))
@@ -293,6 +303,16 @@ function isScratchRecord(record: Record<string, unknown> | ChatRecord): boolean 
     && !record.execution && !record.nativeImport && !record.handoff && !record.lineage;
 }
 
+function validWorktreeReuse(record: Record<string, unknown> | ChatRecord): boolean {
+  const owner = (record.execution as ChatExecution | undefined)?.ownerSessionId;
+  const use = record.worktreeReuse as ChatRecord['worktreeReuse'];
+  if (owner === undefined && use === undefined) return true;
+  return typeof owner === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(owner) && owner !== record.id
+    && !!use && typeof use.sourceSessionId === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(use.sourceSessionId)
+    && use.sourceSessionId !== record.id && typeof use.ownerFingerprint === 'string' && /^[a-f0-9]{64}$/.test(use.ownerFingerprint)
+    && !record.scratch && !record.nativeImport && !record.lineage && !record.handoff && !record.prReview;
+}
+
 function isChatRecord(value: unknown): value is ChatRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
@@ -336,6 +356,7 @@ function isChatRecord(value: unknown): value is ChatRecord {
       || execution.kind !== 'worktree' || typeof execution.path !== 'string' || !execution.path
       || typeof execution.branch !== 'string' || !execution.branch) return false;
   }
+  if (!validWorktreeReuse(record)) return false;
   if (record.lastDeliveryFailure !== undefined) {
     const failure=record.lastDeliveryFailure as Record<string,unknown>|null;
     if (!failure || typeof failure!=='object' || Array.isArray(failure) || typeof failure.deliveryId!=='string' || !failure.deliveryId || typeof failure.message!=='string') return false;

@@ -13,7 +13,7 @@ use crate::{
     text_reading::{self, TextPages},
     transport::Runtime,
 };
-use content_results::{ContentResults, Pick as ContentPick, Row as ContentRow};
+use content_results::{ContentQuery, ContentResults, Pick as ContentPick, Row as ContentRow};
 use gpui_kit::{
     assets::IconName as Glyph,
     base::InteractiveElementExt as _,
@@ -679,8 +679,14 @@ struct TreeScope {
 #[derive(Default)]
 pub(crate) struct FileTreeExpansions {
     paths: HashMap<TreeScope, HashSet<String>>,
-    // The dock and the Files dialog share the search choice in this window.
+    // The dock and the Files dialog share search choices in this window.
+    search_flags: SearchFlags,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct SearchFlags {
     case_sensitive: bool,
+    whole_word: bool,
 }
 
 impl FileTreeExpansions {
@@ -834,7 +840,7 @@ pub(crate) struct FileBrowser {
     runtime: Option<Arc<Runtime>>,
     query: Entity<InputState>,
     contents: bool,
-    case_sensitive: bool,
+    search_flags: SearchFlags,
     directories: HashMap<String, Directory>,
     expansions: Entity<FileTreeExpansions>,
     root_focus: FocusHandle,
@@ -996,7 +1002,7 @@ impl HiveApp {
         let revealing = reveal.is_some();
         let app = cx.weak_entity();
         let expansions = self.project_file_tree_expansions.clone();
-        let case_sensitive = expansions.read(cx).case_sensitive;
+        let search_flags = expansions.read(cx).search_flags;
         let browser = cx.new(|cx| {
             let query = cx.new(|cx| InputState::new(window, cx).placeholder(tr("搜索项目文件…")));
             let tree_focus = cx.focus_handle();
@@ -1023,11 +1029,15 @@ impl HiveApp {
             )
             .detach();
             cx.observe(&expansions, |this: &mut FileBrowser, state, cx| {
-                let case_sensitive = state.read(cx).case_sensitive;
-                if this.case_sensitive != case_sensitive {
-                    this.case_sensitive = case_sensitive;
-                    this.search_offset = 0;
-                    this.load_search(false, cx);
+                let flags = state.read(cx).search_flags;
+                if this.search_flags != flags {
+                    let refresh =
+                        this.contents || this.search_flags.case_sensitive != flags.case_sensitive;
+                    this.search_flags = flags;
+                    if refresh {
+                        this.search_offset = 0;
+                        this.load_search(false, cx);
+                    }
                 }
                 this.restore_visible_expansions(cx);
                 cx.notify();
@@ -1053,7 +1063,7 @@ impl HiveApp {
                 runtime: None,
                 query,
                 contents: false,
-                case_sensitive,
+                search_flags,
                 directories: HashMap::new(),
                 expansions,
                 root_focus: cx.focus_handle(),
@@ -1595,10 +1605,12 @@ impl FileBrowser {
         self.search_scroll = ScrollHandle::new();
         cx.notify();
         let query = self.query.read(cx).value().trim().to_owned();
-        self.content_results.set_query(
-            (self.contents && !query.is_empty())
-                .then(|| (self.scope_generation, self.case_sensitive, query.clone())),
-        );
+        self.content_results
+            .set_query((self.contents && !query.is_empty()).then(|| ContentQuery {
+                scope_generation: self.scope_generation,
+                flags: self.search_flags,
+                text: query.clone(),
+            }));
         if query.is_empty() || !self.current(cx) {
             return;
         }
@@ -1607,8 +1619,12 @@ impl FileBrowser {
         let runtime = self.runtime.clone().expect("current file runtime");
         let contents = self.contents;
         let offset = self.search_offset;
-        let params = scope
-            .params(json!({"query":query,"offset":offset,"caseSensitive":self.case_sensitive}));
+        let mut params = scope.params(
+            json!({"query":query,"offset":offset,"caseSensitive":self.search_flags.case_sensitive}),
+        );
+        if contents {
+            params["wholeWord"] = json!(self.search_flags.whole_word);
+        }
         let scope_generation = self.scope_generation;
         let search_generation = self.search_generation;
         self.search_task = Some(cx.spawn(async move |this, cx| {
@@ -1661,12 +1677,49 @@ impl FileBrowser {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.set_search_flags(
+            SearchFlags {
+                case_sensitive: !self.search_flags.case_sensitive,
+                ..self.search_flags
+            },
+            event,
+            window,
+            cx,
+        );
+    }
+
+    fn toggle_search_whole_word(
+        &mut self,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.contents {
+            self.set_search_flags(
+                SearchFlags {
+                    whole_word: !self.search_flags.whole_word,
+                    ..self.search_flags
+                },
+                event,
+                window,
+                cx,
+            );
+        }
+    }
+
+    fn set_search_flags(
+        &mut self,
+        flags: SearchFlags,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.current(cx) {
             return;
         }
-        self.case_sensitive = !self.case_sensitive;
+        self.search_flags = flags;
         self.expansions.update(cx, |state, cx| {
-            state.case_sensitive = self.case_sensitive;
+            state.search_flags = flags;
             cx.notify();
         });
         self.search_offset = 0;
@@ -3853,10 +3906,23 @@ impl Render for FileBrowser {
                                 .label("Aa")
                                 .tooltip(tr("区分大小写"))
                                 .accessibility_label(tr("区分大小写"))
-                                .selected(self.case_sensitive)
-                                .toggled(self.case_sensitive)
+                                .selected(self.search_flags.case_sensitive)
+                                .toggled(self.search_flags.case_sensitive)
                                 .on_click(cx.listener(Self::toggle_search_case)),
-                        ),
+                        )
+                        .when(self.contents, |controls| {
+                            controls.child(
+                                Button::new("browser-whole-word")
+                                    .outline()
+                                    .small()
+                                    .label("ab")
+                                    .tooltip(tr("整词匹配"))
+                                    .accessibility_label(tr("整词匹配"))
+                                    .selected(self.search_flags.whole_word)
+                                    .toggled(self.search_flags.whole_word)
+                                    .on_click(cx.listener(Self::toggle_search_whole_word)),
+                            )
+                        }),
                 )
                 .when(
                     !matches!(self.git_status, TreeGitStatus::NotRepository),

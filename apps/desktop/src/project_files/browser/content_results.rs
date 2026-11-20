@@ -1,4 +1,4 @@
-use super::{Match, SearchHit};
+use super::{Match, SearchFlags, SearchHit};
 use std::collections::HashSet;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,13 +44,20 @@ impl Row<'_> {
 
 #[derive(Default)]
 pub(super) struct ContentResults {
-    key: Option<(u64, bool, String)>,
+    key: Option<ContentQuery>,
     folded: HashSet<String>,
     pub(super) cursor: Option<Pick>,
 }
 
+#[derive(PartialEq, Eq)]
+pub(super) struct ContentQuery {
+    pub(super) scope_generation: u64,
+    pub(super) flags: SearchFlags,
+    pub(super) text: String,
+}
+
 impl ContentResults {
-    pub(super) fn set_query(&mut self, key: Option<(u64, bool, String)>) {
+    pub(super) fn set_query(&mut self, key: Option<ContentQuery>) {
         if self.key != key {
             self.key = key;
             self.folded.clear();
@@ -169,8 +176,15 @@ mod tests {
         }
     }
 
-    fn query(scope: u64, case_sensitive: bool, text: &str) -> Option<(u64, bool, String)> {
-        Some((scope, case_sensitive, text.to_owned()))
+    fn query(scope: u64, case_sensitive: bool, text: &str) -> Option<ContentQuery> {
+        Some(ContentQuery {
+            scope_generation: scope,
+            flags: SearchFlags {
+                case_sensitive,
+                whole_word: false,
+            },
+            text: text.to_owned(),
+        })
     }
 
     #[test]
@@ -205,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn folds_cross_pages_but_reset_with_scope_query_or_case() {
+    fn folds_cross_pages_but_reset_with_scope_query_or_flags() {
         let next_page = [hit("api/README.md", 620), hit("ui/README.md", 701)];
         let mut state = ContentResults::default();
         state.set_query(query(1, false, "needle"));
@@ -225,6 +239,14 @@ mod tests {
             query(2, false, "needle"),
             query(2, true, "needle"),
             query(2, true, "other"),
+            Some(ContentQuery {
+                scope_generation: 2,
+                flags: SearchFlags {
+                    case_sensitive: true,
+                    whole_word: true,
+                },
+                text: "other".to_owned(),
+            }),
             None,
         ] {
             state.set_query(identity);

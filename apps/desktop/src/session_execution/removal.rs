@@ -52,6 +52,7 @@ impl HiveApp {
             || self.closing
             || window.has_active_dialog(cx)
             || self.workspace_removing.as_ref() == Some(&session.workspace_id)
+            || session.execution.as_ref().is_some_and(|execution| execution.owner_session_id.is_some())
         {
             return;
         }

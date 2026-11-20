@@ -110,6 +110,29 @@ function searchText(value: string, caseSensitive: boolean): string {
   return caseSensitive ? normalized : normalized.toLowerCase();
 }
 
+// Unicode word characters, including connector punctuation such as underscore.
+const WORD_CHARACTER = /[\p{Alphabetic}\p{Join_Control}\p{Mark}\p{Decimal_Number}\p{Connector_Punctuation}]/u;
+
+function wordAt(value: string, offset: number): boolean {
+  const codePoint = value.codePointAt(offset);
+  if (codePoint === undefined) return false;
+  if (codePoint < 128) return codePoint === 0x5f || (codePoint >= 0x30 && codePoint <= 0x39)
+    || (codePoint >= 0x41 && codePoint <= 0x5a) || (codePoint >= 0x61 && codePoint <= 0x7a);
+  return WORD_CHARACTER.test(String.fromCodePoint(codePoint));
+}
+
+function nextLiteralMatch(value: string, needle: string, offset: number, wholeWord: boolean): number {
+  let match = value.indexOf(needle, offset);
+  if (!wholeWord) return match;
+  while (match !== -1) {
+    const previousUnit = value.charCodeAt(match - 1);
+    const previous = match - (previousUnit >= 0xdc00 && previousUnit <= 0xdfff ? 2 : 1);
+    if (!wordAt(value, previous) && !wordAt(value, match + needle.length)) return match;
+    match = value.indexOf(needle, match + 1);
+  }
+  return -1;
+}
+
 type SearchSnippet = {
   text: string;
   ranges: [number, number][];
@@ -119,16 +142,16 @@ type SearchSnippet = {
 
 function snippetRanges(
   searchable: string, needle: string, start: number, end: number,
-  sourceByte: (offset: number) => number | undefined,
+  sourceByte: (offset: number) => number | undefined, wholeWord: boolean,
 ): SearchSnippet['ranges'] {
   const ranges: SearchSnippet['ranges'] = [];
   const base = sourceByte(start)!;
-  let match = searchable.indexOf(needle, start);
+  let match = nextLiteralMatch(searchable, needle, start, wholeWord);
   while (match !== -1 && match + needle.length <= end && ranges.length < SNIPPET_RANGE_LIMIT) {
     const a = sourceByte(match);
     const b = sourceByte(match + needle.length);
     if (a !== undefined && b !== undefined && a < b) ranges.push([a - base, b - base]);
-    match = searchable.indexOf(needle, match + needle.length);
+    match = nextLiteralMatch(searchable, needle, match + needle.length, wholeWord);
   }
   return ranges;
 }
@@ -139,7 +162,7 @@ function snippetWindowStart(matchByte: number, matchBytes: number): number {
 }
 
 function lineSnippet(
-  line: string, searchable: string, needle: string, firstMatch: number, caseSensitive: boolean,
+  line: string, searchable: string, needle: string, firstMatch: number, caseSensitive: boolean, wholeWord: boolean,
 ): SearchSnippet | undefined {
   const source = line.endsWith('\r') ? line.slice(0, -1) : line;
   const result = (start: number, end: number, ranges: SearchSnippet['ranges']): SearchSnippet | undefined => {
@@ -152,7 +175,7 @@ function lineSnippet(
   if (/^[\t\x20-\x7e]*$/.test(source)) {
     const start = Math.min(source.length, snippetWindowStart(firstMatch, needle.length));
     const end = Math.min(source.length, start + SNIPPET_BYTES);
-    return result(start, end, snippetRanges(searchable, needle, start, end, offset => offset));
+    return result(start, end, snippetRanges(searchable, needle, start, end, offset => offset, wholeWord));
   }
 
   if (source.length <= UNICODE_MAPPING_LIMIT) {
@@ -183,7 +206,7 @@ function lineSnippet(
         if (boundary.bytes >= start.bytes) end = boundary;
       }
       return result(start.source, end.source, snippetRanges(foldedLine, needle,
-        start.normalized, end.normalized, offset => byMatch.get(offset)));
+        start.normalized, end.normalized, offset => byMatch.get(offset), wholeWord));
     }
   }
 
@@ -245,7 +268,7 @@ export async function listProjectDirectory(projectRoot: string, directory: strin
   return {entries: entries.slice(offset, offset + PAGE_SIZE), total: entries.length};
 }
 
-export async function searchProjectContents(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false) {
+export async function searchProjectContents(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false, wholeWord = false) {
   validateSearch(query, offset);
   const root = await rootDirectory(projectRoot);
   const needle = searchText(query, caseSensitive);
@@ -285,10 +308,10 @@ export async function searchProjectContents(projectRoot: string, query: string, 
       if (end > start) {
         const raw = text.slice(start, end);
         const searchable = searchText(raw, caseSensitive);
-        const firstMatch = searchable.indexOf(needle);
+        const firstMatch = nextLiteralMatch(searchable, needle, 0, wholeWord);
         if (firstMatch !== -1) {
           if (total >= offset && matches.length < PAGE_SIZE) {
-            const snippet = lineSnippet(raw, searchable, needle, firstMatch, caseSensitive);
+            const snippet = lineSnippet(raw, searchable, needle, firstMatch, caseSensitive, wholeWord);
             matches.push({path, line, ...(snippet ? {snippet} : {})});
           }
           total += 1;

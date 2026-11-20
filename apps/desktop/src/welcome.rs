@@ -113,6 +113,9 @@ impl HiveApp {
             .find(|ws| Some(&ws.id) == self.workspace.as_ref())
             .cloned();
         let execution = self.session.as_ref().and_then(|session| session.execution.as_ref());
+        let shared_worktree = execution.is_some_and(|execution| execution.owner_session_id.is_some());
+        let reusable_worktree = self.shared_worktree_draft_source().map(|source| source.id.clone());
+        let can_reuse_worktree = self.can_create_shared_worktree_draft();
         let scratch = self.session.as_ref().is_some_and(|session| session.scratch);
         let execution_path = execution.map(|execution| execution.path.clone())
             .or_else(|| self.session.as_ref().and_then(|session| session.execution_path.clone()))
@@ -131,6 +134,8 @@ impl HiveApp {
                     "{} · {}\n{}",
                     tr(if scratch {
                         "临时会话目录"
+                    } else if shared_worktree {
+                        "共用工作树执行目录"
                     } else if execution.is_some() {
                         "独立工作树执行目录"
                     } else {
@@ -169,7 +174,9 @@ impl HiveApp {
                     .gap_2()
                     .child({
                         if let Some(ws) = active_project.as_ref() {
-                            let folder_label = if execution.is_some() {
+                            let folder_label = if shared_worktree {
+                                format!("{} · {}", tr("共用工作树"), ws.name)
+                            } else if execution.is_some() {
                                 format!("{} · {}", tr("独立工作树"), ws.name)
                             } else {
                                 format!("{} · {}", tr("当前检出"), ws.name)
@@ -246,6 +253,17 @@ impl HiveApp {
                                         ));
                                     }
                                     if can_copy_draft || !retry_copies.is_empty() { menu = menu.separator(); }
+                                    if let Some(source) = &reusable_worktree {
+                                        let owner = weak.clone();
+                                        let source = source.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new(tr("在此工作树新建会话"))
+                                                .disabled(!can_reuse_worktree)
+                                                .on_click(move |_, _, cx| {
+                                                    let _ = owner.update(cx, |app, cx| app.create_shared_worktree_draft(&source, cx));
+                                                }),
+                                        );
+                                    }
                                     let weak_new = weak.clone();
                                     let new_ws = ws_id.clone();
                                     menu = menu.item(

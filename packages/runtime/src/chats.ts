@@ -52,12 +52,12 @@ import { claudeMetadataPath, readClaudeMetadata } from './agents/claude-metadata
 import { openSavedCodexProjection } from './agents/codex-projection.js';
 import { codexMetadataFile, readCodexMetadata } from './agents/codex-metadata.js';
 import { findConversationMessages, foldSearchText, readCodexDisplayRows, readFreshConversationHistory, searchConversation, type ConversationMessageSearchResult, type ConversationSearchMatch } from './conversation-search.js';
-import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffOptions } from './git-workspace.js';
+import { getGitWorkspaceStatus, getGitWorkspaceVersion, getGitFileDiff, GitWorkspaceError, type GitDiffOptions } from './git-workspace.js';
 import { previewGitStage, previewGitUnstage, stageGitPaths, unstageGitPaths, previewGitCommit, commitGitIndex, GitMutationError } from './git-mutations.js';
 import { listGitRemotes, previewGitPush, pushGitBranch } from './git-remotes.js';
 import { previewGithubPr, createGithubPr, updateGithubPr, type GithubPrTarget, type GithubPrWriteRequest } from './github-prs.js';
-import { createManagedWorktree, GitWorktreeError, previewManagedWorktreeRemoval, readWorktreeIntent, recordManagedWorktreePush, recoverManagedWorktree, removeManagedWorktree, validateManagedWorktree, type WorktreeCreation } from './git-worktrees.js';
-import { readdir, realpath, stat } from 'node:fs/promises';
+import { createManagedWorktree, GitWorktreeError, previewManagedWorktreeRemoval, readWorktreeIntent, recordManagedWorktreePush, recoverManagedWorktree, removeManagedWorktree, validateManagedWorktree, type ManagedWorktree, type WorktreeCreation } from './git-worktrees.js';
+import { lstat, readdir, realpath, stat } from 'node:fs/promises';
 import type { DesktopSettings } from './desktop-settings.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
 import { DeliveryQueue, type DeliveryItem } from './delivery-queue.js';
@@ -169,6 +169,12 @@ function gitText(value: unknown, field: string, allowEmpty = false): string {
   if (typeof value !== 'string' || !allowEmpty && !value.trim()) throw new GitWorkspaceError('INVALID_ARGUMENT', `${field} must be ${allowEmpty ? 'text' : 'nonempty text'}`);
   return value;
 }
+function worktreeFingerprint(owned: ManagedWorktree): string {
+  return createHash('sha256').update(JSON.stringify([
+    owned.chatId, owned.ownerToken, owned.projectRoot, owned.repoCommonDir, owned.gitDir,
+    owned.managedWorktreeRoot, owned.executionPath, owned.projectPrefix, owned.branch, owned.baseOid,
+  ])).digest('hex');
+}
 function githubTarget(params: Record<string, unknown>): GithubPrTarget {
   return {remote: gitText(params.remote, 'remote'), base: gitText(params.base, 'base'),
     ...(params.headBranch !== undefined && {headBranch: gitText(params.headBranch, 'headBranch')})};
@@ -203,6 +209,7 @@ export class Chats implements StructuredSessionPort {
     this.executionMutations=mutations;
     this.history=new SessionHistoryOperations(this.dataDir,{
       lease:workspaceId=>mutations.acquire(workspaceId),
+      canRestoreWorktree: record => !!record.execution && !this.isSharedWorktree(record),
       source:async(workspaceId,sessionId,rewindId)=>{
         const current=await this.runnableIdentity(this.index.get(sessionId),rewindId);
         const {rewindOperationId:_guard,...record}=current;
@@ -305,7 +312,7 @@ export class Chats implements StructuredSessionPort {
   async initializationPlan(workspaceId: string, id: string): Promise<InitializationPlan | undefined> {
     const record = this.index.get(id);
     if (record.workspaceId !== workspaceId) throw new Error('Session belongs to another workspace');
-    if (!record.execution) return undefined;
+    if (!record.execution || record.execution.ownerSessionId) return undefined;
     await this.sessionExecution(id);
     const {creation} = await readWorktreeIntent(this.dataDir, id);
     return creation?.setup;
@@ -471,7 +478,7 @@ export class Chats implements StructuredSessionPort {
     return {id: record.id, title: record.title, workspaceId: record.workspaceId, backend: record.backend, ...(record.profile && {profile: record.profile}), ...(record.legacyConfiguration && {legacyConfiguration: true as const}),
       pinned: !!record.pinned, ...(record.pinRank !== undefined && {pinRank: record.pinRank}), archived: !!record.archived, updatedAt: record.updatedAt,
       ...(record.customTitle !== undefined && {customTitle: record.customTitle}), ...(record.agentId && {agentId: record.agentId}),
-      ...(record.execution && {execution: {kind: record.execution.kind, path: record.execution.path, branch: record.execution.branch}}),
+      ...(record.execution && {execution: {...record.execution}}),
       ...(record.scratch && {scratch: true as const}), executionPath,
       ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.handoff&&{handoff:{...record.handoff}}), identityState: record.identityState ?? 'unknown'};
   }
@@ -525,12 +532,33 @@ export class Chats implements StructuredSessionPort {
   }
   async drainGitOperations(): Promise<void> { await Promise.allSettled(this.gitOperations); }
 
+  private isSharedWorktree(record: ChatRecord): boolean {
+    return !!record.execution && (!!record.execution.ownerSessionId ||
+      this.index.hasWorktreeBorrowers(record.workspaceId, record.id));
+  }
+
+  /** A second project may be registered inside this same physical checkout. */
+  private async managedWorktreeAt(directory: string, verifiedRepositoryRoot?: string): Promise<ChatRecord | undefined> {
+    const managed = join(await realpath(this.dataDir), 'worktrees');
+    const path = verifiedRepositoryRoot ?? await realpath(directory);
+    const [ownerId, tree] = relative(managed, path).split(sep);
+    if (!ownerId || ownerId === '..' || tree !== 'tree') return;
+    const owner = this.index.peek(ownerId);
+    if (!owner?.execution || owner.execution.ownerSessionId) return;
+    const root = verifiedRepositoryRoot ?? (await getGitWorkspaceVersion(directory)).repositoryRoot;
+    return root === join(managed, ownerId, 'tree') ? owner : undefined;
+  }
+
   private async worktreeRemovalSource(workspaceId: string, id: string, hasShell: () => Promise<boolean>) {
     this.assertWorkspaceAvailable(workspaceId);
     if (this.closing) throw new Error('Chat runtime is closing');
     const record = this.index.get(id);
     if (record.workspaceId !== workspaceId || !record.execution)
       throw new GitWorktreeError('WORKTREE_SOURCE_INVALID', 'Select a managed worktree in this workspace.');
+    if (record.execution.ownerSessionId)
+      throw new GitWorktreeError('WORKTREE_NOT_OWNER', '只有拥有此工作树的会话可以清理工作树。');
+    if (this.isSharedWorktree(record))
+      throw new GitWorktreeError('WORKTREE_SHARED', '此工作树仍有其他会话使用，无法清理。');
     const live = this.live.get(id);
     if (record.agentId || live?.onExit)
       throw new GitWorktreeError('WORKTREE_IN_USE', 'This conversation is the current collaboration target. Activate a different conversation for this Agent first.');
@@ -603,19 +631,30 @@ export class Chats implements StructuredSessionPort {
       try { return await validateScratchConversation(this.dataDir, workspace, record.id); }
       catch { throw new SessionIdentityError('SCRATCH_FOLDER_UNAVAILABLE', 'The original Scratch conversation folder is missing or was replaced.'); }
     }
-    if (!record.execution) return workspace.path;
+    return record.execution ? (await this.verifiedWorktree(record, workspace)).executionPath : workspace.path;
+  }
+
+  private async verifiedWorktree(record: ChatRecord, workspace: WorkspaceSummary): Promise<ManagedWorktree> {
     try {
-      const {record: owned, creation} = await readWorktreeIntent(this.dataDir, record.id);
-      if (creation && (creation.workspaceId !== record.workspaceId || creation.backend !== record.backend
-        || creation.profile && (creation.profile.id !== record.profile?.id || creation.profile.revision !== record.profile?.revision)
-        || creation.originAgentId && creation.originAgentId !== record.originAgentId
-        || creation.prReview && !isDeepStrictEqual(creation.prReview, record.prReview)))
+      const execution = record.execution!;
+      const owner = execution.ownerSessionId ? this.index.peek(execution.ownerSessionId) : record;
+      if (!owner?.execution || owner.execution.ownerSessionId || owner.workspaceId !== record.workspaceId
+        || owner.execution.path !== execution.path || owner.execution.branch !== execution.branch)
+        throw new GitWorktreeError('IDENTITY_MISMATCH', '原工作树已变化或不可用。');
+      const {record: owned, creation} = await readWorktreeIntent(this.dataDir, owner.id);
+      if (creation && (creation.workspaceId !== owner.workspaceId || creation.backend !== owner.backend
+        || creation.profile && (creation.profile.id !== owner.profile?.id || creation.profile.revision !== owner.profile?.revision)
+        || creation.originAgentId && creation.originAgentId !== owner.originAgentId
+        || creation.prReview && !isDeepStrictEqual(creation.prReview, owner.prReview)))
         throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Worktree creation provenance and conversation identity disagree.');
       const original = await realpath(workspace.path);
-      if (owned.projectRoot !== original || owned.executionPath !== record.execution.path || owned.branch !== record.execution.branch) {
+      if (owned.projectRoot !== original || owned.executionPath !== execution.path || owned.branch !== execution.branch) {
         throw new GitWorktreeError('IDENTITY_MISMATCH', '会话工作树与团队项目或保存的执行目录不匹配；已停止恢复，请检查工作树。');
       }
-      return await validateManagedWorktree(this.dataDir, owned);
+      if (execution.ownerSessionId && record.worktreeReuse?.ownerFingerprint !== worktreeFingerprint(owned))
+        throw new GitWorktreeError('IDENTITY_MISMATCH', '原工作树已变化或不可用。');
+      await validateManagedWorktree(this.dataDir, owned);
+      return owned;
     } catch (error) {
       if (error instanceof GitWorktreeError || error instanceof SessionIdentityError) throw error;
       throw new GitWorktreeError('WORKTREE_UNAVAILABLE', error instanceof Error ? error.message : String(error), {cause: error});
@@ -725,6 +764,8 @@ export class Chats implements StructuredSessionPort {
       if (existing) {
         if (profile && (profile.id !== existing.profile?.id || profile.revision !== existing.profile?.revision)) throw new SessionIdentityError('SESSION_PROFILE_CONFLICT', 'Recovery cannot replace the fixed conversation profile.');
         if (existing.workspaceId !== workspaceId || !existing.execution) throw new Error('会话身份已被使用，未覆盖现有记录。');
+        if (existing.execution.ownerSessionId)
+          throw new GitWorktreeError('WORKTREE_REUSE_RECOVERY', '共享工作树的会话请从会话列表打开。');
         const {creation} = await readWorktreeIntent(this.dataDir, id);
         if(creation?.forkOperationId)throw new HistoryOperationError('FORK_RECOVERY_REQUIRED',`Use the dedicated history operation ${creation.forkOperationId} to inspect or recover this fork`);
         if(creation?.handoffOperationId)throw new HandoffError('HANDOFF_RECOVERY_REQUIRED',`Use the dedicated handoff operation ${creation.handoffOperationId}`);
@@ -794,9 +835,20 @@ export class Chats implements StructuredSessionPort {
       this.assertWorkspaceAvailable(workspaceId);
       const directory = await this.executionDirectory(workspaceId, sessionId);
       try {
-        const result = await checkoutGitBranch(directory, { branch, create, ...(startPoint ? { startPoint } : {}) });
-        this.assertWorkspaceAvailable(workspaceId);
-        return result;
+        const owner = await this.managedWorktreeAt(directory);
+        const checkout = async () => {
+          // Keep the ownership check and checkout in the physical owner's
+          // workspace queue so another project cannot race a new attachment.
+          if (owner?.execution && (create || branch !== owner.execution.branch) && this.isSharedWorktree(owner))
+            throw new GitWorkspaceError('WORKTREE_SHARED', '共享工作树不能切换分支。');
+          const current = owner ? await this.executionDirectory(workspaceId, sessionId) : directory;
+          if (current !== directory)
+            throw new GitWorkspaceError('STALE_PREVIEW', 'The checkout directory changed. Retry from the current project.');
+          const result = await checkoutGitBranch(current, { branch, create, ...(startPoint ? { startPoint } : {}) });
+          this.assertWorkspaceAvailable(workspaceId);
+          return result;
+        };
+        return owner ? await this.withWorkspace(owner.workspaceId, checkout) : await checkout();
       } catch (error) {
         if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
         throw error;
@@ -1036,7 +1088,8 @@ export class Chats implements StructuredSessionPort {
   async gitPushApply(workspaceId: string, remote: unknown, branch: unknown, expectedVersion: unknown, sessionId?: unknown) {
     return this.withGitOperation(async () => {
       const directory = await this.executionDirectory(workspaceId, sessionId);
-      const managedId = typeof sessionId === 'string' && this.index.get(sessionId).execution ? sessionId : undefined;
+      const session = typeof sessionId === 'string' ? this.index.get(sessionId) : undefined;
+      const managedId = session?.execution ? session.execution.ownerSessionId ?? session.id : undefined;
       try {
         return await pushGitBranch(directory, {remote: gitText(remote, 'remote'), branch: gitText(branch, 'branch'),
           expectedVersion: gitText(expectedVersion, 'expectedVersion')}, managedId ? {recordVerifiedPush: async proof => {
@@ -1103,6 +1156,9 @@ export class Chats implements StructuredSessionPort {
           assertAvailable();
           // An already checked-out head needs no switch, so it can be opened without disturbing another run.
           if (review.context.workspace.headOid !== review.preview.headOid) {
+            const owner = await this.managedWorktreeAt(workspace.path, review.context.workspace.repositoryRoot);
+            if (owner && this.isSharedWorktree(owner))
+              throw new GitWorkspaceError('WORKTREE_SHARED', '共享工作树不能切换分支。');
             const runs = await this.hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspaceId)}/runs`) as {status: string}[];
             if (!Array.isArray(runs) || runs.some(run => ['starting', 'running'].includes(run.status)) || await hasAnyShell()
               || this.opening.size || this.preparingInteractions.size || this.startingForInput.size) {
@@ -1172,10 +1228,10 @@ export class Chats implements StructuredSessionPort {
     const root = await this.executionDirectory(workspaceId, sessionId);
     return listProjectDirectory(root, directory, offset);
   }
-  async projectFilesSearchContent(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal, caseSensitive: unknown = false) {
-    if (typeof query !== 'string' || typeof offset !== 'number' || typeof caseSensitive !== 'boolean') throw new TypeError('Invalid project file search');
+  async projectFilesSearchContent(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal, caseSensitive: unknown = false, wholeWord: unknown = false) {
+    if (typeof query !== 'string' || typeof offset !== 'number' || typeof caseSensitive !== 'boolean' || typeof wholeWord !== 'boolean') throw new TypeError('Invalid project file search');
     const directory = await this.executionDirectory(workspaceId, sessionId);
-    return searchProjectContents(directory, query, offset, signal, caseSensitive);
+    return searchProjectContents(directory, query, offset, signal, caseSensitive, wholeWord);
   }
   async projectFilesPreview(workspaceId: string, relativePath: unknown, sessionId?: unknown) {
     if (typeof relativePath !== 'string') throw new TypeError('Invalid project file path');
@@ -1222,7 +1278,7 @@ export class Chats implements StructuredSessionPort {
     }
   }
   async search(query: unknown, archived: unknown = false, offset: unknown = 0, workspaceId?: unknown, signal?: AbortSignal,
-    page: {limit?: number; memberId?: string; backend?: ChatBackend} = {}) {
+    page: {limit?: number; memberId?: string; backend?: ChatBackend; archiveSnapshot?: string} = {}) {
     signal?.throwIfAborted();
     if (workspaceId !== undefined && (typeof workspaceId !== 'string' || !workspaceId.trim())) throw new TypeError('workspaceId must be a nonempty string');
     if (typeof archived !== 'boolean') throw new TypeError('Archived state must be a boolean');
@@ -1230,9 +1286,9 @@ export class Chats implements StructuredSessionPort {
     if (typeof query !== 'string' || Array.from(query).length > 200) {
       throw new TypeError('搜索内容需为 200 个字符以内的文本。');
     }
-    if (page.limit !== undefined || page.memberId !== undefined || page.backend !== undefined) {
+    if (page.limit !== undefined || page.memberId !== undefined || page.backend !== undefined || page.archiveSnapshot !== undefined) {
       return this.archivedNavigationPage(workspaceId as string | undefined, page.memberId, page.backend,
-        offset, page.limit ?? 100, signal);
+        offset, page.limit ?? 100, page.archiveSnapshot, signal);
     }
     const terms = foldSearchText(query.trim()).split(/\s+/u).filter(Boolean);
     const groups = await this.navigationEntries(false, archived, workspaceId as string | undefined);
@@ -1348,7 +1404,7 @@ export class Chats implements StructuredSessionPort {
     });
   }
   private async archivedNavigationPage(workspaceId: string | undefined, memberId: string | undefined,
-    backend: ChatBackend | undefined, offset: number, limit: number, signal?: AbortSignal) {
+    backend: ChatBackend | undefined, offset: number, limit: number, expectedSnapshot: string | undefined, signal?: AbortSignal) {
     if (this.closing) throw new Error('Chat runtime is closing');
     const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
     signal?.throwIfAborted();
@@ -1363,7 +1419,21 @@ export class Chats implements StructuredSessionPort {
         ? [{workspace, session}] : [];
     })
       .sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));
+    // Bind continuation to the ordered result rather than to an index-wide
+    // mutation, so active conversation saves do not disrupt archive paging.
+    const snapshot = (rows: ReturnType<typeof archived>) => createHash('sha256').update(JSON.stringify([
+      workspaceId, memberId, backend, [...available.keys()].sort(),
+      rows.map(({session}) => [session.workspaceId, session.id, session.updatedAt, session.title, session.customTitle,
+        session.agentId, session.originAgentId, session.identityState, session.pinned, session.pinRank]),
+    ])).digest('hex');
+    const changed = (archiveSnapshot: string, total: number) => ({
+      matches: [], total, incompleteHistory: [], incompleteHistoryCount: 0,
+      archiveSnapshot, archiveSnapshotChanged: true,
+    });
     const candidates = archived();
+    const archiveSnapshot = snapshot(candidates);
+    if (expectedSnapshot !== undefined && archiveSnapshot !== expectedSnapshot)
+      return changed(archiveSnapshot, candidates.length);
     const items = candidates.slice(offset, offset + limit);
     const versions = new Map(items.map(({session}) => [session.id, this.index.snapshotVersion(session.id)]));
     // Only the workspaces represented on this page need display-name lookups.
@@ -1376,14 +1446,15 @@ export class Chats implements StructuredSessionPort {
     signal?.throwIfAborted();
     const latest = archived();
     const latestItems = latest.slice(offset, offset + limit);
-    if (items.length !== latestItems.length || latestItems.some(({session}, index) => {
+    const latestSnapshot = snapshot(latest);
+    if (archiveSnapshot !== latestSnapshot || items.length !== latestItems.length || latestItems.some(({session}, index) => {
       return items[index]?.session.id !== session.id || versions.get(session.id) !== this.index.snapshotVersion(session.id);
     })) {
-      throw new Error('收件箱中的会话已变化，请刷新后重试。');
+      return changed(latestSnapshot, latest.length);
     }
     return {
       matches: items.map(({workspace, session}) => this.navigationEntry(workspace, session, names.get(workspace.id))),
-      total: latest.length, incompleteHistory: [], incompleteHistoryCount: 0,
+      total: latest.length, incompleteHistory: [], incompleteHistoryCount: 0, archiveSnapshot,
     };
   }
 
@@ -1753,10 +1824,25 @@ export class Chats implements StructuredSessionPort {
           return (!(current.agentId ?? current.originAgentId) || (current.agentId ?? current.originAgentId) === `${current.workspaceId}:orchestrator`)
             && item.presentation?.messageSequence === undefined ? 'legacy' : undefined;
         },
-        ...(handle.steer && {steer: (item: import('./delivery-queue.js').DeliveryItem) => handle.steer!(item.text, {deliveryId: item.id, presentation: item.presentation!})}),
+        ...(handle.steer && {steer: async (item: DeliveryItem) => {
+          let release: (() => void) | undefined;
+          try {
+            if (this.isSharedWorktree(record)) {
+              try {
+                release = this.executionMutations?.begin(record.workspaceId);
+                await this.executionDirectory(record.workspaceId, record.id);
+              } catch {
+                // No native call was attempted. Leave it queued for the
+                // normal execution guard instead of marking it uncertain.
+                return false;
+              }
+            }
+            return await handle.steer!(item.text, {deliveryId: item.id, presentation: item.presentation!});
+          } finally { release?.(); }
+        }}),
         execute: async item => {const release=this.executionMutations?.begin(record.workspaceId);try{
           await this.assertHistoryReady(this.index.get(record.id));await this.initializationReady(this.index.get(record.id));
-          if (record.scratch) await this.executionDirectory(record.workspaceId, record.id);
+          if (record.scratch || this.isSharedWorktree(record)) await this.executionDirectory(record.workspaceId, record.id);
           const h=this.index.get(record.id).handoff;
           if(h&&this.handoffDeliveries.get(record.id)?.status!=='consumed'&&item.triggerTurn&&item.presentation?.origin==='user'&&!item.contextRef)throw new HandoffError('HANDOFF_CONTEXT_PENDING','The earliest pending user input must carry its historical context before it may execute');
           if(item.contextRef&&(!h||h.operationId!==item.contextRef.operationId||h.snapshotHash!==item.contextRef.snapshotHash||item.presentation?.origin!=='user'))throw new HandoffError('HANDOFF_CONTEXT_CONFLICT','The queued input does not match this frozen context');
@@ -2089,7 +2175,8 @@ export class Chats implements StructuredSessionPort {
   private async require(id: string, browse = false, explicitDesktopConnect = false): Promise<LiveChat> {
     if (this.closing) throw new Error('Chat runtime is closing');
     const requested=this.index.get(id);
-    if (requested.scratch && this.live.has(id)) await this.executionDirectory(requested.workspaceId, id);
+    if ((requested.scratch || this.isSharedWorktree(requested)) && this.live.has(id))
+      await this.executionDirectory(requested.workspaceId, id);
     if (browse && requested.nativeImport && !explicitDesktopConnect && !this.live.has(id))
       throw new SessionIdentityError('NATIVE_IMPORT_PASSIVE', 'Continue the imported conversation before reading live backend settings.');
     if(requested.rewindOperationId) await this.assertHistoryReady(requested);
@@ -2458,6 +2545,47 @@ export class Chats implements StructuredSessionPort {
       }, options);
     });
   }
+  async createInWorktreeRecord(workspaceId: string, sourceSessionId: string, requestId: string) {
+    this.assertWorkspaceAvailable(workspaceId);
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(requestId))
+      throw new TypeError('A UUIDv4 request identity is required');
+    const conflict = () => new GitWorktreeError('WORKTREE_REUSE_CONFLICT', '这个请求已用于另一条会话。');
+    return this.withWorkspace(workspaceId, async () => {
+      this.assertWorkspaceAvailable(workspaceId);
+      this.closeAbort.signal.throwIfAborted();
+      const existing = this.index.peek(requestId);
+      const workspace = await this.workspace(workspaceId);
+      if (existing) {
+        if (existing.workspaceId !== workspaceId || existing.worktreeReuse?.sourceSessionId !== sourceSessionId)
+          throw conflict();
+        return this.publicSession(existing, await this.executionPath(existing, workspace));
+      }
+      const occupied = await lstat(join(this.dataDir, 'worktrees', requestId)).then(() => true, (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+        return false;
+      });
+      if (occupied) throw conflict();
+      await this.initializeProfiles();
+      const source = this.index.peek(sourceSessionId);
+      if (!source?.execution || source.workspaceId !== workspaceId || source.archived || !source.profile)
+        throw new GitWorktreeError('WORKTREE_SOURCE_INVALID', '请选择当前项目中可用的独立工作树会话。');
+      await this.assertHistoryReady(source);
+      const selected = await this.selectedProfile(source.backend, source.profile);
+      await this.initialization?.assertReady(workspaceId, source.execution.ownerSessionId ?? source.id);
+      const owned = await this.verifiedWorktree(source, workspace);
+      this.assertWorkspaceAvailable(workspaceId);
+      this.closeAbort.signal.throwIfAborted();
+      if (this.index.peek(requestId)) throw conflict();
+      const record: ChatRecord = {
+        id: requestId, workspaceId, backend: source.backend, profile: selected.ref,
+        title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new', deferFirstConnection: true,
+        execution: {kind: 'worktree', path: owned.executionPath, branch: owned.branch, ownerSessionId: owned.chatId},
+        worktreeReuse: {sourceSessionId, ownerFingerprint: worktreeFingerprint(owned)},
+      };
+      this.index.save(record);
+      return this.publicSession(record, owned.executionPath);
+    });
+  }
   copyDraftRecord(request: DraftCopyRequest) {
     const {requestId, workspaceId, sourceSessionId, targetWorkspaceId, backend, profile, attachmentIds} = request;
     if (workspaceId === targetWorkspaceId) throw new Error('请选择另一个项目来复制草稿。');
@@ -2769,8 +2897,12 @@ export class Chats implements StructuredSessionPort {
     const record=this.index.get(id);
     if (record.backend === 'acp' && record.acpSessionId && !record.sessionFile && !this.live.has(id))
       throw new SessionIdentityError('ACP_SESSION_IDENTITY_CONFLICT', 'The saved ACP session has no local transcript path');
-    if (record.execution && (await readWorktreeIntent(this.dataDir, id).catch(() => undefined))?.removed)
+    if (record.execution && (await readWorktreeIntent(this.dataDir, record.execution.ownerSessionId ?? id).catch(() => undefined))?.removed)
       throw new GitWorktreeError('WORKTREE_REMOVED', 'This worktree was removed. The conversation history and local branch are retained.');
+    if (record.execution?.ownerSessionId && desktopHistory !== 'connect') {
+      const draft = await this.browseUnstartedDraft(record);
+      if (draft) return draft;
+    }
     if(record.handoff&&!this.live.has(id)){
       await this.assertHistoryReady(record);await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
       await this.reconcileHandoffOffline(record);
@@ -2940,7 +3072,9 @@ export class Chats implements StructuredSessionPort {
     return {
       sessionId: chat.handle.sessionId,
       resumed: chat.handle.hasContext('hive-context'),
-      ...((record.handoff || record.nativeImport) && {includeRecentUserInputs: false as const}),
+      // Physical files are shared, but this conversation's native history
+      // is independent of all other conversations in the workspace.
+      ...((record.handoff || record.nativeImport || this.isSharedWorktree(record)) && {includeRecentUserInputs: false as const}),
       ...(chat.handle.sessionFile ? { sessionFile: chat.handle.sessionFile } : {}),
       deliver: async (text, options) => {
         let images = promptImages(options?.images);
@@ -2968,6 +3102,7 @@ export class Chats implements StructuredSessionPort {
             && ['hive-context', 'hive-desktop', 'hive-desktop-execution', 'hive-desktop-external', 'hive-desktop-claude'].includes(message.customType)));
         if (options?.triggerTurn === false || recoveringWithoutWakeup) {
           if (images.length) throw new TypeError('不触发模型回合的投递暂不支持图片。');
+          if (this.isSharedWorktree(record)) await this.executionDirectory(record.workspaceId, id);
           const startupContext = record.execution || record.scratch ? `${text}\n\n${this.executionGuidance(input.workspace, chat.executionPath)}` : text;
           this.index.save({ ...this.index.get(id), startupContext });
           await chat.handle.addContext(startupContext);
@@ -3011,7 +3146,7 @@ export class Chats implements StructuredSessionPort {
   private async activationAvailable(id: string) {
     await this.initializationReady(this.index.get(id));
     const record = await this.runnableIdentity(this.index.get(id));
-    if (record.scratch) await this.executionDirectory(record.workspaceId, record.id);
+    if (record.scratch || this.isSharedWorktree(record)) await this.executionDirectory(record.workspaceId, record.id);
     if(record.handoff&&this.handoffDeliveries.get(id)?.status!=='consumed'){
       const eligibility=await this.handoffRuntime!.inspect(record.workspaceId,record.handoff.sourceSessionId,{driver:record.backend,profile:record.profile!},id);
       if(!eligibility.eligible)throw new SessionIdentityError('HANDOFF_RESPONSIBILITY_BUSY',eligibility.blockers.map(b=>b.message).join('; '));

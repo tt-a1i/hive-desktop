@@ -198,6 +198,25 @@ try {
   assert.ok(!(await calls()).some(call=>['turn/start','turn/steer','account/read'].includes(call.method)));
   assert.equal((await calls()).filter(call=>call.method==='thread/revert').length,2);
   assert.equal(await readFile(join(project,'tracked.txt'),'utf8'),'original root');
+  // The same checkout becomes shared after an otherwise valid rewind preview.
+  const checkpointSelection = {...base, boundary: {nativeUserItemId: 'u1'}, code: {kind: 'checkpoint', checkpointId}};
+  const beforeShare = await wire.rpc('history.rewind.preview', checkpointSelection);
+  const beforeShareCalls = await calls();
+  const share = {workspaceId: workspace.id, sourceSessionId: chat.id, requestId: randomUUID()};
+  const borrower = await wire.rpc('chat.createInWorktreeRecord', share);
+  assert.equal(borrower.id, share.requestId);
+  assert.equal(borrower.execution.ownerSessionId, chat.id);
+  assert.equal(borrower.executionPath, execution);
+  assert.equal((await wire.rpc('chat.open', {sessionId: borrower.id})).passive, true);
+  assert.deepEqual(await calls(), beforeShareCalls, 'Opening the new chat must not connect a peer.');
+  assert.equal((await wire.rpc('history.capabilities', base)).rewindCode, false);
+  await assert.rejects(wire.rpc('history.rewind.preview', checkpointSelection), /恢复检查点文件需要未共享的工作树/);
+  const blockedRewind = await wire.rpc('history.rewind.apply', {...base, previewToken: beforeShare.previewToken,
+    requestId: randomUUID(), confirmed: true});
+  assert.equal(blockedRewind.state, 'failed');
+  assert.match(blockedRewind.error, /恢复检查点文件需要未共享的工作树/);
+  assert.deepEqual(await calls(), beforeShareCalls, 'A shared checkout must reject rewind before any new native operation.');
+  assert.equal(await readFile(join(execution,'tracked.txt'),'utf8'),'original root');
   await wire.loseOutput();
   wire=undefined;
   console.log((sidecarCrash ? 'SESSION_HISTORY_REWIND_SIDECAR_CRASH_OK:' : 'SESSION_HISTORY_REWIND_OK:') + ' backup first, exact native prefix, code restore, cold recovery and original delivery receipts');

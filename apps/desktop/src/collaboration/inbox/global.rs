@@ -35,6 +35,7 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         menu::{DropdownMenu, PopupMenuItem},
+        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
@@ -221,10 +222,22 @@ impl HiveApp {
                 .as_ref()
                 .is_some_and(|scope| scope.contains(session))
             {
-                inbox.completed.rows.retain(|hit| {
-                    hit.session.workspace_id != session.workspace_id || hit.session.id != session.id
-                });
-                inbox.completed.invalidate();
+                let removed = (!session.archived)
+                    .then(|| RowId::for_completed(&session.workspace_id, &session.id));
+                if let Some(row) = &removed
+                    && inbox
+                        .completed
+                        .has(&session.workspace_id, &session.id)
+                        .is_some()
+                {
+                    inbox.reserve_completed_row(row);
+                }
+                inbox.restore_position = inbox
+                    .restore_position
+                    .take()
+                    .filter(|position| Some(&position.row) != removed.as_ref())
+                    .or_else(|| inbox.reading_position_without(removed.as_ref()));
+                inbox.completed.refresh_loaded(session);
                 cx.notify();
             }
             let Some(current) = inbox
@@ -546,16 +559,31 @@ impl GlobalInbox {
             return;
         };
         let generation = self.completed.generation;
+        let limit = self.completed.request_limit(offset);
+        let snapshot = if offset == 0 {
+            None
+        } else {
+            self.completed.snapshot.clone()
+        };
         self.completed.refresh = false;
         self.completed.task = Some(cx.spawn(async move |this, cx| {
             if offset == 0 {
                 smol::Timer::after(Duration::from_millis(150)).await;
             }
-            let result = completed::read_page(&runtime, &scope, offset).await;
+            let result =
+                completed::read(&runtime, &scope, offset, limit, snapshot.as_deref()).await;
             let _ = this.update(cx, |inbox, cx| {
-                if inbox.completed_scope(cx).as_ref() == Some(&scope)
-                    && inbox.completed.apply(generation, offset, result)
-                {
+                if inbox.completed_scope(cx).as_ref() == Some(&scope) {
+                    let reading =
+                        (offset == 0 && result.is_ok() && !inbox.completed.rows.is_empty())
+                            .then(|| inbox.reading_position())
+                            .flatten();
+                    if !inbox.completed.apply(generation, offset, result) {
+                        return;
+                    }
+                    if reading.is_some() {
+                        inbox.restore_position = reading;
+                    }
                     cx.notify();
                 }
             });
@@ -769,6 +797,30 @@ impl GlobalInbox {
                     viewport_offset: bounds.top() + offset - viewport.top(),
                 })
             })
+    }
+
+    fn reserve_completed_row(&mut self, row: &RowId) {
+        let Some(index) = self.row_ids.iter().position(|id| id.as_ref() == Some(row)) else {
+            return;
+        };
+        let Some(bounds) = self.scroll.bounds_for_item(index) else {
+            return;
+        };
+        let row_extent = self
+            .scroll
+            .bounds_for_item(index + 1)
+            .map_or(bounds.size.height, |next| {
+                (next.top() - bounds.top()).max(bounds.size.height)
+            });
+        let footer_height = self
+            .row_ids
+            .len()
+            .checked_sub(1)
+            .filter(|last| *last != index && self.row_ids[*last].is_none())
+            .and_then(|last| self.scroll.bounds_for_item(last))
+            .map_or(px(0.), |footer| footer.size.height);
+        self.completed
+            .reserve_loading_tail(row_extent, footer_height);
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
@@ -2020,12 +2072,7 @@ impl Render for GlobalInbox {
             items.extend(sections.snoozed.into_iter().filter_map(&mut render_row));
         }
         if !reviewing {
-            items.extend(
-                self.completed
-                    .elements(app, &self.scroll, cx)
-                    .into_iter()
-                    .map(|element| (None, element)),
-            );
+            items.extend(self.completed.elements(app, &self.scroll, cx));
         }
         let (ids, elements): (Vec<_>, Vec<_>) = items.into_iter().unzip();
         let candidates: Vec<_> = ids
@@ -2113,6 +2160,7 @@ impl Render for GlobalInbox {
             .track_scroll(&self.scroll)
             .overflow_y_scroll()
             .max_h((window.viewport_size().height - px(200.)).clamp(px(120.), px(600.)))
+            .vertical_scrollbar(&self.scroll)
             .children(elements)
             .on_scroll(cx.listener(|this, _, _, _| this.restore_position = None));
         body.child(list)

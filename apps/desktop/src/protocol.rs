@@ -106,6 +106,8 @@ pub struct SessionExecution {
     pub kind: String,
     pub path: String,
     pub branch: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_session_id: Option<String>,
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

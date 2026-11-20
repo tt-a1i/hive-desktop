@@ -1,6 +1,7 @@
 /** Production JSONL, Hive HTTP/SQLite and a controlled Codex app-server. */
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -74,7 +75,7 @@ function startRuntime() {
   };
 }
 
-type PeerRequest = { method: string; pid: number; threadId?: string; input?: { type: string; text?: string }[]; deferGoalContinuation?: boolean };
+type PeerRequest = { method: string; pid: number; threadId?: string; cwd?: string; input?: { type: string; text?: string }[]; additionalContext?: unknown; deferGoalContinuation?: boolean };
 async function requests(): Promise<PeerRequest[]> {
   const wire = await readFile(join(directory, 'wire.jsonl'), 'utf8').catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw error;
@@ -299,6 +300,51 @@ try {
   assert.notEqual(draftTurn.threadId, 'thread-a');
   const openedDraft = await runtime.rpc('chat.open', {sessionId: draft.id, viewRevision: 2, historyLimit: 1});
   assert.equal(openedDraft.codexThreadId, draftTurn.threadId);
+
+  const nested = join(project, 'shared worktree scope');
+  await mkdir(nested);
+  const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=Fixture',
+    '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgSign=false', ...args], {cwd: project, stdio: 'pipe'});
+  git('init', '--template=');
+  await writeFile(join(nested, 'marker.txt'), 'shared physical file');
+  git('add', '.');
+  git('commit', '-qm', 'Shared folder fixture');
+  const sharedWorkspace = await runtime.rpc('hive.request', {method: 'POST', path: '/api/workspaces',
+    body: {path: nested, name: 'Shared physical checkout', autostart_orchestrator: false}});
+  const owner = await runtime.rpc('chat.createRecord', {workspaceId: sharedWorkspace.id, backend: 'codex', isolation: 'worktree'});
+  const turnWith = (text: string) => waitFor('synthetic turn', async () => (await requests()).find(row =>
+    row.method === 'turn/start' && row.input?.some(item => item.text?.split('\n', 1)[0] === text)));
+  const waitForSharedTurnToSettle = (sessionId: string) => waitFor('settled shared worktree input', async () => {
+    const snapshot = await runtime.rpc('chat.open', {sessionId});
+    return !snapshot.busy && snapshot.pending === 0;
+  });
+  const ownerOnly = 'Owner-only recent prompt ' + randomUUID();
+  assert.ok((await runtime.rpc('chat.prompt', {sessionId: owner.id, text: ownerOnly})).accepted);
+  const ownerTurn = await turnWith(ownerOnly);
+  await waitForSharedTurnToSettle(owner.id);
+  await runtime.close();
+
+  runtime = startRuntime();
+  await runtime.rpc('initialize');
+  const share = {workspaceId: sharedWorkspace.id, sourceSessionId: owner.id, requestId: randomUUID()};
+  const beforeSharedOpen = await peers();
+  const shared = await runtime.rpc('chat.createInWorktreeRecord', share);
+  const sharedOpen = await runtime.rpc('chat.open', {sessionId: shared.id, viewRevision: 1, historyLimit: 1});
+  assert.equal(sharedOpen.savedHistoryPassive, true);
+  assert.deepEqual(sharedOpen.history, []);
+  assert.deepEqual(await peers(), beforeSharedOpen);
+  const sharedOnly = 'Shared session first prompt ' + randomUUID();
+  assert.ok((await runtime.rpc('chat.prompt', {sessionId: shared.id, text: sharedOnly})).accepted);
+  const sharedTurn = await turnWith(sharedOnly);
+  const sharedStart = (await requests()).find(row => row.method === 'thread/start' && row.pid === sharedTurn.pid);
+  assert.notEqual(sharedTurn.threadId, ownerTurn.threadId);
+  assert.equal(sharedStart?.cwd, owner.execution.path);
+  assert.equal(shared.execution.ownerSessionId, owner.id);
+  const sharedContext = JSON.stringify(sharedTurn.additionalContext ?? null);
+  assert.ok(sharedContext.includes('Hive team workspace'));
+  assert.ok(!sharedContext.includes('Conversation with the user in the last hour'));
+  assert.ok(!sharedContext.includes(ownerOnly));
+  await waitForSharedTurnToSettle(shared.id);
   await runtime.close();
   console.log('CODEX_DESKTOP_VIEW_OK: stale selections, saved history and image bytes, durable queue, detached draft and cold reopen, model settings, Hive and legacy ownership');
 } finally {

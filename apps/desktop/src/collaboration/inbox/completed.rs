@@ -1,11 +1,10 @@
-use super::{GlobalInbox, display_project, inbox_status};
+use super::{GlobalInbox, RowId, display_project, inbox_status};
 use crate::{
     app::HiveApp,
     focus_scroll::Reveal,
     language::{localize_owned_error, tr},
     palette::Color,
     protocol::{Backend, Session, SessionHit},
-    sessions::search::Page,
     transport::Runtime,
 };
 use gpui_kit::{
@@ -16,11 +15,14 @@ use gpui_kit::{
     },
     *,
 };
+use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeSet;
 
 pub(super) const PAGE_SIZE: usize = 20;
+const MAX_PAGE: usize = 100;
 pub(super) const INVALID_PAGE: &str = "收件箱返回了其他工作区的数据。";
+const CHANGED: &str = "收件箱中的会话已变化，请刷新后重试。";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Scope {
@@ -48,12 +50,30 @@ impl Scope {
     }
 }
 
-pub(super) async fn read_page(
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct Page {
+    matches: Vec<SessionHit>,
+    total: usize,
+    archive_snapshot: String,
+    #[serde(default)]
+    archive_snapshot_changed: bool,
+}
+
+enum ReadError {
+    Changed,
+    Failed(String),
+}
+
+async fn read_page(
     runtime: &Runtime,
     scope: &Scope,
     offset: usize,
-) -> Result<Page, String> {
-    let mut params = json!({"query":"", "archived":true, "navigationOnly":true, "offset":offset, "limit":PAGE_SIZE});
+    limit: usize,
+    snapshot: Option<&str>,
+) -> Result<Page, ReadError> {
+    let mut params =
+        json!({"query":"", "archived":true, "navigationOnly":true, "offset":offset, "limit":limit});
     if let Some(workspace) = &scope.workspace {
         params["workspaceId"] = json!(workspace);
     }
@@ -63,15 +83,28 @@ pub(super) async fn read_page(
     if let Some(backend) = scope.backend {
         params["backend"] = json!(backend.wire());
     }
-    let value = runtime.search(params).await?;
-    let mut page: Page = serde_json::from_value(value).map_err(|error| error.to_string())?;
-    if page.matches.len() > PAGE_SIZE
+    if let Some(snapshot) = snapshot {
+        params["archiveSnapshot"] = json!(snapshot);
+    }
+    let value = runtime.search(params).await.map_err(ReadError::Failed)?;
+    let mut page: Page =
+        serde_json::from_value(value).map_err(|error| ReadError::Failed(error.to_string()))?;
+    if page.archive_snapshot_changed || snapshot.is_some_and(|token| token != page.archive_snapshot)
+    {
+        return Err(ReadError::Changed);
+    }
+    if page.matches.len() != limit.min(page.total.saturating_sub(offset))
+        || page.archive_snapshot.len() != 64
+        || !page
+            .archive_snapshot
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
         || page
             .matches
             .iter()
             .any(|hit| !hit.session.archived || !scope.contains(&hit.session))
     {
-        return Err(tr(INVALID_PAGE).to_owned());
+        return Err(ReadError::Failed(tr(INVALID_PAGE).to_owned()));
     }
     // This is a metadata-only query. Intentionally do not navigate to a
     // history-message offset even if the response carries one.
@@ -79,6 +112,39 @@ pub(super) async fn read_page(
         hit.body_match = None;
     }
     Ok(page)
+}
+
+pub(super) async fn read(
+    runtime: &Runtime,
+    scope: &Scope,
+    offset: usize,
+    limit: usize,
+    snapshot: Option<&str>,
+) -> Result<Page, (usize, String)> {
+    let result = async {
+        let mut prefix = read_page(runtime, scope, offset, limit.min(MAX_PAGE), snapshot).await?;
+        while prefix.matches.len() < limit && offset + prefix.matches.len() < prefix.total {
+            let remaining = limit - prefix.matches.len();
+            let continuation = read_page(
+                runtime,
+                scope,
+                offset + prefix.matches.len(),
+                remaining.min(MAX_PAGE),
+                Some(&prefix.archive_snapshot),
+            )
+            .await?;
+            if continuation.total != prefix.total {
+                return Err(ReadError::Changed);
+            }
+            prefix.matches.extend(continuation.matches);
+        }
+        Ok(prefix)
+    }
+    .await;
+    result.map_err(|error| match error {
+        ReadError::Changed => (0, tr(CHANGED).to_owned()),
+        ReadError::Failed(error) => (offset, error),
+    })
 }
 
 #[derive(Default)]
@@ -91,6 +157,9 @@ pub(super) struct Completed {
     pub(super) refresh: bool,
     pub(super) task: Option<Task<()>>,
     pub(super) restore_error: Option<String>,
+    pub(super) requested_depth: usize,
+    pub(super) snapshot: Option<String>,
+    loading_tail_height: Pixels,
     error: Option<(usize, String)>,
 }
 
@@ -99,17 +168,49 @@ impl Completed {
         if self.scope != scope {
             self.scope = scope;
             self.rows.clear();
+            self.requested_depth = 0;
+            self.loading_tail_height = px(0.);
             self.invalidate();
         }
     }
 
-    pub(super) fn invalidate(&mut self) {
+    fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.next = None;
+        self.snapshot = None;
         self.error = None;
         self.restore_error = None;
         self.task = None;
         self.refresh = self.scope.is_some();
+    }
+
+    pub(super) fn refresh_loaded(&mut self, session: &Session) {
+        if !session.archived {
+            self.rows.retain(|hit| {
+                hit.session.workspace_id != session.workspace_id || hit.session.id != session.id
+            });
+        }
+        self.invalidate();
+    }
+
+    pub(super) fn reserve_loading_tail(&mut self, row_extent: Pixels, footer_height: Pixels) {
+        if self.loading_tail_height > px(0.) {
+            self.loading_tail_height += row_extent;
+        } else if self.next.is_some() {
+            // A following page can fill the gap. Preserve the scroll extent
+            // until the authoritative prefix arrives, including the old footer.
+            self.loading_tail_height = row_extent + footer_height;
+        }
+    }
+
+    pub(super) fn request_limit(&mut self, offset: usize) -> usize {
+        let limit = if offset == 0 {
+            self.requested_depth.max(PAGE_SIZE)
+        } else {
+            PAGE_SIZE
+        };
+        self.requested_depth = self.requested_depth.max(offset.saturating_add(limit));
+        limit
     }
 
     pub(super) fn requested_offset(&self) -> Option<usize> {
@@ -126,17 +227,18 @@ impl Completed {
         &mut self,
         generation: u64,
         offset: usize,
-        result: Result<Page, String>,
+        result: Result<Page, (usize, String)>,
     ) -> bool {
         if self.generation != generation {
             return false;
         }
         self.task = None;
         self.error = None;
+        self.loading_tail_height = px(0.);
         let page = match result {
             Ok(page) => page,
             Err(error) => {
-                self.error = Some((offset, error));
+                self.error = Some(error);
                 return true;
             }
         };
@@ -145,6 +247,7 @@ impl Completed {
         }
         let next = offset.saturating_add(page.matches.len());
         self.next = (!page.matches.is_empty() && next < page.total).then_some(next);
+        self.snapshot = Some(page.archive_snapshot);
         let mut existing: BTreeSet<_> = self
             .rows
             .iter()
@@ -161,13 +264,14 @@ impl Completed {
         app: &HiveApp,
         scroll: &ScrollHandle,
         cx: &Context<GlobalInbox>,
-    ) -> Vec<AnyElement> {
+    ) -> Vec<(Option<RowId>, AnyElement)> {
         let action = tr(if self.expanded {
             "收起已处理会话"
         } else {
             "展开已处理会话"
         });
-        let mut elements = vec![
+        let mut elements = vec![(
+            None,
             Reveal::new(
                 "global-inbox-completed",
                 scroll,
@@ -185,26 +289,9 @@ impl Completed {
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_completed(cx))),
             )
             .into_any_element(),
-        ];
+        )];
         if !self.expanded {
             return elements;
-        }
-        if let Some(error) = &self.restore_error {
-            elements.push(inbox_status(error.clone(), cx));
-        }
-        if let Some((_, error)) = &self.error {
-            elements.push(inbox_status(
-                format!(
-                    "{} · {}",
-                    tr("无法读取已处理会话"),
-                    localize_owned_error(error)
-                ),
-                cx,
-            ));
-        } else if self.task.is_some() || self.scope.is_none() {
-            elements.push(inbox_status(tr("正在读取已处理会话…"), cx));
-        } else if self.rows.is_empty() {
-            elements.push(inbox_status(tr("暂无已处理会话。"), cx));
         }
         for hit in &self.rows {
             let session = &hit.session;
@@ -227,13 +314,12 @@ impl Completed {
             let busy = !app.connected
                 || app.session_archive_loading.contains(&session.id)
                 || app.session_pin_loading.contains(&session.id);
-            let row_id =
-                SharedString::from(format!("completed:{}:{}", session.workspace_id, session.id));
             let (workspace, id) = (session.workspace_id.clone(), session.id.clone());
             let (open_workspace, open_id) = (workspace.clone(), id.clone());
-            elements.push(
+            elements.push((
+                Some(RowId::for_completed(&workspace, &id)),
                 Reveal::new(
-                    row_id,
+                    SharedString::from(format!("completed:{workspace}:{id}")),
                     scroll,
                     h_flex()
                         .items_center()
@@ -295,12 +381,38 @@ impl Completed {
                         ),
                 )
                 .into_any_element(),
-            );
+            ));
+        }
+        if let Some(error) = &self.restore_error {
+            elements.push((None, inbox_status(error.clone(), cx)));
+        }
+        let status = if let Some((_, error)) = &self.error {
+            Some(format!(
+                "{} · {}",
+                tr("无法读取已处理会话"),
+                localize_owned_error(error)
+            ))
+        } else if self.task.is_some() || self.scope.is_none() || self.refresh {
+            Some(tr("正在读取已处理会话…").to_owned())
+        } else if self.rows.is_empty() {
+            Some(tr("暂无已处理会话。").to_owned())
+        } else {
+            None
+        };
+        if let Some(status) = status {
+            elements.push((
+                None,
+                div()
+                    .min_h(self.loading_tail_height)
+                    .child(inbox_status(status, cx))
+                    .into_any_element(),
+            ));
         }
         if self.task.is_none()
             && let Some(offset) = self.requested_offset()
         {
-            elements.push(
+            elements.push((
+                None,
                 Reveal::new(
                     "inbox-completed-more-reveal",
                     scroll,
@@ -318,7 +430,7 @@ impl Completed {
                         ),
                 )
                 .into_any_element(),
-            );
+            ));
         }
         elements
     }
@@ -326,8 +438,9 @@ impl Completed {
 
 #[cfg(test)]
 mod tests {
-    use super::{Completed, Scope};
-    use crate::{protocol::SessionHit, sessions::search::Page};
+    use super::{Completed, Page, Scope};
+    use crate::protocol::SessionHit;
+    use gpui_kit::px;
     use serde_json::json;
     use std::collections::BTreeSet;
 
@@ -338,6 +451,15 @@ mod tests {
             "title":"Same title","workspaceName":"Same project",
         }))
         .unwrap()
+    }
+
+    fn page(matches: Vec<SessionHit>, total: usize) -> Result<Page, (usize, String)> {
+        Ok(Page {
+            matches,
+            total,
+            archive_snapshot: "a".repeat(64),
+            archive_snapshot_changed: false,
+        })
     }
 
     #[test]
@@ -364,13 +486,6 @@ mod tests {
         let mut wrong_backend = beacon.session.clone();
         wrong_backend.backend = crate::protocol::Backend::PiRpc;
         assert!(!beacon_scope.contains(&wrong_backend));
-        let page = |matches, total| {
-            Ok(Page {
-                matches,
-                total,
-                ..Page::default()
-            })
-        };
         assert!(!completed.apply(old, 0, page(vec![atlas], 1)));
         assert!(completed.apply(generation, 0, page(vec![beacon.clone()], 3)));
         assert_eq!(completed.next, Some(1));
@@ -383,5 +498,62 @@ mod tests {
         completed.invalidate();
         assert!(!completed.apply(generation, 0, page(Vec::new(), 0)));
         assert_eq!(completed.rows.len(), 2);
+    }
+
+    #[test]
+    fn restore_keeps_the_loaded_prefix_until_an_authoritative_replacement() {
+        let scope = Scope {
+            connection: 4,
+            workspace: Some("beacon".into()),
+            member: None,
+            backend: None,
+            workspaces: BTreeSet::from(["beacon".into()]),
+        };
+        let rows: Vec<_> = (0..45)
+            .map(|i| hit("beacon", &format!("session-{i}"), "reviewer"))
+            .collect();
+        let mut completed = Completed::default();
+        completed.change_scope(Some(scope.clone()));
+        let initial = completed.generation;
+        assert_eq!(completed.request_limit(0), 20);
+        completed.apply(initial, 0, page(rows[..20].to_vec(), 45));
+        assert_eq!(completed.requested_offset(), Some(20));
+        assert_eq!(completed.request_limit(20), 20);
+        completed.apply(initial, 20, page(rows[20..40].to_vec(), 45));
+
+        let mut restored = rows[26].session.clone();
+        restored.archived = false;
+        completed.reserve_loading_tail(px(40.5), px(26.));
+        completed.refresh_loaded(&restored);
+        let refresh = completed.generation;
+        assert_eq!(completed.loading_tail_height, px(66.5));
+        assert!(completed.has("beacon", "session-26").is_none());
+        assert!(completed.has("beacon", "session-27").is_some());
+        assert_eq!(completed.rows.len(), 39);
+        assert_eq!(completed.request_limit(0), 40);
+        assert!(!completed.apply(initial, 40, page(rows[40..].to_vec(), 45)));
+        assert_eq!(completed.loading_tail_height, px(66.5));
+        assert!(completed.apply(refresh, 0, Err((0, "stale".into()))));
+        assert_eq!(completed.loading_tail_height, px(0.));
+        assert_eq!(completed.rows.len(), 39);
+        assert_eq!(completed.requested_offset(), Some(0));
+
+        let authoritative: Vec<_> = rows
+            .into_iter()
+            .filter(|row| row.session.id != restored.id)
+            .collect();
+        completed.apply(refresh, 0, page(authoritative[..40].to_vec(), 44));
+        assert_eq!(completed.requested_offset(), Some(40));
+        assert_eq!(completed.rows.last().unwrap().session.id, "session-40");
+        completed.apply(refresh, 40, page(authoritative[40..].to_vec(), 44));
+        assert_eq!(completed.rows.len(), 44);
+
+        completed.change_scope(Some(Scope {
+            backend: Some(crate::protocol::Backend::Codex),
+            ..scope
+        }));
+        assert!(completed.rows.is_empty());
+        assert_eq!(completed.request_limit(0), 20);
+        assert!(!completed.apply(refresh, 0, page(authoritative, 44)));
     }
 }

@@ -24,6 +24,10 @@ impl RowId {
                 .unwrap_or_else(|| entry.target.key()),
         }
     }
+
+    pub(super) fn for_completed(workspace: &str, session: &str) -> Self {
+        Self::from_key(workspace, format!("completed:{session}"))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

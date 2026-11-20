@@ -83,6 +83,10 @@ try {
   }
   assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, token, 0, a.id, undefined, true)).matches.map(({path, line}) => ({path, line})), [{path: contentName, line: 2}]);
   assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, token, 0, b.id, undefined, true)).matches.map(({path, line}) => ({path, line})), [{path: contentName, line: 1}, {path: contentName, line: 3}]);
+  await writeFile(join(aDir, contentName), `${token}_suffix\n${token} alpha\n`);
+  assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, token, 0, a.id, undefined, true, true)).matches.map(({line}) => line), [2]);
+  assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, token, 0, b.id, undefined, true, true)).matches.map(({line}) => line), [1, 3]);
+  await assert.rejects(runtime.chats.projectFilesSearchContent(ws.id, token, 0, a.id, undefined, false, 'true'), /Invalid project file search/);
   await assert.rejects(runtime.chats.projectFilesSearchContent(ws.id, token, 0, a.id, undefined, 'true'), /Invalid project file search/);
   await assert.rejects(runtime.chats.projectFilesSearchContent(otherWs.id, token, 0, a.id));
   await assert.rejects(runtime.chats.projectFilesPreview(otherWs.id, name, a.id));

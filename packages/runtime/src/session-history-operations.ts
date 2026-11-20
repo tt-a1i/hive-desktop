@@ -17,6 +17,7 @@ export interface HistoryPort {
  source(workspaceId:string,sessionId:string,rewindId?:string):Promise<{record:ChatRecord;executionPath:string;projectRoot:string;command:string}>;
  nativeLaunch?(record:ChatRecord):Promise<{command:string;args?:string[];env?:NodeJS.ProcessEnv}>;
  lease(workspaceId:string):()=>void;
+ canRestoreWorktree(record:ChatRecord):boolean;
  quiescent(workspaceId:string,idleSourceId?:string):Promise<string>;
  setup(workspaceId:string):Promise<WorktreeCreation['setup']>;
  draft(workspaceId:string,sessionId:string,itemId:string,turnId:string,turns:CodexTurn[]):Promise<HistoryDraft>;
@@ -70,7 +71,11 @@ export class SessionHistoryOperations {
   return openCodexHistoryControl({cwd:source.executionPath,...launch});
  }
  private checkpoints(source:Awaited<ReturnType<HistoryPort['source']>>){return new CodeCheckpoints({dataDir:this.dataDir,workspaceId:source.record.workspaceId,sessionId:source.record.id,executionPath:source.executionPath});}
- async capabilities(workspaceId:string,sessionId:string){try{const source=await this.port.source(workspaceId,sessionId);return {fork:source.record.backend==='codex',edit:source.record.backend==='codex',checkpoint:true,rewind:source.record.backend==='codex'&&!!source.record.codexThreadId,rewindCode:source.record.backend==='codex'&&source.record.execution?.kind==='worktree',...(source.record.backend!=='codex'&&{reason:'This backend does not expose a supported native history fork'})};}catch(error){return {fork:false,edit:false,checkpoint:false,rewind:false,reason:error instanceof Error?error.message:String(error)};}}
+ async capabilities(workspaceId:string,sessionId:string){try{const source=await this.port.source(workspaceId,sessionId);return {fork:source.record.backend==='codex',edit:source.record.backend==='codex',checkpoint:true,rewind:source.record.backend==='codex'&&!!source.record.codexThreadId,rewindCode:source.record.backend==='codex'&&this.port.canRestoreWorktree(source.record),...(source.record.backend!=='codex'&&{reason:'This backend does not expose a supported native history fork'})};}catch(error){return {fork:false,edit:false,checkpoint:false,rewind:false,reason:error instanceof Error?error.message:String(error)};}}
+ private assertCodeRewindAvailable(input: ForkInput, record: ChatRecord): void {
+  if (input.rewind && input.code.kind === 'checkpoint' && !this.port.canRestoreWorktree(record))
+   fail('SHARED_CHECKOUT', '恢复检查点文件需要未共享的工作树。');
+ }
  private async checkpointPreviewAction(workspaceId:string,sessionId:string){const release=this.port.lease(workspaceId);try{await this.port.quiescent(workspaceId,sessionId);return await this.checkpoints(await this.port.source(workspaceId,sessionId)).preview();}finally{release();}}
  private async checkpointCaptureAction(workspaceId:string,sessionId:string,expectedVersion:string,requestId:string){const release=this.port.lease(workspaceId);try{await this.port.quiescent(workspaceId,sessionId);return await this.checkpoints(await this.port.source(workspaceId,sessionId)).capture({expectedVersion,requestId});}finally{release();}}
  async checkpointList(workspaceId:string,sessionId:string){return {checkpoints:await this.checkpoints(await this.port.source(workspaceId,sessionId)).list()};}
@@ -79,7 +84,7 @@ export class SessionHistoryOperations {
   const release=this.port.lease(input.workspaceId);let control:Awaited<ReturnType<typeof openCodexHistoryControl>>|undefined;
   try{
    const source=await this.port.source(input.workspaceId,input.sessionId);if(source.record.backend!=='codex'||!source.record.codexThreadId)fail('UNSUPPORTED_BACKEND','A persisted Codex native thread is required');
-   if(input.rewind&&input.code.kind==='checkpoint'&&!source.record.execution)fail('SHARED_CHECKOUT','Restoring files requires a private session worktree');
+   this.assertCodeRewindAvailable(input, source.record);
    const ledgerFingerprint=await this.port.quiescent(input.workspaceId,input.rewind?input.sessionId:undefined);const cp=this.checkpoints(source);const scan=await cp.preview();if(!scan.canCapture)fail('CODE_UNSUPPORTED',scan.unsupported.map(x=>x.message).join('; '));
    if(scan.workspace.projectPrefix)fail('CODE_SCOPE_UNSUPPORTED','History forks currently require the repository root as the project directory');
    const chosen=input.code.kind==='checkpoint'?(await cp.reader(input.code.checkpointId)).manifest:undefined;
@@ -179,6 +184,7 @@ export class SessionHistoryOperations {
   let control:Awaited<ReturnType<typeof openCodexHistoryControl>>|undefined;
   try {
    const source=await this.port.source(op.workspaceId,op.sourceSessionId,op.operationId);
+   this.assertCodeRewindAvailable(preview.input, source.record);
    if(historyHash(source)!==historyHash(preview.source)||await this.port.quiescent(op.workspaceId,op.sourceSessionId)!==preview.ledgerFingerprint)fail('STALE_SOURCE','The original source or collaboration state changed');
    await this.port.retire(op.sourceSessionId);
    const checkpoint=await this.checkpoints(source).export(op.checkpointId!);
@@ -222,7 +228,9 @@ export class SessionHistoryOperations {
  private async execute(initial:HistoryOperation,preview:StoredPreview){let op=initial;let release:(()=>void)|undefined;let control:Awaited<ReturnType<typeof openCodexHistoryControl>>|undefined;
   try{
    release=this.port.lease(op.workspaceId);
-   const source=await this.port.source(op.workspaceId,op.sourceSessionId);if(historyHash(source)!==historyHash(preview.source)||await this.port.quiescent(op.workspaceId,preview.input.rewind?op.sourceSessionId:undefined)!==preview.ledgerFingerprint)fail('STALE_SOURCE','Source identity or collaboration state changed since preview');
+   const source=await this.port.source(op.workspaceId,op.sourceSessionId);
+   this.assertCodeRewindAvailable(preview.input, source.record);
+   if(historyHash(source)!==historyHash(preview.source)||await this.port.quiescent(op.workspaceId,preview.input.rewind?op.sourceSessionId:undefined)!==preview.ledgerFingerprint)fail('STALE_SOURCE','Source identity or collaboration state changed since preview');
    const cp=this.checkpoints(source);if((await cp.preview()).version!==preview.codeVersion)fail('STALE_SOURCE','Current code changed since preview');
    control=await this.control(source);if(historyHash((await control.read(source.record.codexThreadId!)).turns)!==preview.sourceFingerprint)fail('STALE_SOURCE','Native history changed since preview');
    let checkpoint:ExportedCodeCheckpoint;if(preview.checkpointId&&!preview.input.rewind)checkpoint=await cp.export(preview.checkpointId);else{const captured=await cp.capture({expectedVersion:preview.codeVersion,requestId:op.operationId});checkpoint=await cp.export(captured.checkpointId);}

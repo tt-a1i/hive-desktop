@@ -1,12 +1,13 @@
 /** Real Git and Hive metadata; no agent/model invocation. */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
 import { DeliveryQueue } from '../src/delivery-queue.js';
+import { ChatIndex } from '../src/chat-index.js';
 
 const dir = await realpath(await mkdtemp(join(tmpdir(), 'hive-chat-worktree-')));
 const data = join(dir, 'state'), repo = join(dir, 'repo'), other = join(dir, 'other');
@@ -36,6 +37,67 @@ try {
  assert.equal(a.kind, 'worktree'); assert.notEqual(a.path, b.path);
  assert.notEqual(one.execution!.branch, two.execution!.branch);
  assert.equal(await runtime.chats.executionDirectory(project.id, one.id), a.path);
+ const registrationBeforeReuse = git('worktree', 'list', '--porcelain');
+ const removalBeforeReuse = await runtime.chats.previewWorktreeRemoval(project.id, one.id, async () => false);
+ const requestId = randomUUID();
+ const releaseRemovalLease = runtime.executionMutations.acquire(project.id);
+ try {
+  await assert.rejects(runtime.chats.createInWorktreeRecord(project.id, one.id, requestId), /temporarily unavailable/);
+  assert.ok(!runtime.chats.list(project.id).some(record => record.id === requestId));
+ } finally { releaseRemovalLease(); }
+ const shared = await runtime.chats.createInWorktreeRecord(project.id, one.id, requestId);
+ assert.equal(shared.id, requestId);
+ assert.deepEqual(shared.profile, one.profile);
+ assert.deepEqual(shared.execution, {...one.execution!, ownerSessionId: one.id});
+ assert.equal(shared.executionPath, a.path);
+ assert.equal(shared.identityState, 'new');
+ assert.equal(shared.agentId, undefined);
+ assert.equal(shared.originAgentId, undefined);
+ assert.deepEqual(await runtime.chats.createInWorktreeRecord(project.id, one.id, requestId), shared);
+ assert.equal(git('worktree', 'list', '--porcelain'), registrationBeforeReuse);
+ await assert.rejects(runtime.chats.createInWorktreeRecord(project.id, two.id, requestId), {code: 'WORKTREE_REUSE_CONFLICT'});
+ await assert.rejects(runtime.chats.createInWorktreeRecord(another.id, one.id, randomUUID()), {code: 'WORKTREE_SOURCE_INVALID'});
+ await assert.rejects(runtime.chats.createInWorktreeRecord(project.id, legacy.id, randomUUID()), {code: 'WORKTREE_SOURCE_INVALID'});
+ const flattened = await runtime.chats.createInWorktreeRecord(project.id, shared.id, randomUUID());
+ assert.deepEqual(flattened.execution, shared.execution);
+ assert.equal(git('worktree', 'list', '--porcelain'), registrationBeforeReuse);
+ assert.deepEqual((await runtime.chats.pendingWorktrees(project.id)).pending, []);
+ assert.equal(await runtime.initialization.get(project.id, shared.id), null);
+ const newDraft = await runtime.chats.open(shared.id);
+ assert.ok('passive' in newDraft && newDraft.passive);
+ assert.equal(newDraft.sessionFile, null);
+ assert.equal(newDraft.codexThreadId, undefined);
+ assert.deepEqual(newDraft.history, []);
+ assert.equal(newDraft.executionPath, a.path);
+ await assert.rejects(runtime.chats.applyWorktreeRemoval(project.id, one.id, removalBeforeReuse.version, async () => false), {code: 'WORKTREE_SHARED'});
+ await assert.rejects(runtime.chats.previewWorktreeRemoval(project.id, shared.id, async () => false), {code: 'WORKTREE_NOT_OWNER'});
+ await assert.rejects(runtime.chats.recoverWorktreeRecord(project.id, shared.id), {code: 'WORKTREE_REUSE_RECOVERY'});
+ assert.equal((await runtime.chats.gitCheckoutBranch(project.id, 'other-branch', true, undefined, one.id)).ok, false);
+ assert.equal((await runtime.chats.gitCheckoutBranch(project.id, 'other-branch', true, undefined, shared.id)).ok, false);
+ const nestedAliasPath = join(a.path, 'alias-scope');
+ await mkdir(nestedAliasPath);
+ for (const [name, path] of [['registered-checkout', a.path], ['registered-subdirectory', nestedAliasPath]]) {
+  const alias = await runtime.hive.request('POST', '/api/workspaces', {path, name, autostart_orchestrator: false}) as {id: string};
+  const blocked = await runtime.chats.gitCheckoutBranch(alias.id, name, true);
+  assert.equal(blocked.ok, false);
+  if (!blocked.ok) assert.equal(blocked.error.code, 'WORKTREE_SHARED');
+  assert.ok((await runtime.removeWorkspace(alias.id)).ok);
+ }
+ assert.equal(git('-C', a.path, 'symbolic-ref', '--short', 'HEAD'), one.execution!.branch);
+ await rm(nestedAliasPath, {recursive: true});
+
+ const bare = join(dir, 'fixture-remote.git');
+ git('init', '--bare', '--template=', bare);
+ git('remote', 'add', 'fixture', bare);
+ await writeFile(join(a.path, 'shared-push.txt'), 'shared commit');
+ git('-C', a.path, 'add', 'shared-push.txt');
+ git('-C', a.path, 'commit', '-m', 'Shared working directory only');
+ const push = await runtime.chats.gitPushPreview(project.id, 'fixture', one.execution!.branch, shared.id);
+ assert.ok(push.ok);
+ const pushed = await runtime.chats.gitPushApply(project.id, 'fixture', one.execution!.branch, push.preview.version, shared.id);
+ assert.ok(pushed.ok);
+ assert.equal(git('--git-dir', bare, 'rev-parse', `refs/heads/${one.execution!.branch}`), git('-C', a.path, 'rev-parse', 'HEAD'));
+ assert.match(await readFile(join(data, 'worktrees', one.id, 'verified-push.json'), 'utf8'), /fixture/);
  // Git's registered path can be an alias of the same physical worktree.
  // Repoint only the fixture's real Git registry entry, then verify ownership
  // against the actual filesystem and reject a different existing worktree.
@@ -61,15 +123,38 @@ try {
  await writeFile(join(a.path, 'same.txt'), 'one'); await writeFile(join(b.path, 'same.txt'), 'two');
  assert.equal(await readFile(join(repo, 'same.txt'), 'utf8'), 'base');
  assert.equal(await readFile(join(a.path, 'same.txt'), 'utf8'), 'one'); assert.equal(await readFile(join(b.path, 'same.txt'), 'utf8'), 'two');
+ const sharedAttachment = await runtime.chats.projectFilesAttach(project.id, 'same.txt', shared.id);
+ assert.equal(sharedAttachment.attachment.projectFile?.sourceSessionId, shared.id);
+ assert.equal(await readFile(sharedAttachment.filePath!, 'utf8'), 'one');
+ assert.equal((await runtime.terminal.list(project.id, shared.id)).sessionId, shared.id);
+ await runtime.chats.setArchived(shared.id, true);
+ await runtime.chats.setArchived(flattened.id, true);
+ await assert.rejects(runtime.chats.previewWorktreeRemoval(project.id, one.id, async () => false), {code: 'WORKTREE_SHARED'});
  await runtime.close(); runtime = undefined;
+ const seededIndex = new ChatIndex(join(data, 'chats'));
+ seededIndex.save({...seededIndex.get(one.id), identityState: 'known', originAgentId: `${project.id}:orchestrator`, codexThreadId: 'owner-native-history'});
  runtime = await createDesktopRuntime(data, () => { events++; }, {executableEnvironment: {HIVE_CODEX_COMMAND: backend}});
  assert.deepEqual(await runtime.chats.sessionExecution(one.id), a); assert.deepEqual(await runtime.chats.sessionExecution(two.id), b);
+ assert.equal((await runtime.chats.sessionExecution(shared.id)).path, a.path);
+ assert.equal((await runtime.chats.createInWorktreeRecord(project.id, one.id, requestId)).id, shared.id);
+ assert.equal(runtime.chats.list(project.id).filter(record => record.id === shared.id).length, 1);
+ await assert.rejects(runtime.chats.previewWorktreeRemoval(project.id, one.id, async () => false), {code: 'WORKTREE_SHARED'});
+ assert.equal((await runtime.chats.history!.capabilities(project.id, one.id)).rewindCode, false);
+ await assert.rejects(runtime.chats.history!.preview({workspaceId: project.id, sessionId: one.id,
+  boundary: {nativeUserItemId: 'owned-boundary'}, code: {kind: 'checkpoint', checkpointId: randomUUID()}, rewind: true}), {code: 'SHARED_CHECKOUT'});
+ await runtime.chats.setArchived(shared.id, false);
  const queue = new DeliveryQueue({directory: join(data, 'chats', 'deliveries'), sessionId: one.id, startPaused: true,
   execute: async () => { throw Error('must not execute'); }, completedIds: () => [], onError: e => { throw e; }});
  await queue.enqueue('preserve queued text', true, {version: 1, origin: 'user', displayText: 'preserve queued text'});
  const spool = join(data, 'chats', 'deliveries', createHash('sha256').update(one.id).digest('hex') + '.json');
  const before = await readFile(spool, 'utf8'); const eventsBefore = events;
  await rename(a.path, a.path + '.moved');
+ const missingShared = await runtime.chats.open(shared.id);
+ assert.ok('readOnly' in missingShared && missingShared.readOnly);
+ assert.equal(missingShared.executionPath, a.path);
+ await assert.rejects(runtime.chats.sessionExecution(shared.id), /工作树|worktree|ENOENT/i);
+ await assert.rejects(runtime.chats.prompt(shared.id, 'must remain unsent'), /工作树|worktree|ENOENT/i);
+ await assert.rejects(runtime.terminal.list(project.id, shared.id), /工作树|worktree|ENOENT/i);
  const missing = await runtime.chats.open(one.id);
  assert.ok('readOnly' in missing && missing.readOnly && 'identityError' in missing);
  assert.equal(missing.identityError?.code, 'IDENTITY_MISMATCH');

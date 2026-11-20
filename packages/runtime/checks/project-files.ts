@@ -111,6 +111,30 @@ try {
   assert.deepEqual(unicode.ranges, []);
   assert.equal((await resultAt('CONTROL_MARKER', 6)).snippet, undefined);
   assert.equal((await resultAt('match-range', 7)).snippet?.ranges.length, 8);
+  const wholeRoot = join(dir, 'whole words');
+  await mkdir(wholeRoot);
+  const wordPath = 'Words.txt';
+  const wordLines = [
+    'scatter cat cat', 'cat_fox', 'cat2', '猫cat', '🙂cat', '𐐀cat', 'cat𝟙', 'cat\u20dd', 'CAT',
+    'C++17', '-C++-', 'x+++ ', '小猫', ' 猫。', '👩‍💻', '👩!', 'Cafe\u0301', 'Caféine',
+  ];
+  await writeFile(join(wholeRoot, wordPath), [...wordLines, ...Array(102).fill('cat')].join('\r\n'));
+  const whole = await searchProjectContents(wholeRoot, 'cat', 0, undefined, false, true);
+  const validLines = [1, 5, 9, ...Array.from({length: 102}, (_, i) => wordLines.length + 1 + i)];
+  assert.equal(whole.total, validLines.length);
+  assert.deepEqual(whole.matches.map(hit => hit.line), validLines.slice(0, 100));
+  assert.deepEqual(whole.matches[0]?.snippet?.ranges, [[8, 11], [12, 15]]);
+  assert.deepEqual(whole.matches[1]?.snippet?.ranges, [[4, 7]]);
+  assert.deepEqual((await searchProjectContents(wholeRoot, 'cat', 100, undefined, false, true)).matches.map(hit => hit.line), validLines.slice(100));
+  assert.equal((await searchProjectContents(wholeRoot, 'cat', 0, undefined, true, true)).total, whole.total - 1);
+  assert((await searchProjectContents(wholeRoot, 'cat')).total > whole.total);
+  for (const [query, lines] of [
+    ['C++', [11]], ['++', [12]], ['猫', [14]], ['👩', [16]], ['Café', [17]], ['cat cat', [1]],
+  ] as const) {
+    const result = await searchProjectContents(wholeRoot, query, 0, undefined, true, true);
+    assert.deepEqual(result.matches.map(hit => hit.line), lines, query);
+  }
+  assert.deepEqual((await searchProjectFiles(wholeRoot, 'ord')).paths, [wordPath]);
   const namedPath = 'nested/Cafe\u0301-ReadMe.md';
   await writeFile(join(repo, namedPath), 'case-sensitive path fixture');
   const [returnedPath] = (await searchProjectFiles(repo, 'café-readme')).paths;

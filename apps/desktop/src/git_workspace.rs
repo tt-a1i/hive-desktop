@@ -1967,6 +1967,12 @@ impl GitWorkspace {
             .when(self.branch_panel_open, |view| {
                 let ws_create = ws_id.clone();
                 let new_branch_input = self.new_branch_input.clone();
+                let worktree_source = self.app.upgrade().and_then(|app| {
+                    let app = app.read(cx);
+                    let source = app.shared_worktree_draft_source()?;
+                    (self.session.as_deref() == Some(source.id.as_str()))
+                        .then(|| (source.id.clone(), app.can_create_shared_worktree_draft()))
+                });
                 let local_branches = self
                     .branches
                     .as_ref()
@@ -1982,6 +1988,22 @@ impl GitWorkspace {
                         .border_1()
                         .border_color(Color::Divider.get(cx))
                         .shadow(crate::palette::card_shadow(cx))
+                        .when_some(worktree_source, |panel, (source, enabled)| {
+                            panel.child(
+                                Button::new("git-new-conversation-in-worktree")
+                                    .outline()
+                                    .compact()
+                                    .small()
+                                    .icon(Glyph::Plus)
+                                    .label(tr("在此工作树新建会话"))
+                                    .disabled(!enabled)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        let _ = this.app.update(cx, |app, cx| {
+                                            app.create_shared_worktree_draft(&source, cx);
+                                        });
+                                    })),
+                            )
+                        })
                         .child(
                             h_flex()
                                 .w_full()

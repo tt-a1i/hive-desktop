@@ -223,7 +223,9 @@ try {
   const query = {query: '', archived: true, navigationOnly: true, limit: 2, offset: 0};
   const completed = (await rpc('chat.search', query)).result;
   assert.equal(completed.matches.length, 2);
-  const nextCompleted = (await rpc('chat.search', {...query, offset: 2})).result;
+  assert.match(completed.archiveSnapshot, /^[a-f0-9]{64}$/);
+  const nextCompleted = (await rpc('chat.search', {...query, offset: 2, archiveSnapshot: completed.archiveSnapshot})).result;
+  assert.equal(nextCompleted.archiveSnapshot, completed.archiveSnapshot);
   assert.ok(nextCompleted.matches.every((hit: any) =>
     !completed.matches.some((old: any) => old.session.id === hit.session.id)));
   assert.ok(!completed.matches.some((hit: any) => hit.session.id === ids[1]));
@@ -245,6 +247,32 @@ try {
   assert.equal(restore.result.session.id, selected.id);
   assert.equal(restore.result.session.workspaceId, other.result.id);
   assert.equal(restore.result.session.archived, false);
+  const oldArchiveOrder = (await rpc('chat.search', {...query, offset: 2, archiveSnapshot: completed.archiveSnapshot})).result;
+  assert.equal(oldArchiveOrder.archiveSnapshotChanged, true);
+  assert.deepEqual(oldArchiveOrder.matches, []);
+  const refreshedPrefix = (await rpc('chat.search', {...query, limit: 3})).result;
+  assert.equal(refreshedPrefix.matches.length, 3);
+  assert.ok(refreshedPrefix.matches.every((hit: any) => hit.session.id !== selected.id));
+  assert.equal(refreshedPrefix.total, 3);
+  assert.notEqual(refreshedPrefix.archiveSnapshot, completed.archiveSnapshot);
+  assert.ok((await rpc('chat.search', {...query, archiveSnapshot: 'invalid'})).error);
+  // A prefix deeper than the wire limit can be reconstructed in chunks only
+  // while the same scoped archive order is authoritative.
+  for (const sessionId of selectedIds)
+    assert.equal((await rpc('chat.archive', {sessionId, archived: true})).error, undefined);
+  const deepQuery = {...query, workspaceId, limit: 100};
+  const firstChunk = (await rpc('chat.search', deepQuery)).result;
+  assert.equal(firstChunk.matches.length, 100);
+  const remaining = {...deepQuery, offset: 100, archiveSnapshot: firstChunk.archiveSnapshot};
+  const lastChunk = (await rpc('chat.search', remaining)).result;
+  const deepRows = [...firstChunk.matches, ...lastChunk.matches];
+  assert.equal(firstChunk.total, selectedIds.size + 3);
+  assert.equal(new Set(deepRows.map((hit: any) => hit.session.id)).size, firstChunk.total);
+  assert.equal((await rpc('chat.archive', {sessionId: firstChunk.matches[26].session.id, archived: false,
+    restoreWorkspaceId: workspaceId})).error, undefined);
+  const movedBoundary = (await rpc('chat.search', remaining)).result;
+  assert.equal(movedBoundary.archiveSnapshotChanged, true);
+  assert.deepEqual(movedBoundary.matches, []);
   assert.ok(notifications.every((event) => event.type === 'session_navigation'));
   assert.equal((await rpc('shutdown')).result.ok, true);
   await exited;

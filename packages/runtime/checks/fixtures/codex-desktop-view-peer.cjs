@@ -35,9 +35,9 @@ createInterface({ input: process.stdin }).on('line', async line => {
   const request = JSON.parse(line);
   if (request.id === undefined) return;
   const { id, method, params } = request;
-  log({ method, threadId: params?.threadId ?? thread?.id,
+  log({ method, threadId: params?.threadId ?? thread?.id, cwd: params?.cwd,
     ...(method === 'thread/resume' && { deferGoalContinuation: params.deferGoalContinuation }),
-    ...(method === 'turn/start' && { input: params.input }) });
+    ...(method === 'turn/start' && { input: params.input, additionalContext: params.additionalContext }) });
   const reply = result => send({ id, result });
   try {
     switch (method) {

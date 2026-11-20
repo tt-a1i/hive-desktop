@@ -1,4 +1,7 @@
 mod removal;
+mod shared;
+
+pub(crate) use shared::WorktreeDraftCreation;
 
 use crate::{
     app::HiveApp,

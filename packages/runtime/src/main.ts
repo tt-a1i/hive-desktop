@@ -540,7 +540,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'git.pr.update': return chats.gitPrApply(text(params, 'workspaceId'), 'update', params);
     case 'project.files.list': return chats.projectFilesList(text(params, 'workspaceId'), params.directory, params.offset, params.sessionId);
     case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive));
-    case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive));
+    case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.wholeWord));
     case 'project.files.preview': return chats.projectFilesPreview(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.resolveOpen': return chats.projectFilesResolveOpen(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath, params.sessionId, params.expectedSha256);
@@ -551,8 +551,12 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       const limit = params.limit;
       const memberId = params.memberId === undefined ? undefined : text(params, 'memberId');
       const backend = params.backend;
+      const archiveSnapshot = params.archiveSnapshot;
       if (backend !== undefined && !isAgentDriver(backend)) throw new TypeError('Unsupported chat backend');
-      if ((limit !== undefined || memberId !== undefined || backend !== undefined)
+      if (archiveSnapshot !== undefined
+        && (typeof archiveSnapshot !== 'string' || !/^[\da-f]{64}$/.test(archiveSnapshot)))
+        throw new TypeError('Invalid archive snapshot');
+      if ((limit !== undefined || memberId !== undefined || backend !== undefined || archiveSnapshot !== undefined)
         && (params.archived !== true || params.navigationOnly !== true || params.query !== ''))
         throw new TypeError('Scoped archive paging requires an empty archived navigation query');
       if (limit !== undefined && (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > 100))
@@ -561,7 +565,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       return runSearch(requestId, async signal => {
         const page = await chats.search(params.query, params.archived, params.offset, params.workspaceId, signal,
           {...(limit !== undefined && {limit}), ...(memberId !== undefined && {memberId}),
-            ...(backend !== undefined && {backend})});
+            ...(backend !== undefined && {backend}), ...(archiveSnapshot !== undefined && {archiveSnapshot})});
         if (!params.navigationOnly) return page;
         return {...page, matches: page.matches.map(hit => ({...hit, session: navigationSearchSession(hit.session)}))};
       });
@@ -600,6 +604,14 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       exact(params, ['workspaceId', 'sessionId', 'backend', 'memberId', 'profile']);
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude' && params.backend !== 'acp') throw new Error('Unsupported chat backend');
       return chats.recoverWorktreeRecord(text(params, 'workspaceId'), text(params, 'sessionId'), params.backend, params.memberId === undefined ? undefined : text(params, 'memberId'), optionalProfile(params).profile);
+    }
+    case 'chat.createInWorktreeRecord': {
+      exact(params, ['workspaceId', 'sourceSessionId', 'requestId']);
+      const requestId = text(params, 'requestId').toLowerCase();
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(requestId)) {
+        throw new TypeError('A UUIDv4 request identity is required');
+      }
+      return chats.createInWorktreeRecord(text(params, 'workspaceId'), text(params, 'sourceSessionId'), requestId);
     }
     case 'chat.createScratchRecord': {
       exact(params, ['backend', 'profile', 'requestId']);

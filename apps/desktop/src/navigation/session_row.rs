@@ -187,7 +187,7 @@ impl HiveApp {
             }))
         })
         .when(
-            worktree_session.execution.as_ref().is_some_and(|execution| execution.kind == "worktree"),
+            worktree_session.execution.as_ref().is_some_and(|execution| execution.kind == "worktree" && execution.owner_session_id.is_none()),
             |menu| menu.item(
                 PopupMenuItem::new(tr("清理独立工作树…"))
                     .on_click(move |_, window, cx| {
