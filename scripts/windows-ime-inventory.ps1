@@ -98,16 +98,19 @@ try {
  [Windows.Forms.Application]::DoEvents()
  $receipt.desktop = @{ userInteractive=[Environment]::UserInteractive; previousForegroundPresent=($oldForeground -ne [IntPtr]::Zero); fixtureForeground=([ImeInventory]::GetForegroundWindow() -eq $form.Handle) }
  $receipt.tsf = [ImeInventory]::Snapshot()
+ # Exercise signed HRESULT formatting on Windows PowerShell 5.1.
+ $formatCheck = '0x{0:X8}' -f ([int]-2147024809)
+ if ($formatCheck -cne '0x80070057') { throw "Unexpected HRESULT format: $formatCheck" }
  # Activate only on this fixture thread. Never enable a profile or change the
  # language list. A successful HRESULT alone is not evidence of composition.
  $oldLayout = [ImeInventory]::GetKeyboardLayout(0)
- $control = [ordered]@{ attempts=@(); compositionBytes=$null; restored=$false; activeProfilesRestored=$false; error=$null }
+ $control = [ordered]@{ attempts=@(); hresultFormatCheck=$formatCheck; compositionBytes=$null; restored=$false; activeProfilesRestored=$false; error=$null }
  try {
   $textbox = New-Object Windows.Forms.TextBox
   $form.Controls.Add($textbox); $textbox.Focus() | Out-Null; [Windows.Forms.Application]::DoEvents()
   foreach ($profile in @($receipt.tsf.chineseTsfProfiles | Where-Object { $_.language -eq '0804' -and $_.keyboardInputProcessor })) {
    $hr = [ImeInventory]::ActivateChinese($profile.clsid, $profile.profile)
-   $control.attempts += @{ clsid=$profile.clsid; profile=$profile.profile; hresult=('0x{0:X8}' -f ([uint32]([int64]$hr -band 0xffffffff))) }
+   $control.attempts += @{ clsid=$profile.clsid; profile=$profile.profile; hresult=('0x{0:X8}' -f $hr) }
    if ($hr -eq 0) {
     if (-not $textbox.Focused -or [ImeInventory]::GetForegroundWindow() -ne $form.Handle) { throw 'Fixture textbox lost foreground focus before input.' }
     [Windows.Forms.SendKeys]::SendWait('ni')
@@ -126,6 +129,7 @@ try {
   $control.activeProfilesRestored = $beforeActive -ceq $afterActive
   $receipt.control = $control
  }
+ if ($control.error) { throw "IME control failed: $($control.error)" }
  if (-not $control.restored -or -not $control.activeProfilesRestored) { throw 'Fixture input state failed to restore.' }
  $receipt.status = 'passed'
 } catch { $receipt.error = $_.Exception.ToString() }

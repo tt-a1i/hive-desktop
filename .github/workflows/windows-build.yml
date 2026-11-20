@@ -28,6 +28,7 @@ on:
           - queued-stop-unknown
           - checkpoint-comparison
           - rewind-lock
+          - question-attachment
       replay_update:
         description: Replay only native update and rollback from the retained portable artifact
         required: false
@@ -411,7 +412,7 @@ jobs:
           SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
           REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
-          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'git-preview', 'worktree-dirty', 'worktree-remove', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection', 'queued-stop-declined', 'queued-stop-unknown', 'checkpoint-comparison', 'rewind-lock')) { throw 'Unknown replay scenario.' }
+          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'git-preview', 'worktree-dirty', 'worktree-remove', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection', 'queued-stop-declined', 'queued-stop-unknown', 'checkpoint-comparison', 'rewind-lock', 'question-attachment')) { throw 'Unknown replay scenario.' }
           if ($env:REPLAY_SCENARIO -notin @('', 'standard') -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true')) { throw 'A named replay scenario cannot be combined with other replay selections.' }
           if ($env:SHORTCUT_REPLAY -eq 'true' -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true')) { throw 'Shortcut layout replay cannot be combined with image, functional, or default WebView replay.' }
       - name: Validate original run ID
@@ -597,6 +598,13 @@ jobs:
         run: |
           node scripts/check-windows-rewind-lock.mjs --bundle target/replay-extracted --receipt target/windows-rewind-lock.json 2>&1 | Tee-Object -FilePath target/windows-rewind-lock.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Select a question attachment and recover its receipt after restart
+        if: ${{ inputs.replay_scenario == 'question-attachment' }}
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          node scripts/check-windows-question.mjs --bundle target/replay-extracted --receipt target/windows-question.json 2>&1 | Tee-Object -FilePath target/windows-question.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload replay evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -612,6 +620,8 @@ jobs:
             target/replay-functional-receipt.json
             target/windows-rewind-lock*.json
             target/windows-rewind-lock*.log
+            target/windows-question*.json
+            target/windows-question*.log
             target/windows-image-memory.json
             target/windows-image-memory.log
             target/windows-image-desktop.log
