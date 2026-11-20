@@ -1,6 +1,6 @@
 import { WORKSPACE_UPLOAD_MAX_BYTES } from '@tt-a1i/hive/dist/src/server/upload-limits.js';
 import { open, stat } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
+import { createReadStream, type BigIntStats } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, isAbsolute, extname } from 'node:path';
 import {
@@ -23,6 +23,11 @@ export interface StagedAttachment {
   attachment: ChatAttachment;
   image?: PromptImage;
   filePath?: string;
+}
+export interface QuestionAttachmentReference {
+  attachment: ChatAttachment;
+  filePath: string;
+  verifiedCopy?: BigIntStats;
 }
 const MARKER = '\n\n<!-- hive-desktop-images:v1 ';
 const END = ' -->';
@@ -60,24 +65,46 @@ export function decodeImageInput(source: string): { text: string; ids: string[] 
   if (encodeImageInput(text, ids) !== source) throw new TypeError('附件元数据不是规范格式。');
   return { text, ids };
 }
+function projectCopyChangedMessage(name: string): string {
+  return `项目文件附件 ${JSON.stringify(name)} 的副本不可用或已更改，请移除附件后重新选择文件。`;
+}
 export class ProjectCopyChangedError extends Error {
   constructor(name: string) {
-    super(`项目文件附件 ${JSON.stringify(name)} 的副本不可用或已更改，请移除附件后重新选择文件。`);
+    super(projectCopyChangedMessage(name));
   }
 }
-/** Verify project snapshots without loading the complete copy into memory. */
-export async function verifyProjectCopy(filePath: string, size: number, reference: ProjectFileReference, name: string): Promise<void> {
-  const info = await stat(filePath);
-  if (!info.isFile() || info.size !== size) throw new ProjectCopyChangedError(name);
-  const hash = createHash('sha256');
-  let read = 0;
-  for await (const chunk of createReadStream(filePath)) {
-    const bytes = chunk as Buffer;
-    read += bytes.length;
-    if (read > size) throw new ProjectCopyChangedError(name);
-    hash.update(bytes);
+export class QuestionAttachmentCopyError extends Error {
+  static readonly publicMessage = 'Question attachment copy is unavailable or changed. Remove it and select the file again.';
+  constructor(readonly attachmentId: string, projectFileName?: string) {
+    super(projectFileName === undefined ? QuestionAttachmentCopyError.publicMessage : projectCopyChangedMessage(projectFileName));
   }
-  if (read !== size || hash.digest('hex') !== reference.sha256) throw new ProjectCopyChangedError(name);
+}
+export function sameCopy(before: BigIntStats, after: BigIntStats): boolean {
+  return before.dev === after.dev && before.ino === after.ino && before.size === after.size
+    && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
+}
+async function verifyCopy(filePath: string, size: number, sha256: string, changed: () => Error): Promise<BigIntStats> {
+  const file = await open(filePath, 'r');
+  try {
+    const before = await file.stat({bigint: true});
+    if (!before.isFile() || before.size !== BigInt(size)) throw changed();
+    const hash = createHash('sha256');
+    let read = 0;
+    for await (const chunk of createReadStream(filePath, {fd: file, autoClose: false})) {
+      const bytes = chunk as Buffer;
+      read += bytes.length;
+      if (read > size) throw changed();
+      hash.update(bytes);
+    }
+    const after = await file.stat({bigint: true});
+    if (read !== size || hash.digest('hex') !== sha256 || !sameCopy(before, after)) throw changed();
+    return after;
+  } finally { await file.close(); }
+}
+/** Verify project snapshots without loading the complete copy into memory. */
+async function verifyProjectCopy(filePath: string, size: number, reference: ProjectFileReference, name: string): Promise<void> {
+  const verified = await verifyCopy(filePath, size, reference.sha256, () => new ProjectCopyChangedError(name));
+  if (!sameCopy(verified, await stat(filePath, {bigint: true}))) throw new ProjectCopyChangedError(name);
 }
 export class ChatAttachments {
   constructor(private readonly hive: HiveHost, private readonly references?: ProjectFileReferences) {}
@@ -87,6 +114,7 @@ export class ChatAttachments {
       workspaceId,
       `粘贴图片.${image.mimeType === 'image/jpeg' ? 'jpg' : image.mimeType.slice(6)}`,
       image,
+      Buffer.from(image.data, 'base64'),
     );
   }
   async add(workspaceId: string, path: unknown): Promise<StagedAttachment> {
@@ -110,13 +138,13 @@ export class ChatAttachments {
     const mimeType = imageMimeType(bytes);
     if (mimeType) {
       const image = promptImages([{type:'image',mimeType,data:bytes.toString('base64')}])[0]!;
-      return this.store(workspaceId, basename(path), image);
+      return this.store(workspaceId, basename(path), image, bytes);
     }
     if (['.png','.jpg','.jpeg','.gif','.webp'].includes(extname(path).toLowerCase())) throw new TypeError('图片文件内容与格式不匹配，请检查文件后重试。');
-    const record = await this.upload(workspaceId,basename(path),'application/octet-stream',bytes.toString('base64'));
+    const record = await this.hive.saveDesktopUpload(workspaceId, basename(path), 'application/octet-stream', bytes);
     const saved = await this.hive.locateUpload(workspaceId,record.id);
     if (!saved || typeof saved.localPath !== 'string' || !isAbsolute(saved.localPath)) throw new Error('文件保存后无法定位，请重新选择。');
-    return {attachment:this.ref(workspaceId,record.id,record.original_name,'application/octet-stream',record.size_bytes),filePath:saved.localPath};
+    return {attachment:this.ref(workspaceId,record.id,record.originalName,record.mimeType,record.sizeBytes),filePath:saved.localPath};
   }
   async addProjectFile(workspaceId: string, projectFile: ProjectFileReference, bytes: Buffer): Promise<StagedAttachment> {
     if (!this.references) throw new Error('Project file registry unavailable');
@@ -135,22 +163,39 @@ export class ChatAttachments {
   private async upload(workspaceId:string,name:string,mimeType:string,data:string) {
     return await this.hive.request('POST',`/api/workspaces/${encodeURIComponent(workspaceId)}/uploads`,{filename:name,mime_type:mimeType,data}) as {id:string;original_name:string;size_bytes:number};
   }
-  private async store(workspaceId: string, name: string, image: PromptImage): Promise<StagedAttachment> {
-    const record=await this.upload(workspaceId,name,image.mimeType,image.data);
-    return {attachment:this.ref(workspaceId,record.id,record.original_name,image.mimeType,record.size_bytes),image};
+  private async store(workspaceId: string, name: string, image: PromptImage, bytes: Buffer): Promise<StagedAttachment> {
+    const record = await this.hive.saveDesktopUpload(workspaceId, name, image.mimeType, bytes);
+    return {attachment:this.ref(workspaceId,record.id,record.originalName,record.mimeType,record.sizeBytes),image};
   }
   /** Internal path references for native question answers, including images.
    * Normal image payloads remain inline image data and do not expose this path. */
-  async questionReferences(workspaceId: string, input: unknown): Promise<{attachment: ChatAttachment; filePath: string}[]> {
-    const result: {attachment: ChatAttachment; filePath: string}[] = [];
+  async questionReferences(workspaceId: string, input: unknown): Promise<QuestionAttachmentReference[]> {
+    const result: QuestionAttachmentReference[] = [];
     for (const id of attachmentIds(input)) {
       const upload = await this.hive.locateUpload(workspaceId, id);
-      if (!upload || typeof upload.localPath !== 'string' || !isAbsolute(upload.localPath)) throw new Error('Attachment is unavailable in this workspace');
-      const info = await stat(upload.localPath);
-      if (!info.isFile() || info.size !== upload.record.sizeBytes) throw new Error('Attachment copy is unavailable or changed');
+      if (!upload || typeof upload.localPath !== 'string' || !isAbsolute(upload.localPath)) throw new QuestionAttachmentCopyError(id);
+      const {localPath: filePath, sourceDigestVersion, sourceSha256} = upload;
+      const {originalName, mimeType, sizeBytes} = upload.record;
       const projectFile = await this.projectReference(workspaceId, id);
-      if (projectFile) await verifyProjectCopy(upload.localPath, upload.record.sizeBytes, projectFile, upload.record.originalName);
-      result.push({attachment: {...this.ref(workspaceId, id, upload.record.originalName, upload.record.mimeType, upload.record.sizeBytes), ...(projectFile ? {projectFile} : {})}, filePath: upload.localPath});
+      const attachment = {...this.ref(workspaceId, id, originalName, mimeType, sizeBytes), ...(projectFile ? {projectFile} : {})};
+      const changed = () => new QuestionAttachmentCopyError(id, projectFile ? originalName : undefined);
+      // Only a Hive row explicitly marked as legacy can lack source evidence.
+      if (!(sourceDigestVersion === 0 && sourceSha256 === null)
+        && !(sourceDigestVersion === 1 && typeof sourceSha256 === 'string' && /^[a-f0-9]{64}$/.test(sourceSha256))) throw changed();
+      const sha256 = projectFile?.sha256 ?? sourceSha256;
+      try {
+        if (sha256) {
+          const verifiedCopy = await verifyCopy(filePath, sizeBytes, sha256, changed);
+          result.push({attachment, filePath, verifiedCopy});
+        } else {
+          const info = await stat(filePath);
+          if (!info.isFile() || info.size !== sizeBytes) throw changed();
+          result.push({attachment, filePath});
+        }
+      } catch {
+        // Local file I/O can expose the upload path. Return only the selected upload ID.
+        throw changed();
+      }
     }
     return result;
   }

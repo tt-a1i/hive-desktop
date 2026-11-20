@@ -15,11 +15,11 @@ const node = join(resources, 'node', process.platform === 'darwin' ? 'bin/node' 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ts = createRequire(join(root, 'packages/runtime/package.json'))('typescript');
 const directory = await mkdtemp(join(tmpdir(), 'hive-packaged-functional-'));
-const checks = ['bundled-hive-version', 'delivery-queue', 'queued-input-mutations', 'queued-input-failed-rollback', 'queued-input-mutation', 'queued-input-wire',
+const checks = ['bundled-hive-version', 'delivery-queue', 'queued-input-mutations', 'queued-input-failed-rollback', 'queued-input-mutation', 'queued-input-wire', 'codex-legacy-steer',
   'conversation-search', 'conversation-search-codex', 'codex-metadata-recovery', 'codex-metadata-marker', 'session-body-search', 'project-files', 'project-file-references',
   'conversation-search-tools', 'git-index-wire', 'session-origin-index', 'historical-session-identity', 'html-artifacts',
   'codex-desktop-view',
-  'member-worktrees-wire', 'worktree-intent-concurrency', 'project-script-settings', 'codex-limits', 'pty-live-pid', 'interaction-attachments',
+  'member-worktrees-wire', 'worktree-intent-concurrency', 'project-script-settings', 'codex-limits', 'pty-live-pid', 'interaction-attachments', 'interaction-attachments-wire',
   'codex-history-control', 'codex-fork-provenance', 'session-history-wire', 'session-history-rewind', 'checkpoint-restore',
   'agent-profiles', 'structured-launch', 'profile-runtime-binding', 'profile-runtime-wire',
   'profile-settings-atomic', 'profile-claude-offline-history', 'codex-history-profile-launch',
@@ -44,7 +44,7 @@ try {
     await copyFile(join(root, 'packages/runtime/checks/fixtures/claude-reasoning-peer.cjs'), join(directory, 'fixtures/claude-reasoning-peer.cjs'));
   }
   await copyFile(join(root, 'packages/runtime/checks/fixtures/session-history-peer.cjs'), join(directory, 'fixtures/session-history-peer.cjs'));
-  for (const fixture of ['worktree-backend-cwd-peer.cjs', 'claude-modes-peer.cjs', 'acp-peer.cjs', 'acp-team-peer.cjs', 'acp-runtime-peer.cjs', 'pi-vault-op.cs', 'codex-desktop-view-peer.cjs']) {
+  for (const fixture of ['codex-question-attachment-peer.cjs', 'worktree-backend-cwd-peer.cjs', 'claude-modes-peer.cjs', 'acp-peer.cjs', 'acp-team-peer.cjs', 'acp-runtime-peer.cjs', 'pi-vault-op.cs', 'codex-desktop-view-peer.cjs']) {
     await copyFile(join(root, 'packages/runtime/checks/fixtures', fixture), join(directory, 'fixtures', fixture));
   }
   if (process.platform === 'darwin') {
@@ -66,7 +66,7 @@ try {
     console.log(`[packaged-functional] ${name}`);
     // Registration includes a no-MCP deadline. Handoff runtime checks boot
     // several real runtimes/worktrees; Windows source runs measured 122/92/76s.
-    const multipleBoots = ['session-history-rewind', 'session-handoff-runtime', 'handoff-runtime-failures', 'handoff-runtime-delivery'].includes(name);
+    const multipleBoots = ['codex-legacy-steer', 'session-history-rewind', 'session-handoff-runtime', 'handoff-runtime-failures', 'handoff-runtime-delivery'].includes(name);
     // Worktree intent concurrency exercises several independent real Git and
     // process races; Windows took 58.45s in a passing packaged run.
     const timeout = multipleBoots ? 180_000 : ['acp-runtime-registration', 'git-remotes-wire', 'worktree-intent-concurrency'].includes(name) ? 120_000 : 60_000;

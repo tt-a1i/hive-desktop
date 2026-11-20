@@ -3,7 +3,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, re
 import { join } from 'node:path';
 import type { CodexInteraction } from './agents/types.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
-import { attachmentIds, verifyProjectCopy, type ChatAttachment, type ChatAttachments } from './image-attachments.js';
+import { attachmentIds, QuestionAttachmentCopyError, sameCopy, type ChatAttachment, type ChatAttachments, type QuestionAttachmentReference } from './image-attachments.js';
 
 export type QuestionAttachmentMap = Record<string, string[]>;
 export interface InteractionAttachmentReceipt {
@@ -81,24 +81,29 @@ export class InteractionAttachments {
     }
     return readReceipt(JSON.parse(contents), id).status;
   }
-  async prepare(workspaceId: string, sessionId: string, interaction: CodexInteraction, input: unknown): Promise<InteractionAttachmentReceipt> {
+  async prepare(workspaceId: string, sessionId: string, interaction: CodexInteraction, input: unknown) {
     const mapping = questionAttachments(input, interaction);
-    const attachments: InteractionAttachmentReceipt['attachments'] = [];
-    for (const [questionId, ids] of Object.entries(mapping)) for (const ref of await this.uploads.questionReferences(workspaceId, ids)) attachments.push({questionId, ...ref});
-    return {id: this.key(workspaceId, sessionId, interaction), workspaceId, sessionId, interactionId: interaction.id,
-      threadId: interaction.threadId, turnId: interaction.turnId, itemId: interaction.itemId, nativeRequestId: interaction.nativeRequestId,
-      attachmentsByQuestionId: mapping, attachments, status: 'draft', updatedAt: Date.now()};
-  }
-  /** Check every resolved private copy together immediately before preparation.
-   * Paths can still disappear after this check or after native delivery. */
-  async validateCopies(receipt: InteractionAttachmentReceipt): Promise<void> {
-    for (const {attachment, filePath} of receipt.attachments) {
-      if (attachment.projectFile) await verifyProjectCopy(filePath, attachment.size, attachment.projectFile, attachment.name);
+    const copies: (QuestionAttachmentReference & {questionId: string})[] = [];
+    for (const [questionId, ids] of Object.entries(mapping)) {
+      for (const ref of await this.uploads.questionReferences(workspaceId, ids)) copies.push({questionId, ...ref});
     }
-    // Do not yield while checking all paths after asynchronous hashing.
-    for (const {attachment, filePath} of receipt.attachments) {
-      const info = statSync(filePath);
-      if (!info.isFile() || info.size !== attachment.size) throw new Error('Attachment copy is unavailable or changed');
+    const receipt: InteractionAttachmentReceipt = {id: this.key(workspaceId, sessionId, interaction), workspaceId, sessionId, interactionId: interaction.id,
+      threadId: interaction.threadId, turnId: interaction.turnId, itemId: interaction.itemId, nativeRequestId: interaction.nativeRequestId,
+      attachmentsByQuestionId: mapping, attachments: copies.map(({questionId, attachment, filePath}) => ({questionId, attachment, filePath})),
+      status: 'draft', updatedAt: Date.now()};
+    return {receipt, copies};
+  }
+  /** Recheck every path together after hashing. Paths can still change after native delivery. */
+  validateCopies(copies: readonly QuestionAttachmentReference[]): void {
+    for (const {attachment, filePath, verifiedCopy} of copies) {
+      let info;
+      try {
+        info = statSync(filePath, {bigint: true});
+      } catch {
+        throw new QuestionAttachmentCopyError(attachment.id);
+      }
+      if (!info.isFile() || info.size !== BigInt(attachment.size)
+        || (verifiedCopy && !sameCopy(verifiedCopy, info))) throw new QuestionAttachmentCopyError(attachment.id);
     }
   }
   write(receipt: InteractionAttachmentReceipt, status: InteractionAttachmentReceipt['status']): InteractionAttachmentReceipt {

@@ -26,9 +26,12 @@ on:
           - queued-stop-rejection
           - queued-stop-declined
           - queued-stop-unknown
+          - queued-legacy-retry
           - checkpoint-comparison
           - rewind-lock
           - question-attachment
+          - worktree-setup
+          - session-modes
       replay_update:
         description: Replay only native update and rollback from the retained portable artifact
         required: false
@@ -413,7 +416,7 @@ jobs:
           SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
           REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
-          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'git-preview', 'worktree-dirty', 'worktree-remove', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection', 'queued-stop-declined', 'queued-stop-unknown', 'checkpoint-comparison', 'rewind-lock', 'question-attachment')) { throw 'Unknown replay scenario.' }
+          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'git-preview', 'worktree-dirty', 'worktree-remove', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection', 'queued-stop-declined', 'queued-stop-unknown', 'queued-legacy-retry', 'checkpoint-comparison', 'rewind-lock', 'question-attachment', 'worktree-setup', 'session-modes')) { throw 'Unknown replay scenario.' }
           if ($env:REPLAY_SCENARIO -notin @('', 'standard') -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true')) { throw 'A named replay scenario cannot be combined with other replay selections.' }
           if ($env:SHORTCUT_REPLAY -eq 'true' -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true')) { throw 'Shortcut layout replay cannot be combined with image, functional, or default WebView replay.' }
       - name: Validate original run ID
@@ -580,7 +583,7 @@ jobs:
           node scripts/check-windows-codex-quota.mjs --bundle target/replay-extracted --receipt target/windows-codex-quota.json 2>&1 | Tee-Object -FilePath target/windows-codex-quota.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Replay native queued input edit and cancellation
-        if: ${{ inputs.replay_scenario == 'queued-inputs' || inputs.replay_scenario == 'queued-stop-rejection' || inputs.replay_scenario == 'queued-stop-declined' || inputs.replay_scenario == 'queued-stop-unknown' }}
+        if: ${{ inputs.replay_scenario == 'queued-inputs' || inputs.replay_scenario == 'queued-stop-rejection' || inputs.replay_scenario == 'queued-stop-declined' || inputs.replay_scenario == 'queued-stop-unknown' || inputs.replay_scenario == 'queued-legacy-retry' }}
         timeout-minutes: 8
         shell: pwsh
         env:
@@ -590,6 +593,7 @@ jobs:
           if ($env:QUEUE_REPLAY_SCENARIO -eq 'queued-stop-rejection') { $scenarioArgs += '--stop-rejection' }
           if ($env:QUEUE_REPLAY_SCENARIO -eq 'queued-stop-declined') { $scenarioArgs += '--definite-rejection' }
           if ($env:QUEUE_REPLAY_SCENARIO -eq 'queued-stop-unknown') { $scenarioArgs += '--unknown-recovery' }
+          if ($env:QUEUE_REPLAY_SCENARIO -eq 'queued-legacy-retry') { $scenarioArgs += '--legacy-retry' }
           node scripts/check-windows-queued-inputs.mjs @scenarioArgs --bundle target/replay-extracted --receipt "target/windows-$($env:QUEUE_REPLAY_SCENARIO).json" 2>&1 | Tee-Object -FilePath "target/windows-$($env:QUEUE_REPLAY_SCENARIO).log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Reject native rewind with a foreign Git index lock
@@ -605,6 +609,20 @@ jobs:
         shell: pwsh
         run: |
           node scripts/check-windows-question.mjs --bundle target/replay-extracted --receipt target/windows-question.json 2>&1 | Tee-Object -FilePath target/windows-question.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise the worktree setup barrier and cold retry in the native window
+        if: ${{ inputs.replay_scenario == 'worktree-setup' }}
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          node scripts/check-windows-worktree-setup.mjs --bundle target/replay-extracted --receipt target/windows-worktree-setup.json 2>&1 | Tee-Object -FilePath target/windows-worktree-setup.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check per-session mode controls and cold recovery in the native window
+        if: ${{ inputs.replay_scenario == 'session-modes' }}
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          node scripts/check-windows-session-modes.mjs --bundle target/replay-extracted --receipt target/windows-session-modes.json 2>&1 | Tee-Object -FilePath target/windows-session-modes.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload replay evidence
         if: always()
@@ -624,6 +642,8 @@ jobs:
             target/windows-rewind-lock*.log
             target/windows-question*.json
             target/windows-question*.log
+            target/windows-worktree-setup*
+            target/windows-session-modes*
             target/windows-image-memory.json
             target/windows-image-memory.log
             target/windows-image-desktop.log
@@ -658,6 +678,8 @@ jobs:
             target/windows-queued-stop-declined*.log
             target/windows-queued-stop-unknown*.json
             target/windows-queued-stop-unknown*.log
+            target/windows-queued-legacy-retry*.json
+            target/windows-queued-legacy-retry*.log
           if-no-files-found: warn
 
   replay-update:

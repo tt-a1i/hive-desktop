@@ -11,7 +11,7 @@ const content = Buffer.from('WINDOWS QUESTION ATTACHMENT\nExact bytes: 012345678
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const exists = async path => { try { await access(path); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; } };
 if (mode === 'seed') {
-  await Promise.all([project, data, join(root, 'codex-home')].map(path => mkdir(path, { recursive: true })));
+  await Promise.all([project, data, join(root, 'codex-home'), join(root, 'Desktop'), join(root, 'Documents')].map(path => mkdir(path, { recursive: true })));
   const source = join(project, 'question-proof.txt'); await writeFile(source, content);
   const { createDesktopRuntime } = await import(pathToFileURL(join(resources, 'runtime', 'dist', 'desktop-runtime.js')).href);
   let runtime;

@@ -3,8 +3,8 @@
     [Parameter(Mandatory)][string]$Executable,
     [Parameter(Mandatory)][ValidateSet('select','resolve','reopen')][string]$Phase,
     [Parameter(Mandatory)][string]$OriginalText,
-    [Parameter(Mandatory)][string]$EditedText,
-    [Parameter(Mandatory)][string]$CanceledText,
+    [string]$EditedText,
+    [string]$CanceledText,
     [Parameter(Mandatory)][string]$Draft,
     [Parameter(Mandatory)][string]$OutputPath,
     [Parameter(Mandatory)][string]$EvidenceDirectory,
@@ -13,7 +13,13 @@
     [switch]$UnknownRecovery,
     [string]$SpoolPath,
     [string]$RejectionPath,
-    [string]$SnapshotPath
+    [string]$SnapshotPath,
+    [switch]$LegacyRetry,
+    [string]$LegacyAttachmentName,
+    [string]$LegacyDeliveryId,
+    [string]$LegacyNativePath,
+    [string]$LegacyNativeHash,
+    [string]$LegacyQueriesPath
 )
 . (Join-Path $PSScriptRoot 'windows-native-ui-common.ps1')
 $result = [ordered]@{status='failed'; phase=$Phase; stages=[ordered]@{}; error=$null; controls=@()}
@@ -45,7 +51,77 @@ function Assert-Draft {
     } 'independent composer draft')
     $result.stages.draftPreserved=$true
 }
+function Assert-LegacyThreadPaused {
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $LegacyNativePath).Hash
+    $queries = @(Get-Content -LiteralPath $LegacyQueriesPath | Where-Object { $_.Trim() })
+    if ($hash -ine $LegacyNativeHash -or $queries.Count -ne 1) {
+        throw 'The legacy fixture sent a turn or changed native history before explicit continuation'
+    }
+}
+function Wait-LegacyReceipt {
+    return Wait-Control {param($c)
+        $name = [string]$c.Current.Name
+        $name.StartsWith('Duplicate-risk retry approved at ',[StringComparison]::Ordinal) -and
+            $name.EndsWith("native outcome was unknown. Receipt: $LegacyDeliveryId",[StringComparison]::Ordinal)
+    } 'durable duplicate-risk approval with the original delivery ID'
+}
+function Invoke-LegacyRetry {
+    Assert-LegacyThreadPaused
+    $row = Wait-Control {param($c)
+        $c.Current.ControlType -eq [System.Windows.Automation.ControlType]::Group -and
+        ([string]$c.Current.Name).StartsWith($OriginalText + ' ·',[StringComparison]::Ordinal)
+    } 'protected legacy row'
+    if (@($row.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
+            $_.Current.Name -in @('Edit queued message','Cancel queued message')
+        }).Count) { throw 'Legacy input became editable or retractable' }
+    Invoke-Control (Wait-Name 'Review uncertain deliveries')
+    if ($Phase -eq 'reopen') {
+        $result.stages.coldApprovalReceipt=(Wait-LegacyReceipt).Current.Name
+        Assert-LegacyThreadPaused
+        $result.stages.coldApprovalRetainedWithoutSend=$true
+        Invoke-Control (Wait-Name 'Resume processing')
+        [void](Wait-Name 'Send message')
+        $result.stages.explicitResume=$true
+        return
+    }
+    $source = Wait-Control {param($c)
+        $name = [string]$c.Current.Name
+        $name.StartsWith('user · The agent may already have received this input.',[StringComparison]::Ordinal) -and
+            $name.EndsWith('Attachments: ' + $LegacyAttachmentName,[StringComparison]::Ordinal)
+    } 'original review source and attachment'
+    $text = Wait-Control {param($c) $c.Current.ControlType -eq [System.Windows.Automation.ControlType]::Text -and
+        $c.Current.Name -ceq $OriginalText } 'original review text'
+    $result.stages.reviewSource=$source.Current.Name
+    $result.stages.reviewText=$text.Current.Name
+    Invoke-Control (Wait-Name 'Review resend…')
+    $warning = 'The agent may already have acted. Resending this input and its attachments may repeat work. After approving, select Resume processing to send it.'
+    [void](Wait-Name $warning)
+    $approve = Wait-Name 'Approve resend (may duplicate)'
+    $result.stages.duplicateWarning=$warning
+    if ($Phase -eq 'select') {
+        $spoolBefore = (Get-FileHash -Algorithm SHA256 -LiteralPath $SpoolPath).Hash
+        Save-NativeWindow (Join-Path $EvidenceDirectory 'windows-queued-legacy-retry-confirm.png')
+        Invoke-Control (Wait-Name 'Cancel resend')
+        [void](Wait-Name 'Review resend…')
+        if (@(All-Controls | Where-Object { $_.Current.Name -eq 'Approve resend (may duplicate)' }).Count -or
+            (Get-FileHash -Algorithm SHA256 -LiteralPath $SpoolPath).Hash -cne $spoolBefore) {
+            throw 'Cancel changed the queue or kept the confirmation visible'
+        }
+        $result.stages.cancelPreservedSpool=$true
+        $result.stages.cancelSpoolSha256=$spoolBefore.ToLowerInvariant()
+    } else {
+        Invoke-Control $approve
+        [void](Wait-Name 'Resend approved. The earlier outcome is unknown. Select Resume processing to send the original input again.')
+        $result.stages.approvalReceipt=(Wait-LegacyReceipt).Current.Name
+        $result.stages.approvedWithoutSending=$true
+    }
+    Assert-LegacyThreadPaused
+}
 try {
+    if (-not $LegacyRetry -and (-not $EditedText -or -not $CanceledText)) {
+        throw 'Queue edit and cancellation text are required'
+    }
     $app=Get-Process -Id $AppProcessId
     if ($app.Path -ine [IO.Path]::GetFullPath($Executable)) { throw 'Unexpected desktop executable' }
     $end=[DateTime]::UtcNow.AddSeconds(30)
@@ -60,7 +136,9 @@ try {
     if (-not [NativeFixtureWindow]::SetForegroundWindow($window)) { throw 'Could not focus fixture window' }
     $root=[System.Windows.Automation.AutomationElement]::FromHandle($window)
     Assert-Draft
-    if ($Phase -eq 'select') {
+    if ($LegacyRetry) {
+        Invoke-LegacyRetry
+    } elseif ($Phase -eq 'select') {
         if ($StopRejection) {
             Invoke-Control (Wait-Name 'Resume processing')
             [void](Wait-Name 'Stop')
@@ -81,7 +159,7 @@ try {
             if (@($snapshot).Count -ne 2) { throw 'Both original deliveries must exist before Stop' }
             [IO.File]::WriteAllText($SnapshotPath,($snapshot | ConvertTo-Json -Depth 24),[Text.UTF8Encoding]::new($false))
             $composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Draft)
-            $prefix=if($UnknownRecovery){'windows-queued-stop-unknown'}elseif($DefiniteRejection){'windows-queued-stop-declined'}else{'windows-queued-stop-rejection'}
+            $prefix=if($LegacyRetry){'windows-queued-legacy-retry'}elseif($UnknownRecovery){'windows-queued-stop-unknown'}elseif($DefiniteRejection){'windows-queued-stop-declined'}else{'windows-queued-stop-rejection'}
             Save-NativeWindow (Join-Path $EvidenceDirectory "$prefix-before-stop.png")
             Invoke-Control (Wait-Name 'Stop')
             [void](Wait-Name 'Resume processing')
@@ -117,7 +195,7 @@ try {
     } elseif ($Phase -eq 'resolve') {
         [void](Row-Action $CanceledText 'Edit queued message')
         Invoke-Control (Wait-Name 'Review uncertain deliveries')
-        $source=Wait-Control {param($c) ([string]$c.Current.Name).StartsWith('user · This new appended input',[StringComparison]::Ordinal)} 'uncertain original source read through UIA'
+        $source=Wait-Control {param($c) ([string]$c.Current.Name) -cmatch '^user · (This new appended input|The agent may already have received this input\.)'} 'uncertain original source read through UIA'
         $text=Wait-Control {param($c) $c.Current.ControlType -eq [System.Windows.Automation.ControlType]::Text -and $c.Current.Name -ceq $OriginalText} 'exact uncertain original read through UIA'
         $result.stages.reviewSource=$source.Current.Name
         $result.stages.reviewText=$text.Current.Name
@@ -149,7 +227,7 @@ try {
         $result.stages.explicitResume=$true
     }
     Assert-Draft
-    $prefix=if($UnknownRecovery){'windows-queued-stop-unknown'}elseif($DefiniteRejection){'windows-queued-stop-declined'}elseif($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
+    $prefix=if($LegacyRetry){'windows-queued-legacy-retry'}elseif($UnknownRecovery){'windows-queued-stop-unknown'}elseif($DefiniteRejection){'windows-queued-stop-declined'}elseif($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
     Save-NativeWindow (Join-Path $EvidenceDirectory ("$prefix-$Phase.png"))
     if (-not $app.CloseMainWindow()) { throw 'Could not request normal exit' }
     if (-not $app.WaitForExit(30000)) { throw 'Desktop did not exit' }
@@ -158,7 +236,7 @@ try {
     $result.error=$_.Exception.ToString()
     if ($root) {
         try { $result.controls=@(All-Controls | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 180) } catch {}
-        $prefix=if($UnknownRecovery){'windows-queued-stop-unknown'}elseif($DefiniteRejection){'windows-queued-stop-declined'}elseif($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
+        $prefix=if($LegacyRetry){'windows-queued-legacy-retry'}elseif($UnknownRecovery){'windows-queued-stop-unknown'}elseif($DefiniteRejection){'windows-queued-stop-declined'}elseif($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
         try { Save-NativeWindow (Join-Path $EvidenceDirectory ("$prefix-$Phase-failure.png")) } catch { $result.captureError=$_.Exception.Message }
     }
 } finally {

@@ -66,7 +66,10 @@ try {
   const record=identity(new ChatIndex(join(data,'chats')).get(f.sessionId));
   const mutationMethods=requests.filter(x=>['thread/fork','thread/revert','turn/start','turn/steer','account/read'].includes(x.method)).map(x=>x.method);
   const journals=await readdir(join(data,'history-operations')).catch(e=>{if(e.code==='ENOENT')return [];throw e;});
-  const result={mode,sourceIdentity:record,draft:draftNow,history:opened.history,snapshot:observed,operations:ops,nativeMutations:mutationMethods,journals};
+  const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+  const result={mode,sourceIdentity:record,draft:draftNow,history:opened.history,snapshot:observed,operations:ops,nativeMutations:mutationMethods,journals,
+    baselineComparison:{sourceIdentity:same(record,f.identity),draft:draftNow===f.draft,history:same(opened.history,f.baselineHistory),
+      headIndexDiskAndUnknownLock:same(observed,f.baseline),metadata:digest(await readFile(codexMetadataFile(join(data,'chats/codex'),'source')))===f.metadataSha256}};
   if(mode!=='inspect') {
    assert.deepEqual(record,f.identity);assert.equal(draftNow,f.draft);assert.deepEqual(JSON.parse(JSON.stringify(opened.history)),f.baselineHistory);assert.deepEqual(observed,f.baseline);
    assert.equal(digest(await readFile(codexMetadataFile(join(data,'chats/codex'),'source'))),f.metadataSha256);

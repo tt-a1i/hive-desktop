@@ -13,15 +13,18 @@ export interface DeliveryItem {
  readonly images?: readonly PromptImage[];
  readonly contextRef?: {operationId:string;snapshotHash:string};
  readonly steerUser?: boolean;
+ readonly retryReviewVersion?: string;
 }
 
 type StoredItem = DeliveryItem & { readonly queueState?: "pending" | "started" | "canceled";
- readonly steerAttemptVersion?: 1 };
+ readonly steerAttemptVersion?: 1; readonly steerQueueVersion?: 1 };
 
 interface DeliveryQueueOptions {
  directory: string;
  sessionId: string;
  startPaused?: boolean;
+ /** Only Codex used the ambiguous legacy steerUser spool format. */
+ holdLegacyCodexSteers?: boolean;
  execute(item: DeliveryItem): Promise<void>;
  steer?(item: DeliveryItem): Promise<boolean>;
  completedIds(): readonly string[];
@@ -48,7 +51,9 @@ function readSpool(path: string): StoredItem[] {
  if (!Array.isArray(stored) || !stored.every(item => item && typeof item.id === "string" && typeof item.text === "string" && typeof item.triggerTurn === "boolean"
   && (item.presentation === undefined || isDeliveryPresentation(item.presentation))
   && (item.queueState === undefined || item.queueState === "pending" || item.queueState === "started" || item.queueState === "canceled")
-  && (item.steerAttemptVersion === undefined || item.steerAttemptVersion === 1))) {
+  && (item.steerAttemptVersion === undefined || item.steerAttemptVersion === 1)
+  && (item.steerQueueVersion === undefined || item.steerQueueVersion === 1)
+  && (item.retryReviewVersion === undefined || (typeof item.retryReviewVersion==='string' && /^[a-f0-9]{64}$/.test(item.retryReviewVersion))))) {
   throw new Error(`Invalid delivery spool: ${path}`);
  }
  for (const item of stored) { if (item.images !== undefined && promptImages(item.images).length && !item.triggerTurn) throw new TypeError("Invalid context-only image delivery"); }
@@ -66,6 +71,7 @@ export class DeliveryQueue {
  private items: StoredItem[];
  private running: Promise<void> | undefined;
  private paused = false;
+ private allowApprovedRetries = false;
  private attemptedId: string | undefined;
  private lastState: string | undefined;
 
@@ -74,10 +80,12 @@ export class DeliveryQueue {
   mkdirSync(options.directory, { recursive: true });
   this.path = spoolPath(options.directory, options.sessionId);
   this.items = readSpool(this.path);
-  // Only new, explicitly attempted appends have this marker. A trusted native
+  if(options.holdLegacyCodexSteers && this.items.some(item=>this.legacySteer(item)))
+   this.replace(this.items.map(item=>this.legacySteer(item)?{...item,queueState:"started",steerAttemptVersion:1,steerQueueVersion:1}:item));
+  // Only explicitly attempted or ambiguous legacy appends have this marker. A trusted native
   // completion receipt resolves them without invoking the backend again.
   const completed = this.options.completedIds();
-  const retained = this.items.filter(item => item.steerAttemptVersion !== 1 || !completed.includes(item.id));
+  const retained = this.items.filter(item => (item.steerAttemptVersion !== 1 && !item.retryReviewVersion) || !completed.includes(item.id));
   if (retained.length !== this.items.length) this.replace(retained);
   queueMicrotask(() => this.kick());
  }
@@ -87,8 +95,27 @@ export class DeliveryQueue {
  }
  static persistedItems(directory:string,sessionId:string):readonly DeliveryItem[]{return structuredClone(readSpool(spoolPath(directory,sessionId)));}
 
+ private legacySteer(item:StoredItem):boolean{return item.steerQueueVersion===undefined&&item.steerAttemptVersion===undefined&&item.steerUser===true&&item.triggerTurn&&item.presentation?.origin==='user'&&item.queueState!=='canceled';}
+ /** Atomic explicit approval. A repeated HTTP request cannot grant another retry. */
+ approveUncertainRetry(id:string,reviewVersion:string):void{
+  if(!this.paused||this.busy||this.hasLiveSteering)throw Error('Stop before approving a duplicate-risk retry');
+  const item=this.items.find(item=>item.id===id);
+  if(!item)throw Error('Uncertain input no longer queued');
+  if(item.retryReviewVersion===reviewVersion)return;
+  if(item.steerAttemptVersion!==1)throw Error('Input is no longer uncertain');
+  const {steerAttemptVersion:_,...rest}=item;
+  this.replace(this.items.map(value=>value.id===id?{...rest,queueState:'pending',steerQueueVersion:1,retryReviewVersion:reviewVersion}:value));
+  this.emitState(undefined,true);
+ }
  get pending(): readonly DeliveryItem[] { return structuredClone(this.items); }
  get headId():string|undefined {return this.items[0]?.id;}
+ get headIsApprovedRetry():boolean {
+  const head = this.items[0];
+  return !!head?.retryReviewVersion && head.steerAttemptVersion !== 1;
+ }
+ get approvedRetries():readonly DeliveryItem[]{
+  return this.items.filter(item=>item.retryReviewVersion&&item.steerAttemptVersion!==1&&!this.options.completedIds().includes(item.id)).map(item=>structuredClone(item));
+ }
  get pendingCount(): number { return this.items.length; }
  get uncertainSteers(): readonly DeliveryItem[] {
   return this.items.filter(item=>item.steerAttemptVersion===1&&!this.options.completedIds().includes(item.id)).map(item=>structuredClone(item));
@@ -96,7 +123,7 @@ export class DeliveryQueue {
  reconcileCompletedSteers(): void {
   if (!this.paused || this.busy) return;
   const completed=this.options.completedIds();
-  const retained=this.items.filter(item=>item.steerAttemptVersion!==1||!completed.includes(item.id));
+  const retained=this.items.filter(item=>(item.steerAttemptVersion!==1&&!item.retryReviewVersion)||!completed.includes(item.id));
   if(retained.length!==this.items.length){this.replace(retained);this.emitState(undefined,true);}
  }
  /** Reconcile trusted context metadata on the earliest unattempted user item while paused. */
@@ -105,7 +132,7 @@ export class DeliveryQueue {
   const index=this.items.findIndex(item=>item.queueState!=='canceled'&&item.triggerTurn&&item.presentation?.origin==='user');
   if(index<0)return;
   const item=this.items[index]!;
-  if(item.contextRef||item.queueState!=='pending'||this.attemptedId===item.id)return;
+  if(item.contextRef||item.retryReviewVersion||item.queueState!=='pending'||this.attemptedId===item.id)return;
   const prepared=this.options.prepare?.(item)??item;
   if(prepared.id!==item.id||prepared.text!==item.text||prepared.triggerTurn!==item.triggerTurn||!isDeepStrictEqual(prepared.presentation,item.presentation)||!isDeepStrictEqual(prepared.images,item.images))throw new Error('Prepared context changed queued user input');
   if(!prepared.contextRef)return;
@@ -143,10 +170,11 @@ export class DeliveryQueue {
   const canSteer = !this.paused && this.busy && this.attemptedId === this.items[0]?.id
     && prepared.triggerTurn && !prepared.images?.length && (prepared.presentation?.origin === 'system' || prepared.presentation?.origin === 'report' || (prepared.steerUser === true && prepared.presentation?.origin === 'user'))
     && this.items.slice(1).every(entry => this.steering.has(entry.id)) && !!this.options.steer;
-  // New explicit-user attempts must remain protected across process death. Old
-  // pending/steerUser records are deliberately not reinterpreted or migrated.
+  // Mark all new Codex explicit additions, including definitely unattempted ones.
+  // This separates them from the ambiguous historical pending/steerUser format.
   const userAttempt = canSteer && prepared.presentation?.origin === 'user';
   this.replace([...this.items, { ...prepared, queueState: userAttempt ? "started" : "pending",
+    ...(this.options.holdLegacyCodexSteers && prepared.steerUser && {steerQueueVersion:1 as const}),
     ...(userAttempt && {steerAttemptVersion: 1 as const}) }]);
   const item = this.items.at(-1)!;
   // Asynchronous system input and worker reports may join the current turn. Never overtake a
@@ -180,6 +208,7 @@ export class DeliveryQueue {
  private mutationReason(item: StoredItem, index: number): string | undefined {
   if (item.presentation?.origin !== "user") return "not-user";
   if (this.options.completedIds().includes(item.id)) return "completed";
+  if(item.retryReviewVersion)return "attempted";
   if (item.steerAttemptVersion === 1 && this.paused) return "attempted";
   if (this.steering.has(item.id) || (index === 0 && this.busy)) return "processing";
   if (item.queueState === "canceled") return "canceled";
@@ -229,7 +258,7 @@ export class DeliveryQueue {
   if (index < 0) throw new Error("Pending delivery not found");
   const item = this.items[index]!;
   if (item.presentation?.origin !== "user" || this.options.completedIds().includes(id)
-   || this.steering.has(id) || (index === 0 && this.busy) || this.attemptedId === id
+   || item.retryReviewVersion || this.steering.has(id) || (index === 0 && this.busy) || this.attemptedId === id
    || (item.queueState !== "pending" && item.queueState !== "canceled")) {
    throw new Error("Delivery cannot be reconciled");
   }
@@ -257,14 +286,19 @@ export class DeliveryQueue {
  /** Publish committed changes after an external ledger transaction. */
  notifyPendingUserInputs(): void { this.emitState(undefined, true); }
 
- resume(): void { this.paused = false; this.kick(); this.emitState(); }
+ resume(options?: {allowApprovedRetries: true}): void {
+  if (options?.allowApprovedRetries) this.allowApprovedRetries = true;
+  this.paused = false;
+  this.kick();
+  this.emitState();
+ }
 
  async idle(): Promise<void> {
   while (this.running) await this.running;
  }
 
  /** Prevents the next delivery; the caller must abort any running SDK call. */
- async pause(): Promise<void> { this.paused = true; await this.idle(); this.clearDeclinedSteering(); }
+ async pause(): Promise<void> { this.paused = true; this.allowApprovedRetries = false; await this.idle(); this.clearDeclinedSteering(); }
 
  private clearDeclinedSteering(): void {
   if (!this.paused) return;
@@ -288,7 +322,10 @@ export class DeliveryQueue {
  /** After pause + SDK abort + idle, discard only the interrupted delivery. */
  discardCurrent(): void {
   if (!this.paused || this.busy) throw new Error("Pause and await idle before discarding a delivery");
-  if (this.attemptedId && this.items[0]?.id === this.attemptedId) this.replace(this.items.slice(1));
+  const item = this.items[0];
+  if (item && item.id === this.attemptedId && (!item.retryReviewVersion || this.options.completedIds().includes(item.id))) {
+   this.replace(this.items.slice(1));
+  }
   this.attemptedId = undefined;
   this.emitState();
  }
@@ -315,6 +352,7 @@ export class DeliveryQueue {
   // Set running before execute: an SDK tool can synchronously enqueue a reply.
   this.running = Promise.resolve().then(() => this.drain()).catch(error => {
    this.paused = true;
+   this.allowApprovedRetries = false;
    this.options.onError(error instanceof Error ? error : new Error(String(error)));
   }).finally(() => {
    this.running = undefined;
@@ -341,8 +379,12 @@ export class DeliveryQueue {
     if (this.paused) return;
     if (this.items[0]?.steerAttemptVersion === 1)
      throw new Error('Native appended input outcome is uncertain; its original message is preserved. Inspect native history before resolving it; continuation cannot resend it automatically.');
+    if (item.retryReviewVersion && !this.allowApprovedRetries) {
+     this.paused = true;
+     return;
+    }
     // Persist before the SDK can consume the delivery, including across crashes.
-    this.replace([{ ...item, queueState: "started" }, ...this.items.slice(1)]);
+    this.replace([{ ...item, queueState: "started", ...(item.retryReviewVersion&&{steerAttemptVersion:1 as const}) }, ...this.items.slice(1)]);
     this.attemptedId = item.id;
     await this.options.execute(item);
    }

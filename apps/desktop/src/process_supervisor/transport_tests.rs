@@ -14,6 +14,34 @@ mod git_hook_windows;
 mod vault_windows;
 
 #[test]
+fn interaction_failure_accepts_a_wire_code_and_ignores_provider_message() {
+    let id = "2a947192-7ca1-4dbb-b8cc-7069f61388c7";
+    let provider_text = format!("QUESTION_ATTACHMENT_COPY_UNAVAILABLE {id} SECRET at /provider/file");
+    let failure = json!({"code": "INTERACTION_STALE", "message": provider_text, "attachmentId": id});
+    assert!(matches!(
+        WireFailure::from_frame(&failure, true),
+        WireFailure::Interaction(InteractionRequestError::Other)
+    ));
+    assert_eq!(
+        WireFailure::from_frame(&failure, false).into_message(),
+        provider_text
+    );
+
+    let mut identified = failure;
+    identified["code"] = json!("QUESTION_ATTACHMENT_COPY_UNAVAILABLE");
+    assert!(matches!(
+        WireFailure::from_frame(&identified, true),
+        WireFailure::Interaction(InteractionRequestError::AttachmentCopyUnavailable(found)) if found == id
+    ));
+    assert!(!WireFailure::from_frame(&identified, true).into_message().contains("SECRET"));
+    identified["attachmentId"] = Value::Null;
+    assert!(matches!(
+        WireFailure::from_frame(&identified, true),
+        WireFailure::Interaction(InteractionRequestError::Other)
+    ));
+}
+
+#[test]
 fn a_large_history_frame_releases_the_wire_buffer_before_the_next_frame() {
     let history = "厚".repeat(2 * 1024 * 1024);
     let wire = format!("{}\r\n{{\"id\":2,\"result\":true}}", json!({"id":1,"result":{"history":history}}));

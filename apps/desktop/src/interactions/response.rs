@@ -140,7 +140,7 @@ impl HiveApp {
             if !attachments.is_empty() {
                 params["attachmentsByQuestionId"] = json!(attachments);
             }
-            let result = runtime.request("chat.respondInteraction", params).await;
+            let result = runtime.interaction_request("chat.respondInteraction", params).await;
             let safe_retry = if result.is_err() && has_attachments {
                 runtime
                     .request(
@@ -202,8 +202,12 @@ impl HiveApp {
                     }
                     // Do not display provider error bodies: they may contain submitted secret values.
                     Err(_) if card.raw.state == "responding" => {}
-                    Err(_) if !has_attachments || safe_retry => {
-                        card.error = Some("提交失败，输入已保留。请检查连接后重试。".into());
+                    Err(error) if !has_attachments || safe_retry => {
+                        let attachment_error = card.attachment_copy_error(error);
+                        card.attachment_save_failed = attachment_error.is_some();
+                        card.error = Some(attachment_error.unwrap_or_else(|| {
+                            "提交失败，输入已保留。请检查连接后重试。".into()
+                        }));
                     }
                     Err(_) => {
                         card.submitting = true;

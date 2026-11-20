@@ -20,7 +20,52 @@ use std::{
 };
 
 type Reply = Result<Value, String>;
-type Pending = Arc<Mutex<HashMap<u64, Sender<Reply>>>>;
+type WireReply = Result<Value, WireFailure>;
+type Pending = Arc<Mutex<HashMap<u64, PendingReply>>>;
+
+struct PendingReply {
+    sender: Sender<WireReply>,
+    interaction: bool,
+}
+
+enum WireFailure {
+    Message(String),
+    Interaction(InteractionRequestError),
+}
+
+#[derive(Debug)]
+pub(crate) enum InteractionRequestError {
+    AttachmentCopyUnavailable(String),
+    Other,
+}
+
+impl WireFailure {
+    fn from_frame(error: &Value, interaction: bool) -> Self {
+        if interaction {
+            let kind = match (error["code"].as_str(), error["attachmentId"].as_str()) {
+                (Some("QUESTION_ATTACHMENT_COPY_UNAVAILABLE"), Some(id)) => {
+                    InteractionRequestError::AttachmentCopyUnavailable(id.to_owned())
+                }
+                _ => InteractionRequestError::Other,
+            };
+            return Self::Interaction(kind);
+        }
+        Self::Message(
+            error["message"]
+                .as_str()
+                .filter(|message| !message.trim().is_empty())
+                .unwrap_or("后台请求失败，请查看后台日志。")
+                .to_owned(),
+        )
+    }
+
+    fn into_message(self) -> String {
+        match self {
+            Self::Message(message) => message,
+            Self::Interaction(_) => "后台请求失败，请查看后台日志。".into(),
+        }
+    }
+}
 
 struct CancelSearch<'a> {
     runtime: &'a Runtime,
@@ -73,7 +118,7 @@ fn fail(
 ) {
     *failure.lock().unwrap() = Some(message.clone());
     for (_, reply) in pending.lock().unwrap().drain() {
-        let _ = reply.try_send(Err(message.clone()));
+        let _ = reply.sender.try_send(Err(WireFailure::Message(message.clone())));
     }
     let _ = events.try_send(RuntimeEvent::Failed(message));
 }
@@ -165,24 +210,26 @@ impl Runtime {
                     }
                 };
                 if let Some(id) = value["id"].as_u64() {
+                    let pending_reply = p.lock().unwrap().remove(&id);
                     if trace {
                         if let Some(error) = value.get("error") {
-                            eprintln!("[hive rpc] reply {id} {error}");
+                            // Provider interaction errors can contain a submitted secret.
+                            if pending_reply.as_ref().is_some_and(|reply| !reply.interaction) {
+                                eprintln!("[hive rpc] reply {id} {error}");
+                            } else {
+                                eprintln!("[hive rpc] reply {id} failed");
+                            }
                         } else {
                             eprintln!("[hive rpc] reply {id} ok");
                         }
                     }
-                    if let Some(reply) = p.lock().unwrap().remove(&id) {
-                        let result = if value.get("error").is_some() {
-                            Err(value["error"]["message"]
-                                .as_str()
-                                .filter(|message| !message.trim().is_empty())
-                                .unwrap_or("后台请求失败，请查看后台日志。")
-                                .to_owned())
+                    if let Some(reply) = pending_reply {
+                        let result = if let Some(error) = value.get("error") {
+                            Err(WireFailure::from_frame(error, reply.interaction))
                         } else {
                             Ok(value.get_mut("result").map(std::mem::take).unwrap_or_default())
                         };
-                        let _ = reply.try_send(result);
+                        let _ = reply.sender.try_send(result);
                     }
                 } else if value["event"] == "terminal" {
                     match serde_json::from_value(value.get_mut("data").map(std::mem::take).unwrap_or_default()) {
@@ -336,6 +383,18 @@ impl Runtime {
     pub async fn request(&self, method: &str, params: Value) -> Reply {
         self.begin_request(method, params).await
     }
+    pub(crate) async fn interaction_request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, InteractionRequestError> {
+        let (_, reply) = self.enqueue_request(method, params)
+            .map_err(|_| InteractionRequestError::Other)?;
+        await_wire_reply(reply).await.map_err(|error| match error {
+            WireFailure::Interaction(kind) => kind,
+            WireFailure::Message(_) => InteractionRequestError::Other,
+        })
+    }
     pub async fn search(&self, params: Value) -> Reply {
         let (request_id, reply) = self.enqueue_request("chat.search", params)?;
         let _cancel = CancelSearch { runtime: self, request_id };
@@ -352,7 +411,7 @@ impl Runtime {
         async move { await_reply(pending?.1).await }
     }
 
-    fn enqueue_request(&self, method: &str, params: Value) -> Result<(u64, Receiver<Reply>), String> {
+    fn enqueue_request(&self, method: &str, params: Value) -> Result<(u64, Receiver<WireReply>), String> {
         if self.closing.load(Ordering::Acquire) {
             return Err("后台正在关闭或已退出".into());
         }
@@ -364,7 +423,10 @@ impl Runtime {
             if let Some(error) = &*failure {
                 return Err(error.clone());
             }
-            self.pending.lock().unwrap().insert(id, tx);
+            self.pending.lock().unwrap().insert(id, PendingReply {
+                sender: tx,
+                interaction: matches!(method, "chat.interactionAttachments.save" | "chat.respondInteraction"),
+            });
         }
         if self
             .tx
@@ -377,8 +439,11 @@ impl Runtime {
         Ok((id, rx))
     }
 }
-async fn await_reply(reply: Receiver<Reply>) -> Reply {
-    reply.recv().await.unwrap_or_else(|_| Err("后台响应通道已关闭".into()))
+async fn await_reply(reply: Receiver<WireReply>) -> Reply {
+    await_wire_reply(reply).await.map_err(WireFailure::into_message)
+}
+async fn await_wire_reply(reply: Receiver<WireReply>) -> WireReply {
+    reply.recv().await.unwrap_or_else(|_| Err(WireFailure::Message("后台响应通道已关闭".into())))
 }
 impl Drop for Runtime {
     fn drop(&mut self) {

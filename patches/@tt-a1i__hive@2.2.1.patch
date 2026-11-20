@@ -896,7 +896,7 @@ index 389129f122892581215028f0cc8bfabd21a8ad3b..433439b07a6d293cb99fdc78c030597b
          openByWorker.set(dispatch.toAgentId, list);
      }
 diff --git a/dist/src/server/runtime-store-contract.d.ts b/dist/src/server/runtime-store-contract.d.ts
-index 531749345d132f9a9f93f4f5ad10c8f48e368acd..eb7109ecacb8f074b04e6a04c32bfd3438d76560 100644
+index 531749345d132f9a9f93f4f5ad10c8f48e368acd..a92b951e59bbaa8309126e89285a12c37dec7e78 100644
 --- a/dist/src/server/runtime-store-contract.d.ts
 +++ b/dist/src/server/runtime-store-contract.d.ts
 @@ -55,6 +55,7 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
@@ -935,13 +935,15 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..eb7109ecacb8f074b04e6a04c32bfd34
      runWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflowInline: (input: RunInlineWorkflowInput) => Promise<WorkflowRunRecord>;
-@@ -152,6 +160,10 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -152,6 +160,12 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      }>;
      saveWorkspaceUpload: (input: SaveWorkspaceUploadInput) => Promise<WorkspaceUploadRecord>;
      listWorkspaceUploads: (workspaceId: string, limit?: number) => WorkspaceUploadRecord[];
 +    locateWorkspaceUpload: (workspaceId: string, uploadId: string) => Promise<{
 +        record: WorkspaceUploadRecord;
 +        localPath: string;
++        sourceDigestVersion: number;
++        sourceSha256: string | null;
 +    } | undefined>;
      readWorkspaceUpload: (workspaceId: string, uploadId: string) => Promise<{
          data: Buffer;
@@ -1404,6 +1406,25 @@ index 00120d185d5d231494e011f920bcfad84ef45ad8..a27f0703648fb236830bfdc6eaa3480d
          createCommandPreset: commandPresetStore.create,
          createRoleTemplate: roleTemplateStore.create,
          deleteCommandPreset: commandPresetStore.remove,
+diff --git a/dist/src/server/sqlite-schema.js b/dist/src/server/sqlite-schema.js
+index 1295b4e35668cd4602198b597b0632ec1014dc3f..5a420fa2fffefc5c2e146b8bee162c4ba5b9a524 100644
+--- a/dist/src/server/sqlite-schema.js
++++ b/dist/src/server/sqlite-schema.js
+@@ -243,6 +243,14 @@ export const initializeRuntimeDatabase = (db) => {
+     // schema_version. The v19 migration adds these columns but is gated on
+     // !appliedVersions.has(19); a foreign-built DB whose v19 was a DIFFERENT
+     // migration leaves these absent. PRAGMA + ALTER here makes the writes safe.
++    // Desktop source evidence is private. Keep the format version separate so
++    // a missing checksum on a new upload cannot be treated as a legacy row.
++    ensureColumn(db, 'workspace_uploads', 'desktop_source_sha256', 'TEXT');
++    ensureColumn(db, 'workspace_uploads', 'desktop_source_digest_version', `INTEGER NOT NULL DEFAULT 0 CHECK (
++      (desktop_source_digest_version = 0 AND desktop_source_sha256 IS NULL) OR
++      (desktop_source_digest_version = 1 AND desktop_source_sha256 IS NOT NULL
++        AND length(desktop_source_sha256) = 64 AND desktop_source_sha256 NOT GLOB '*[^0-9a-f]*')
++    )`);
+     ensureColumn(db, 'workers', 'ephemeral', 'INTEGER NOT NULL DEFAULT 0');
+     ensureColumn(db, 'workers', 'spawned_by', 'TEXT');
+     ensureColumn(db, 'workers', 'avatar', 'TEXT');
 diff --git a/dist/src/server/tasks-file-watcher.js b/dist/src/server/tasks-file-watcher.js
 index f74fc2d4250e25025d2f7fb327cf49df8c1277a5..c7aad08d1f2e58f4660f04a98143b948650f6e7c 100644
 --- a/dist/src/server/tasks-file-watcher.js
@@ -2321,33 +2342,97 @@ index 60ac07aa67821d497055334ab427774fc4eafd96..3b1e5665161fd64782d063f329131644
          })();
      };
 diff --git a/dist/src/server/workspace-upload-store.d.ts b/dist/src/server/workspace-upload-store.d.ts
-index f1bbab564e2124953bd376ccf33ff56ccf251337..d523ac7ad73fe8c3dc224253c39bdb6261695ee1 100644
+index f1bbab564e2124953bd376ccf33ff56ccf251337..6ba4d99481acca290db80a2315cac3e6bcfa75c7 100644
 --- a/dist/src/server/workspace-upload-store.d.ts
 +++ b/dist/src/server/workspace-upload-store.d.ts
-@@ -24,6 +24,10 @@ export interface StagedWorkspaceUploadsDelete {
+@@ -5,6 +5,7 @@ export interface SaveWorkspaceUploadInput {
+     originalName: string;
+     mimeType?: string | null;
+     data: Buffer;
++    captureDesktopSourceDigest?: boolean;
+ }
+ export interface WorkspaceUploadRecord {
+     id: string;
+@@ -24,6 +25,12 @@ export interface StagedWorkspaceUploadsDelete {
  export declare const createWorkspaceUploadStore: (db: Database, uploadsDir: string) => {
      saveUpload(input: SaveWorkspaceUploadInput): Promise<WorkspaceUploadRecord>;
      listUploads(workspaceId: string, limit?: number): WorkspaceUploadRecord[];
 +    locateUpload(workspaceId: string, uploadId: string): Promise<{
 +        record: WorkspaceUploadRecord;
 +        localPath: string;
++        sourceDigestVersion: number;
++        sourceSha256: string | null;
 +    } | undefined>;
      readUpload(workspaceId: string, uploadId: string): Promise<{
          data: Buffer;
          record: WorkspaceUploadRecord;
 diff --git a/dist/src/server/workspace-upload-store.js b/dist/src/server/workspace-upload-store.js
-index c78f060119ae87a3a803dfa4b6828b4b9fb88137..7235914a4d6b8235cd20d9366bcd034d19023e60 100644
+index c78f060119ae87a3a803dfa4b6828b4b9fb88137..f6d16d224b69dcc64aaa8fbee91bb230ec72af92 100644
 --- a/dist/src/server/workspace-upload-store.js
 +++ b/dist/src/server/workspace-upload-store.js
 @@ -1,6 +1,6 @@
- import { randomUUID } from 'node:crypto';
+-import { randomUUID } from 'node:crypto';
++import { createHash, randomUUID } from 'node:crypto';
  import { readdirSync, renameSync, rmdirSync, unlinkSync } from 'node:fs';
 -import { mkdir, readFile, writeFile } from 'node:fs/promises';
-+import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
++import { mkdir, open, readFile, stat } from 'node:fs/promises';
  import { basename, dirname, extname, join, resolve, sep } from 'node:path';
  import { HttpError } from './http-errors.js';
  const DEFAULT_UPLOAD_NAME = 'upload';
-@@ -255,6 +255,19 @@ export const createWorkspaceUploadStore = (db, uploadsDir) => {
+@@ -182,13 +182,13 @@ const stageFilesForDelete = (uploadsDir, rows) => {
+ export const createWorkspaceUploadStore = (db, uploadsDir) => {
+     const insertUpload = db.prepare(`INSERT INTO workspace_uploads (
+        id, workspace_id, remote_device_id, original_name, mime_type, size_bytes, storage_key,
+-       created_at
++       created_at, desktop_source_digest_version, desktop_source_sha256
+      )
+-     SELECT ?, ?, ?, ?, ?, ?, ?, ?
++     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM workspaces WHERE id = ?)`);
+     const workspaceExists = db.prepare('SELECT 1 FROM workspaces WHERE id = ?');
+     const getUpload = db.prepare(`SELECT id, workspace_id, remote_device_id, original_name, mime_type, size_bytes, storage_key,
+-            created_at
++            created_at, desktop_source_digest_version, desktop_source_sha256
+        FROM workspace_uploads
+       WHERE workspace_id = ? AND id = ?`);
+     const listUploads = db.prepare(`SELECT id, workspace_id, remote_device_id, original_name, mime_type, size_bytes, storage_key,
+@@ -222,20 +222,33 @@ export const createWorkspaceUploadStore = (db, uploadsDir) => {
+                 size_bytes: input.data.byteLength,
+                 storage_key: storageKey,
+                 created_at: now,
++                desktop_source_digest_version: input.captureDesktopSourceDigest ? 1 : 0,
++                desktop_source_sha256: input.captureDesktopSourceDigest
++                    ? createHash('sha256').update(input.data).digest('hex')
++                    : null,
+             };
++            let created = false;
+             try {
+                 await mkdir(dirname(storagePath), { recursive: true });
+                 // Async IO keeps a 100MB write from stalling every PTY/WebSocket on
+                 // the event loop; `wx` keeps the no-clobber guarantee. The INSERT's
+                 // WHERE EXISTS guard plus the removeFile cleanup below still cover a
+                 // workspace deleted while the write was in flight.
+-                await writeFile(storagePath, input.data, { flag: 'wx' });
++                const file = await open(storagePath, 'wx');
++                created = true;
++                try {
++                    await file.writeFile(input.data);
++                } finally {
++                    await file.close();
++                }
+             }
+             catch {
++                if (created) removeFile(storagePath);
+                 throw new HttpError(500, 'Upload could not be saved');
+             }
+             try {
+-                const result = insertUpload.run(row.id, row.workspace_id, row.remote_device_id, row.original_name, row.mime_type, row.size_bytes, row.storage_key, row.created_at, row.workspace_id);
++                const result = insertUpload.run(row.id, row.workspace_id, row.remote_device_id, row.original_name, row.mime_type, row.size_bytes, row.storage_key, row.created_at,
++                    row.desktop_source_digest_version, row.desktop_source_sha256, row.workspace_id);
+                 if (result.changes !== 1) {
+                     removeFile(storagePath);
+                     throw new HttpError(404, 'Workspace not found');
+@@ -255,6 +268,23 @@ export const createWorkspaceUploadStore = (db, uploadsDir) => {
              const safeLimit = Number.isSafeInteger(limit) ? Math.min(Math.max(limit, 1), 100) : 50;
              return listUploads.all(workspaceId, safeLimit).map(mapRow);
          },
@@ -2362,7 +2447,11 @@ index c78f060119ae87a3a803dfa4b6828b4b9fb88137..7235914a4d6b8235cd20d9366bcd034d
 +                if (isEnoent(error)) return undefined;
 +                throw new HttpError(500, 'Upload file could not be located');
 +            }
-+            return { record: mapRow(row), localPath };
++            return {
++                record: mapRow(row), localPath,
++                sourceDigestVersion: row.desktop_source_digest_version,
++                sourceSha256: row.desktop_source_sha256,
++            };
 +        },
          async readUpload(workspaceId, uploadId) {
              const row = getUpload.get(workspaceId, uploadId);

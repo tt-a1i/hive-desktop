@@ -391,19 +391,21 @@ impl HiveApp {
         let connection = self.connection_generation;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = runtime.request("chat.interactionAttachments.save", json!({"sessionId": session, "interactionId": id, "attachmentsByQuestionId": mapping})).await;
+            let result = runtime.interaction_request("chat.interactionAttachments.save", json!({"sessionId": session, "interactionId": id, "attachmentsByQuestionId": mapping})).await;
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection { return; }
+                let saved = result.is_ok();
                 if let Some(card) = this.question_attachment_card(&session, &id, &identity)
                     .filter(|card| card.generation == generation && card.raw.state == "pending")
                 {
                     card.submitting = false;
-                    if result.is_err() {
+                    if let Err(error) = result {
                         card.attachment_save_failed = true;
-                        card.error = Some("附件状态保存失败，请重试保存。".into());
+                        card.error = Some(card.attachment_copy_error(error)
+                            .unwrap_or_else(|| "附件状态保存失败，请重试保存。".into()));
                     }
                 }
-                if result.is_ok() {
+                if saved {
                     this.interactions.receipt_requests.remove(&format!("{connection}:{workspace}:{session}"));
                 }
                 cx.notify();

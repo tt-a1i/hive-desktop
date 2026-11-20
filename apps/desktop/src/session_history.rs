@@ -410,8 +410,9 @@ impl Render for HistoryDialog {
                 let recovery_id = operation_id.clone(); let can_recover = recoverable(&op);
                 let rewound = op["rewind"] == true;
                 let backup = rewind_backup(&op);
-                v.child(div().id("history-operation-status").role(Role::Status).text_sm().child(format!("{}: {} · {}", tr("操作状态"), state, operation_id)))
-                    .when_some(op["error"].as_str().map(str::to_owned), |v, e| v.child(div().text_sm().child(e)))
+                let status = format!("{}: {} · {}", tr("操作状态"), state, operation_id);
+                v.child(div().id("history-operation-status").role(Role::Status).aria_label(status.clone()).text_sm().child(status))
+                    .when_some(op["error"].as_str().map(str::to_owned), |v, e| v.child(div().id("history-operation-error").role(Role::Label).aria_label(e.clone()).aria_value(e.clone()).text_sm().child(e)))
                     .when_some(op["sessionUnavailable"].as_str().map(str::to_owned), |v, e| v.child(div().text_sm().child(e)))
                     .when(op["state"] == "ready" && op["session"].is_object(), |v| v.child(Button::new("history-open-ready").outline().small().disabled(!current || self.busy).label(tr(if rewound { "重新打开原会话" } else { "打开分叉会话" }))
                         .on_click(cx.listener(move |this, _, window, cx| this.open_ready(op.clone(), window, cx)))))

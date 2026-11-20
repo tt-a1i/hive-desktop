@@ -39,19 +39,18 @@ try {
         } while ([DateTime]::UtcNow -lt $deadline)
         if ($buttons.Count -lt 2) { throw 'Question attachment button unavailable' }
         Invoke-Control $buttons[0]
-        $desktop = [System.Windows.Automation.AutomationElement]::RootElement
+        # The owned common dialog is included under the application's UIA
+        # tree on Windows; it need not appear among desktop root children.
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
         do {
-            $dialogs = @($desktop.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
-                $_.Current.ProcessId -eq $AppProcessId -and $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and $_.Current.Name -eq 'Open'
+            $fields = @(All-Controls | Where-Object {
+                $_.Current.ProcessId -eq $AppProcessId -and
+                $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
+                ($_.Current.AutomationId -eq '1148' -or $_.Current.Name -ceq 'File name:')
             })
-            if ($dialogs.Count -eq 1) { break }
+            if ($fields.Count -eq 1) { break }
             Start-Sleep -Milliseconds 150
         } while ([DateTime]::UtcNow -lt $deadline)
-        if ($dialogs.Count -ne 1) { throw "Native file chooser unavailable: $($dialogs.Count)" }
-        $fields = @($dialogs[0].FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
-            $_.Current.AutomationId -eq '1148' -and $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit
-        })
         if ($fields.Count -ne 1) { throw "Native file chooser filename field unavailable: $($fields.Count)" }
         $fields[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Source)
         $fields[0].SetFocus()
@@ -111,6 +110,7 @@ try {
     $result.error = $_.Exception.ToString()
     if ($root) {
         try { $result.controls = @(All-Controls | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 200) } catch {}
+        try { $result.editControls = @(All-Controls | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit } | ForEach-Object { @{ name=$_.Current.Name; id=$_.Current.AutomationId; processId=$_.Current.ProcessId; enabled=$_.Current.IsEnabled; offscreen=$_.Current.IsOffscreen } }) } catch {}
         try { Save-NativeWindow (Join-Path $EvidenceDirectory "windows-question-$Phase-failure.png") } catch { $result.captureError = $_.Exception.Message }
     }
 } finally {

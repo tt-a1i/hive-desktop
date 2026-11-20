@@ -393,6 +393,10 @@ impl HiveApp {
                     ));
                 };
                 let attachments_disabled = disabled || card.importing_attachments();
+                let unavailable_attachment = match &card.error {
+                    Some(InteractionError::AttachmentCopyUnavailable(id)) => Some(id.as_str()),
+                    _ => None,
+                };
                 view.child(
                     Button::new(("question-attachments", field))
                         .compact()
@@ -428,8 +432,23 @@ impl HiveApp {
                     let question_id = question.id.clone();
                     let attachment_id = item.id.clone();
                     h_flex()
+                        .flex_wrap()
                         .gap_2()
                         .child(div().text_xs().child(item.name.clone()))
+                        .when(unavailable_attachment == Some(item.id.as_str()), |row| {
+                            let status = tr("附件副本不可用");
+                            let description = format!("{} · {status}", item.name);
+                            row.child(
+                                div()
+                                    .id(SharedString::from(format!("question-attachment-error-{field}-{}", item.id)))
+                                    .role(Role::Label)
+                                    .aria_label(description.clone())
+                                    .aria_value(description)
+                                    .text_xs()
+                                    .text_color(Color::Error.get(cx))
+                                    .child(status),
+                            )
+                        })
                         .child(
                             Button::new(SharedString::from(format!(
                                 "remove-question-attachment-{field}-{}",

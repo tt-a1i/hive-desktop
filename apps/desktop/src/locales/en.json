@@ -2076,6 +2076,8 @@
   "附件没有返回内容。": "The attachment returned no content.",
   "附件没有返回有效的本地路径。": "The attachment did not return a valid local path.",
   "附件消息": "Message with attachments",
+  "附件副本已丢失、无法读取或已更改。回答已保留。请移除标记的附件，需要时重新选择文件。": "An attachment copy is missing, unreadable, or changed. Your answers are preserved. Remove the marked attachment and select the file again if needed.",
+  "附件副本不可用": "Attachment copy unavailable",
   "附件状态保存失败，请重试保存。": "Could not save the attachments. Retry saving them.",
   "附件编号": "Attachment ID",
   "隐藏后 Shell 继续运行；“停止 Shell”才结束进程。": "Hiding the terminal keeps the Shell running. “Stop Shell” ends the process.",

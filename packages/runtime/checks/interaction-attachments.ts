@@ -1,34 +1,19 @@
 /** Controlled Codex JSONL peer and real Hive uploads/privateFS; no model calls. */
 import assert from 'node:assert/strict';
-import {mkdtemp, mkdir, writeFile, readFile, rename, unlink} from 'node:fs/promises';
+import {mkdtemp, mkdir, writeFile, readFile, readdir, rename, unlink} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {createDesktopRuntime} from '../src/desktop-runtime.js';
 import {CodexTransport} from '../src/agents/codex-transport.js';
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
 import fs from 'node:fs';
 import {syncBuiltinESMExports} from 'node:module';
+import {QuestionAttachmentCopyError} from '../src/image-attachments.js';
 import type {PiSessionHandle} from '../src/agents/types.js';
 
 await mkdir(resolve('.artifacts'), {recursive:true});
 const dir = await mkdtemp(resolve('.artifacts/question-attachments-'));
-const peer = String.raw`
-const {createInterface}=require('node:readline');const {existsSync,appendFileSync}=require('node:fs');
-const thread={id:require('node:path').basename(process.cwd()),path:null,historyMode:'legacy',turns:[]};
-const send=x=>process.stdout.write(JSON.stringify(x)+'\n');const notify=(method,params)=>send({method,params:{threadId:thread.id,...params}});
-let turn,answered=false;const end=()=>{turn.status='interrupted';notify('turn/completed',{turn});};
-const timer=setInterval(()=>{if(!turn||turn.status!=='inProgress')return;if(existsSync('exit'))process.exit(7);if(existsSync('turn-end'))end();else if(existsSync('native-resolve')){notify('serverRequest/resolved',{requestId:7});end();}else if(answered&&existsSync('finish')){notify('serverRequest/resolved',{requestId:7});end();}},10);
-(async()=>{for await(const line of createInterface({input:process.stdin})){const q=JSON.parse(line);if(!q.method){appendFileSync('responses.jsonl',JSON.stringify(q)+'\n');answered=true;continue;}const answer=result=>send({id:q.id,result});
-if(q.method==='initialize')answer({});else if(q.method==='model/list')answer({data:[{id:'terra',model:'gpt-6.1-terra',displayName:'Terra',hidden:false}],nextCursor:null});else if(q.method==='thread/start')answer({thread,model:'gpt-6.1-terra',modelProvider:'openai'});else if(q.method==='thread/read')answer({thread});else if(q.method==='thread/resume')answer({thread,model:'gpt-6.1-terra',modelProvider:'openai'});else if(q.method==='thread/settings/update')answer({});else if(q.method==='turn/interrupt'){answer({});notify('serverRequest/resolved',{requestId:7});end();}else if(q.method==='turn/start'){
-  turn={id:'turn-'+thread.turns.length,status:'inProgress',items:[]};thread.turns.push(turn);answer({turn});notify('turn/started',{turn});
-  const identity={threadId:thread.id,turnId:turn.id,itemId:'item'};
-  if(q.params.input[0].text==='approval'){
-    send({id:7,method:'item/commandExecution/requestApproval',params:{...identity,startedAtMs:1,availableDecisions:['decline']}});
-  }else{
-    send({id:7,method:'item/tool/requestUserInput',params:{...identity,isBlocking:true,questions:[{id:'public',header:'Public',question:'Choose',isSecret:false,isOther:true,options:null},{id:'secret',header:'Secret',question:'Secret',isSecret:true,isOther:true,options:null},{id:'extra',header:'Extra',question:'Extra',isSecret:false,isOther:true,options:null}]}});
-  }
-}}
-clearInterval(timer);})().catch(e=>{console.error(e);process.exit(1)});
-`;
+const peer = await readFile(new URL('./fixtures/codex-question-attachment-peer.cjs', import.meta.url), 'utf8');
 let runtime = await createDesktopRuntime(join(dir,'state'),()=>{}, {executableEnvironment:{}});
 const live = () => (runtime.chats as unknown as {live:Map<string,{handle:PiSessionHandle}>}).live;
 async function wait<T>(f:()=>T|Promise<T>, p:(v:T)=>boolean):Promise<T>{const deadline=Date.now()+8000;for(;;){const v=await f();if(p(v))return v;if(Date.now()>deadline)throw new Error('fixture timed out');await new Promise(r=>setTimeout(r,10));}}
@@ -82,7 +67,7 @@ async function checkCopyLossBetweenQuestions() {
     await Promise.race([secondReached, submission.then(() => assert.fail('Submitted before resolving both questions'))]);
     await rename(firstCopy, firstCopy + '.held');
     resumeResolution();
-    await assert.rejects(submission, {code: 'ENOENT'});
+    await assert.rejects(submission, error => error instanceof QuestionAttachmentCopyError && error.attachmentId === first.attachment.id);
     assert.deepEqual(await rows(cwd), []);
     assert.deepEqual(runtime.chats.interactionAttachmentStatus(record.id, card.id), {safeToRetry: true});
     assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
@@ -121,34 +106,33 @@ async function checkCopyLossDuringProjectVerification() {
   const project = await runtime.chats.projectFilesAttach(ws.id, 'snapshot.txt');
   const mapping = {public: [ordinary.attachment.id, project.attachment.id]};
   const draft = (await runtime.chats.saveInteractionAttachments(record.id, card.id, mapping)).receipt;
-  const uploads = runtime.chats.attachments;
-  const resolve = uploads.questionReferences.bind(uploads);
   const originalStream = fs.createReadStream;
-  let armed = false, removed = false;
-  uploads.questionReferences = async (...args: Parameters<typeof resolve>) => {
-    const refs = await resolve(...args);
-    armed = true; // The next stream belongs to the final copy check.
-    return refs;
-  };
+  let duringProjectHash: (() => void) | undefined;
   fs.createReadStream = ((...args: Parameters<typeof originalStream>) => {
     const stream = originalStream(...args);
-    if (armed && args[0] === project.filePath) {
-      armed = false;
-      stream.once('data', () => { fs.unlinkSync(ordinary.filePath!); removed = true; });
+    if (args[0] === project.filePath && duringProjectHash) {
+      stream.once('data', duringProjectHash);
+      duringProjectHash = undefined;
     }
     return stream;
   }) as typeof fs.createReadStream;
   syncBuiltinESMExports();
   try {
-    await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), {code: 'ENOENT'});
-    assert.equal(removed, true);
-    assert.deepEqual(await rows(cwd), []);
-    assert.deepEqual(runtime.chats.interactionAttachmentStatus(record.id, card.id), {safeToRetry: true});
-    assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
+    const submit = () => runtime.chats.respondInteraction(record.id, card.id, answer, mapping);
+    const checkRejected = async (mutate: () => void) => {
+      duringProjectHash = mutate;
+      await assert.rejects(submit, error => error instanceof QuestionAttachmentCopyError && error.attachmentId === ordinary.attachment.id);
+      assert.equal(duringProjectHash, undefined, 'The failure must occur after the first attachment was hashed');
+      assert.deepEqual(await rows(cwd), []);
+      assert.deepEqual(runtime.chats.interactionAttachmentStatus(record.id, card.id), {safeToRetry: true});
+      assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
+    };
+    await checkRejected(() => fs.writeFileSync(ordinary.filePath!, 'replaced'));
+    await writeFile(ordinary.filePath!, 'ordinary');
+    await checkRejected(() => fs.unlinkSync(ordinary.filePath!));
   } finally {
     fs.createReadStream = originalStream;
     syncBuiltinESMExports();
-    uploads.questionReferences = resolve;
   }
   await writeFile(ordinary.filePath!, 'ordinary');
   await runtime.chats.respondInteraction(record.id, card.id, answer, mapping);
@@ -168,7 +152,8 @@ async function checkProjectSnapshotReplacement() {
   const draft = (await runtime.chats.saveInteractionAttachments(record.id, card.id, mapping)).receipt;
   await writeFile(project.filePath!, 'replaced');
   await assert.rejects(runtime.chats.prompt(record.id, 'send corrupted snapshot', [project.attachment.id]), /项目文件附件 .* 的副本不可用或已更改/);
-  await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), /项目文件附件 .* 的副本不可用或已更改/);
+  await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping),
+    error => error instanceof QuestionAttachmentCopyError && error.attachmentId === project.attachment.id);
   assert.deepEqual(await rows(cwd), []);
   assert.deepEqual(runtime.chats.interactionAttachmentStatus(record.id, card.id), {safeToRetry: true});
   assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
@@ -181,7 +166,8 @@ async function checkProjectSnapshotReplacement() {
     return refs;
   };
   try {
-    await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), /项目文件附件 .* 的副本不可用或已更改/);
+    await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping),
+    error => error instanceof QuestionAttachmentCopyError && error.attachmentId === project.attachment.id);
     assert.deepEqual(await rows(cwd), []);
     assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
   } finally { uploads.questionReferences = resolve; }
@@ -194,8 +180,125 @@ async function checkProjectSnapshotReplacement() {
   assert.equal((await rows(cwd)).length, 1);
 }
 
+// The migration must recognize uploads whose rows and data predate the desktop
+// source checksum, including rows with the older, unmodified UUID format.
+async function checkLegacyUploadMigration() {
+  const run = await start();
+  const endpoint = `/api/workspaces/${run.ws.id}/uploads`;
+  const legacy = await runtime.hive.request('POST', endpoint, {
+    filename: 'legacy.txt', mime_type: 'text/plain', data: Buffer.from('original').toString('base64'),
+    captureDesktopSourceDigest: true, // Never accepted from the public upload API.
+  }) as {id: string};
+  const before = (await runtime.hive.locateUpload(run.ws.id, legacy.id))!;
+  assert.equal(before.sourceDigestVersion, 0);
+  assert.equal(before.sourceSha256, null);
+  const history = (await runtime.chats.saveInteractionAttachments(run.record.id, run.card.id, {public: [legacy.id]})).receipt;
+  await run.handle.abort(); await run.done;
+  await runtime.close();
+  const database = new DatabaseSync(join(dir, 'state', 'hive', 'runtime.sqlite'));
+  try {
+    database.exec('ALTER TABLE workspace_uploads DROP COLUMN desktop_source_digest_version; ALTER TABLE workspace_uploads DROP COLUMN desktop_source_sha256');
+  } finally { database.close(); }
+  await writeFile(before.localPath, 'replaced');
+  runtime = await createDesktopRuntime(join(dir, 'state'), () => {}, {executableEnvironment: {}});
+  const migrated = (await runtime.hive.locateUpload(run.ws.id, legacy.id))!;
+  assert.deepEqual(migrated, before);
+  const [reference] = await runtime.chats.attachments.questionReferences(run.ws.id, [legacy.id]);
+  assert.equal(reference?.verifiedCopy, undefined);
+  assert.deepEqual(runtime.chats.listInteractionAttachments(run.record.id).receipts, [JSON.parse(JSON.stringify(history))]);
+}
+
+async function checkUploadSourceIntegrity() {
+  const {ws, record, card, cwd, done} = await start();
+  const textPath = join(cwd, 'source.txt');
+  const imagePath = join(cwd, 'source.png');
+  const original = Buffer.from('original');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC', 'base64');
+  await writeFile(textPath, original);
+  await writeFile(imagePath, png);
+  const ordinary = await runtime.chats.attachments.add(ws.id, textPath);
+  const selectedImage = await runtime.chats.attachments.add(ws.id, imagePath);
+  const pastedImage = await runtime.chats.attachments.addClipboard(ws.id, selectedImage.image);
+  const inputs = [
+    {staged: ordinary, bytes: original, replacement: Buffer.from('replaced')},
+    {staged: selectedImage, bytes: png, replacement: Buffer.from(png.map((byte, index) => index === png.length - 1 ? byte ^ 1 : byte))},
+    {staged: pastedImage, bytes: png, replacement: Buffer.from(png.map((byte, index) => index === png.length - 1 ? byte ^ 1 : byte))},
+  ];
+  await unlink(textPath); await unlink(imagePath);
+  const refs = [];
+  const changed = /copy is unavailable or changed/;
+  for (const {staged, bytes, replacement} of inputs) {
+    const id = staged.attachment.id;
+    const upload = (await runtime.hive.locateUpload(ws.id, id))!;
+    assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.deepEqual([upload.sourceDigestVersion, upload.sourceSha256], [1, createHash('sha256').update(bytes).digest('hex')]);
+    assert.equal(JSON.stringify(staged).includes(upload.sourceSha256!), false);
+    const map = {public: [id]};
+    // The first check should use the input bytes even before any receipt exists.
+    await writeFile(upload.localPath, replacement);
+    await assert.rejects(runtime.chats.saveInteractionAttachments(record.id, card.id, map), changed);
+    await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, map), changed);
+    assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, []);
+    await writeFile(upload.localPath, bytes);
+    refs.push(upload);
+  }
+  const endpoint = `/api/workspaces/${ws.id}/uploads`;
+  const publicUploads = JSON.stringify(await runtime.hive.request('GET', endpoint));
+  assert.ok(publicUploads.includes(ordinary.attachment.id));
+  assert.equal(publicUploads.includes(refs[0]!.sourceSha256!), false);
+  const mapping = {public: inputs.map(({staged}) => staged.attachment.id)};
+  const draft = (await runtime.chats.saveInteractionAttachments(record.id, card.id, mapping)).receipt;
+  for (const upload of refs) assert.equal(JSON.stringify(draft).includes(upload.sourceSha256!), false);
+  const database = new DatabaseSync(join(dir, 'state', 'hive', 'runtime.sqlite'));
+  try {
+    const replaceDigest = database.prepare('UPDATE workspace_uploads SET desktop_source_sha256 = ? WHERE workspace_id = ? AND id = ?');
+    const id = ordinary.attachment.id;
+    assert.throws(() => replaceDigest.run(null, ws.id, id), /CHECK constraint/);
+    database.exec('PRAGMA ignore_check_constraints = ON');
+    for (const missingOrDamaged of [null, 'broken', 'f'.repeat(64)]) {
+      replaceDigest.run(missingOrDamaged, ws.id, id);
+      await assert.rejects(runtime.chats.saveInteractionAttachments(record.id, card.id, mapping), changed);
+      await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), changed);
+      assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
+    }
+    replaceDigest.run(refs[0]!.sourceSha256, ws.id, id);
+    database.exec('PRAGMA ignore_check_constraints = OFF');
+    // Inject a database failure after Hive writes the file. It must remove the
+    // private copy and expose neither a new upload nor incomplete evidence.
+    const folder = resolve(refs[0]!.localPath, '..');
+    const existing = await readdir(folder);
+    database.exec(`CREATE TRIGGER fail_fixture_upload BEFORE INSERT ON workspace_uploads WHEN NEW.original_name = 'failed.txt'
+      BEGIN SELECT RAISE(ABORT, 'upload fixture'); END`);
+    const failedPath = join(cwd, 'failed.txt');
+    await writeFile(failedPath, 'retry this source');
+    try { await assert.rejects(runtime.chats.attachments.add(ws.id, failedPath), {status: 500}); }
+    finally { database.exec('DROP TRIGGER fail_fixture_upload'); }
+    assert.deepEqual((await readdir(folder)).sort(), existing.sort());
+    assert.equal(JSON.stringify(await runtime.hive.request('GET', endpoint)).includes('failed.txt'), false);
+    const retried = await runtime.chats.attachments.add(ws.id, failedPath);
+    assert.deepEqual(await readFile(retried.filePath!), Buffer.from('retry this source'));
+  } finally { database.close(); }
+
+  const removed = (await runtime.chats.saveInteractionAttachments(record.id, card.id, {})).receipt;
+  assert.deepEqual(removed.attachments, []);
+  await writeFile(refs[0]!.localPath, inputs[0]!.replacement);
+  await assert.rejects(runtime.chats.saveInteractionAttachments(record.id, card.id, mapping), changed);
+  await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), changed);
+  assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(removed))]);
+  assert.deepEqual(await rows(cwd), []);
+  await writeFile(refs[0]!.localPath, original);
+  assert.equal((await runtime.chats.respondInteraction(record.id, card.id, answer, mapping)).receipt.status, 'callback-handed');
+  await wait(() => rows(cwd), value => value.length === 1);
+  await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping));
+  await writeFile(join(cwd, 'finish'), ''); await done;
+  assert.equal((await rows(cwd)).length, 1);
+  return {workspaceId: ws.id, id: ordinary.attachment.id, expectedDigest: refs[0]!.sourceSha256};
+}
+
 try {
  await runtime.settings.update({piCommand:null,codexCommand:process.execPath});
+ await checkLegacyUploadMigration();
+ const checkedUpload = await checkUploadSourceIntegrity();
  await checkCopyLossBetweenQuestions();
  await checkProjectSnapshotReplacement();
  await checkCopyLossDuringProjectVerification();
@@ -301,6 +404,9 @@ try {
  try {
    await runtime.close();
    runtime = await createDesktopRuntime(join(dir,'state'),()=>{}, {executableEnvironment:{}});
+   const coldUpload = await runtime.hive.locateUpload(checkedUpload.workspaceId, checkedUpload.id);
+   assert.equal(coldUpload?.sourceDigestVersion, 1);
+   assert.equal(coldUpload?.sourceSha256, checkedUpload.expectedDigest);
    await runtime.chats.open(secondHistory.record.id);
    const recovered = runtime.chats.listInteractionAttachments(secondHistory.record.id);
    assert.equal(recovered.unreadableReceipts, 1);
@@ -315,5 +421,5 @@ try {
  assert.equal((await rows(a.cwd)).length,1);
  assert.equal(runtime.chats.listInteractionAttachments(loss.record.id).receipts[0]!.status,'callback-handed');
  assert.deepEqual(await rows(loss.cwd),[]);
- await writeFile(join(dir,'receipt.json'),JSON.stringify({pass:true,syntheticCodexPeer:true,realHiveUploads:true,noModelCalls:true,copyAndNativeImage:true,validation:true,concurrentSubmit:true,staleResolution:['native-resolve','turn-end','abort','exit'],injectedTransportWriteFailure:true,injectedReceiptWriteFailure:true,partialUploadFailure:true,lateCopyLossSafeRetry:true,unrelatedReceiptCorruptionIsolated:true,exactCorruptOrPreparedReceiptBlocksDelivery:true,unrelatedCorruptionAllowsSafeRetry:true,unrelatedCorruptionPreservesColdHistory:true,coldReopenNoReplay:true},null,2));console.log(`INTERACTION_ATTACHMENTS_OK ${dir}`);
+ await writeFile(join(dir,'receipt.json'),JSON.stringify({pass:true,syntheticCodexPeer:true,realHiveUploads:true,noModelCalls:true,copyAndNativeImage:true,validation:true,concurrentSubmit:true,staleResolution:['native-resolve','turn-end','abort','exit'],injectedTransportWriteFailure:true,injectedReceiptWriteFailure:true,partialUploadFailure:true,lateCopyLossSafeRetry:true,uploadSourceDigest:true,legacySchemaMigration:true,unrelatedReceiptCorruptionIsolated:true,exactCorruptOrPreparedReceiptBlocksDelivery:true,unrelatedCorruptionAllowsSafeRetry:true,unrelatedCorruptionPreservesColdHistory:true,coldReopenNoReplay:true},null,2));console.log(`INTERACTION_ATTACHMENTS_OK ${dir}`);
 } finally {await runtime.close();}

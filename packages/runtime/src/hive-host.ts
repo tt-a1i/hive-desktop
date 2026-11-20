@@ -3,6 +3,8 @@ import { isAbsolute } from "node:path";
 import { readPackageVersion } from "@tt-a1i/hive/dist/src/server/package-version.js";
 import { createVersionService } from "@tt-a1i/hive/dist/src/server/version-service.js";
 import { runHiveCommand } from "@tt-a1i/hive/dist/src/cli/hive.js";
+import { HttpError } from "@tt-a1i/hive/dist/src/server/http-errors.js";
+import type { WorkspaceUploadRecord } from "@tt-a1i/hive/dist/src/server/workspace-upload-store.js";
 import { getDefaultRoleDescription } from '@tt-a1i/hive/dist/src/server/role-templates.js';
 import { resolveWorkspaceUiLanguage } from '@tt-a1i/hive/dist/src/server/workspace-ui-language.js';
 import type { HiveAgentRuntimeFactory } from "./hive-runtime-contract.js";
@@ -22,7 +24,12 @@ export class HiveHttpError extends Error {
 
 export interface HiveUpload { record: { mimeType: string; originalName: string }; data: Buffer }
 
-export interface HiveUploadLocation {localPath:string;record:{mimeType:string;originalName:string;sizeBytes:number}}
+export interface HiveUploadLocation {
+    localPath: string;
+    record: {mimeType: string; originalName: string; sizeBytes: number};
+    sourceDigestVersion: number;
+    sourceSha256: string | null;
+}
 
 export interface HiveUserInputRow { type: 'user_input' | 'user_input_cancelled'; text: string }
 export interface SavedScriptContext {scriptRunId: string; cwd: string; command: string; sessionId?: string}
@@ -39,6 +46,7 @@ export interface HiveHost {
     mutateUserInput(workspaceId: string, agentId: string, sequence: number, expectedText: string, replacement: string | null, persistSpool: () => void): void;
     configureAgentLaunch: import("./hive-runtime-contract.js").HiveAgentRuntime["configureAgentLaunch"];
     createMember(workspaceId: string, input: DesktopMemberInput, launch: string | import('./hive-runtime-contract.js').AgentLaunchConfigInput): { id: string };
+    saveDesktopUpload(workspaceId: string, originalName: string, mimeType: string, data: Buffer): Promise<WorkspaceUploadRecord>;
     locateUpload(workspaceId:string,id:string):Promise<HiveUploadLocation | undefined>;
     readUpload(workspaceId: string, id: string): Promise<HiveUpload | null>;
     getNavigation(): string | null;
@@ -167,6 +175,15 @@ export async function createHiveHost({
                 ...input, avatar: null,
                 description: input.description ?? getDefaultRoleDescription(input.role, resolveWorkspaceUiLanguage(runtime.store.settings, workspaceId)),
             }, typeof launch === 'string' ? {command: launch, args: [], commandPresetId: null} : launch);
+        },
+        async saveDesktopUpload(workspaceId, originalName, mimeType, data) {
+            if (closing) throw new Error("Hive host is closed");
+            try {
+                return await runtime.store.saveWorkspaceUpload({workspaceId, originalName, mimeType, data, captureDesktopSourceDigest: true});
+            } catch (error) {
+                if (error instanceof HttpError) throw new HiveHttpError(error.statusCode, {error: error.message});
+                throw error;
+            }
         },
         locateUpload: (workspaceId,id) => {
             if (closing) throw new Error("Hive host is closed");

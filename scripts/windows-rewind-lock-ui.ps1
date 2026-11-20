@@ -42,7 +42,10 @@ try {
   Invoke-Control (Wait-Name ('Checkpoint '+$CheckpointId))
   Invoke-Control (Wait-Name 'Preview rewind')
   Invoke-Control (Wait-Name 'Confirm rewind in place')
-  [void](Wait-Control {param($c) ([string]$c.Current.Name).Contains('Git index is locked by another operation')} 'foreign Git index lock rejection')
+  $status=Wait-Control {param($c) ([string]$c.Current.Name).StartsWith('Operation status: failed '+[char]0x00B7+' ',[StringComparison]::Ordinal)} 'failed rewind operation status'
+  $result.operationId=($status.Current.Name -split ' ')[-1]
+  if($result.operationId -notmatch '^[a-f0-9-]{36}$'){throw 'Failed operation identity unavailable'}
+  [void](Wait-Name '[CHECKPOINT_RESTORE_CONFLICT] Git index is locked by another operation')
   $end=[DateTime]::UtcNow.AddSeconds(10)
   do {
    $apply=@(All-Controls | Where-Object {$_.Current.Name -ceq 'Confirm rewind in place' -and $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button})
@@ -50,7 +53,7 @@ try {
    Start-Sleep -Milliseconds 100
   }while([DateTime]::UtcNow -lt $end)
   if($apply.Count -ne 1 -or $apply[0].Current.IsEnabled){throw 'Failed operation must disable reapplying the preview'}
-  $result.checks+=@('selected original checkpoint','confirmed rewind through native UI','foreign index lock rejection readable','failed preview cannot be reapplied')
+  $result.checks+=@('selected original checkpoint','confirmed rewind through native UI','failed operation status and identity readable','exact foreign index lock rejection readable','failed preview cannot be reapplied')
   Save-NativeWindow (Join-Path $EvidenceDirectory 'windows-rewind-lock-rejection.png')
   [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
   Assert-Draft

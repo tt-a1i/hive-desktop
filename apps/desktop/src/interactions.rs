@@ -7,6 +7,7 @@ mod response;
 mod view;
 
 use crate::language::{english, tr};
+use crate::transport::InteractionRequestError;
 use crate::{
     app::{HiveApp, Status},
     protocol::{AgentInteraction, PiEvent},
@@ -80,6 +81,7 @@ struct QuestionDraft {
 enum InteractionError {
     Message(&'static str),
     MissingIdentity(&'static str),
+    AttachmentCopyUnavailable(String),
 }
 impl From<&'static str> for InteractionError {
     fn from(key: &'static str) -> Self {
@@ -90,6 +92,9 @@ impl InteractionError {
     fn text(&self) -> String {
         match self {
             Self::Message(key) => tr(key).to_owned(),
+            Self::AttachmentCopyUnavailable(_) => tr(
+                "附件副本已丢失、无法读取或已更改。回答已保留。请移除标记的附件，需要时重新选择文件。",
+            ).to_owned(),
             Self::MissingIdentity(backend) => {
                 if english() {
                     format!(
@@ -180,6 +185,16 @@ impl InteractionCard {
     }
     fn importing_attachments(&self) -> bool {
         self.questions.iter().any(|draft| draft.importing)
+    }
+    fn attachment_copy_error(&self, error: InteractionRequestError) -> Option<InteractionError> {
+        let InteractionRequestError::AttachmentCopyUnavailable(id) = error else {
+            return None;
+        };
+        self.questions
+            .iter()
+            .flat_map(|draft| &draft.attachments)
+            .any(|attachment| attachment.id == id)
+            .then_some(InteractionError::AttachmentCopyUnavailable(id))
     }
     fn accepts(&self, decision: &str) -> bool {
         self.raw.params["availableDecisions"]

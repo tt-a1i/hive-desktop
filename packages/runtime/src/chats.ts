@@ -1084,7 +1084,7 @@ export class Chats implements StructuredSessionPort {
       }
       let wasBusy = false;
       const queue = new DeliveryQueue({
-        directory: this.queueDir, sessionId: record.id, startPaused: true,
+        directory: this.queueDir, sessionId: record.id, startPaused: true, holdLegacyCodexSteers:record.backend==='codex',
         completedIds,
         prepare:item=>this.prepareHandoffItem(this.index.get(record.id),item),
         userInputMutationReason: item => {
@@ -1127,7 +1127,7 @@ export class Chats implements StructuredSessionPort {
   }
   private deliveryFailure(id:string,queue:DeliveryQueue) {
     const failure=this.index.peek(id)?.lastDeliveryFailure;
-    return failure?.deliveryId===queue.headId ? failure : undefined;
+    return failure?.deliveryId===queue.headId && !queue.headIsApprovedRetry ? failure : undefined;
   }
   private publishQueueState(id: string, queue: DeliveryQueue, completedReportId?: string): void {
     const handoffDelivery = this.index.peek(id)?.handoff ? this.handoffDeliveries.get(id) : undefined;
@@ -1233,6 +1233,8 @@ export class Chats implements StructuredSessionPort {
   /** Disk projection only: neither an SDK agent session nor a vendor process is opened. */
   private async readOnlySnapshot(record: ChatRecord, identityError: SessionSnapshotError,
       {allowOfflineQueueEdits = false, includeHistory = true} = {}) {
+    const codexVersion = record.backend==='codex' && isDeepStrictEqual(this.index.peek(record.id),record)
+      ? this.index.snapshotVersion(record.id) : undefined;
     const acpVersion = allowOfflineQueueEdits && this.canEditOfflineAcp(record) ? this.index.snapshotVersion(record.id) : undefined;
     const workspace = await this.workspace(record.workspaceId);
     const executionPath = record.execution?.path ?? workspace.path;
@@ -1262,9 +1264,17 @@ export class Chats implements StructuredSessionPort {
         }
       }
     }
-    const queue = acpQueue ?? (allowOfflineQueueEdits && this.offlineHandoffEditable(record) ? this.offlineHandoffQueue(record)
+    const codexOwner=record.backend==='codex'?this.live.get(record.id):undefined;
+    const ownsColdCodex=codexVersion!==undefined&&!codexOwner&&!this.opening.has(record.id)
+      &&this.index.peek(record.id)&&this.index.snapshotVersion(record.id)===codexVersion;
+    let completed:readonly string[]=[];
+    if(ownsColdCodex&&record.identityState==='known'&&record.originAgentId&&(!record.agentId||record.agentId===record.originAgentId)){
+      try{completed=this.savedCodexCompletion(record);}
+      catch{/* The read-only history warning covers inaccessible metadata. No results are inferred. */}
+    }
+    const queue = codexOwner?.queue??acpQueue ?? (allowOfflineQueueEdits && this.offlineHandoffEditable(record) ? this.offlineHandoffQueue(record)
       : new DeliveryQueue({directory: this.queueDir, sessionId: record.id, startPaused: true,
-      completedIds: () => [], userInputMutationReason: () => 'read-only', onError: () => {}, execute: async () => { throw identityError; }}));
+      holdLegacyCodexSteers:!!ownsColdCodex,completedIds: () => completed, userInputMutationReason: () => 'read-only', onError: () => {}, execute: async () => { throw identityError; }}));
     return {...record, ...(record.backend==='acp'&&{capabilities:{...acpCapabilities(undefined,!!record.sessionFile),...(record.capabilities&&{lastObserved:record.capabilities})}}), executionPath, history:restoredHistory.map((message,index)=>handoffMessage(record.backend,message,historyMessageIds[index])), historyMessageIds,
       readOnly: true, identityError: {code: identityError.code, message: identityError.message},
       ...(historyWarning && {historyIncomplete: true, historyWarning}),
@@ -1413,7 +1423,8 @@ export class Chats implements StructuredSessionPort {
       && (state?.status === 'pending' || state?.status === 'reserved');
   }
   private offlineHandoffQueue(record:ChatRecord){
-    return new DeliveryQueue({directory:this.queueDir,sessionId:record.id,startPaused:true,completedIds:()=>[],prepare:item=>this.prepareHandoffItem(record,item),
+    const completed=this.savedCodexCompletion(record);
+    return new DeliveryQueue({directory:this.queueDir,sessionId:record.id,startPaused:true,holdLegacyCodexSteers:record.backend==='codex',completedIds:()=>completed,prepare:item=>this.prepareHandoffItem(record,item),
       userInputMutationReason:item=>(record.originAgentId===`${record.workspaceId}:orchestrator`&&item.presentation?.messageSequence===undefined?'legacy':undefined),onError:()=>{},execute:async()=>{throw new Error('An offline handoff queue cannot execute');}});
   }
   private canEditOfflineAcp(record: ChatRecord): boolean {
@@ -1869,10 +1880,11 @@ export class Chats implements StructuredSessionPort {
   }
   private reconcileUserInputs(record: ChatRecord, queue: DeliveryQueue, acpDeliveries?: AcpHistory['state']['deliveries']): boolean {
     let changed = false;
+    const uncertain = new Set(record.backend === 'codex' ? queue.uncertainSteers.map(item => item.id) : []);
     for (const item of queue.pending) {
       if (acpDeliveries && Object.hasOwn(acpDeliveries, item.id)) continue;
       const sequence = item.presentation?.messageSequence;
-      if (sequence === undefined) continue;
+      if (sequence === undefined || item.retryReviewVersion || uncertain.has(item.id)) continue;
       const row = this.hive.getUserInput(record.workspaceId, (record.agentId ?? record.originAgentId)!, sequence);
       if (!row) throw new Error('Queued input authoritative source is unavailable');
       const canceled = queue.pendingUserInputs.find(input => input.deliveryId === item.id)?.reason === 'canceled';
@@ -1994,7 +2006,8 @@ export class Chats implements StructuredSessionPort {
     if(live?.cleanup||this.opening.has(id))throw new Error('Wait for the ACP session to finish opening or closing');
     const transcript=await AcpHistory.load(record.sessionFile);
     if(!transcript||transcript.state.sessionId!==record.acpSessionId)throw new SessionIdentityError('ACP_SESSION_IDENTITY_CONFLICT','The native session and transcript identities disagree');
-    if(this.live.get(id)!==live||this.opening.has(id)||live?.cleanup||this.index.snapshotVersion(id)!==version)
+    this.assertWorkspaceAvailable(record.workspaceId);
+    if(this.closing||this.live.get(id)!==live||this.opening.has(id)||live?.cleanup||this.index.snapshotVersion(id)!==version)
       throw new Error('ACP session ownership changed; refresh the uncertain delivery');
     const queue=live?.queue??this.offlineAcpQueue(record,version,transcript)??new DeliveryQueue({
       directory:this.queueDir,sessionId:id,startPaused:true,completedIds:()=>[],userInputMutationReason:()=> 'read-only',
@@ -2027,49 +2040,96 @@ export class Chats implements StructuredSessionPort {
       return {sessionId:id,deliveryId,discarded:true,alreadyDiscarded:!pending,nativeOutcome:'unknown' as const};
     });
   }
+  private savedCodexCompletion(record:ChatRecord):readonly string[]{
+    return record.backend==='codex'&&record.codexThreadId
+      ?readCodexMetadata(join(this.sessionDir,'..','codex'),record.codexThreadId).completed:[];
+  }
   private steerIdentity(record:ChatRecord):SteerIdentity{
     const current=this.originIdentity(record);
-    if(current.backend!=='codex'||!current.profile||!current.codexThreadId||current.identityState!=='known'||!current.originAgentId)
+    if(current.backend!=='codex'||!current.profile||!current.codexThreadId||current.identityState!=='known'||!current.originAgentId
+      ||(current.agentId&&current.agentId!==current.originAgentId))
       throw new SessionIdentityError('CODEX_SESSION_IDENTITY_CONFLICT','A known original Codex session is required to review appended input');
     return {sessionId:current.id,workspaceId:current.workspaceId,nativeSessionId:current.codexThreadId,originAgentId:current.originAgentId,profile:current.profile};
   }
-  private reconcileSteerDispositions(record:ChatRecord,queue:DeliveryQueue):void{
+  private reconcileSteerDispositions(record:ChatRecord,queue:DeliveryQueue):boolean{
     const receipts=this.steerDispositions.list(record.id);
     const uncertain=queue.uncertainSteers;
-    if(!receipts.length||!uncertain.length)return;
+    if(!uncertain.length||(!receipts.length&&!uncertain.some(item=>item.retryReviewVersion)))return false;
     const identity=this.steerIdentity(record),remove=new Set<string>();
-    for(const receipt of receipts){
-      const item=uncertain.find(item=>item.id===receipt.deliveryId);
-      if(!item)continue;
-      if(!this.steerDispositions.matches(receipt,identity)||!isDeepStrictEqual(item.presentation,receipt.presentation)||this.steerReviewVersion(identity,item)!==receipt.queueVersion)
+    let changed=false;
+    for(const item of uncertain){
+      const history=receipts.filter(receipt=>receipt.deliveryId===item.id);
+      if(history.some(receipt=>!this.steerDispositions.matches(receipt,identity)))
+        throw Error('The saved local-wait disposition belongs to a different session identity');
+      const previous=item.retryReviewVersion ? history.findIndex(receipt=>receipt.queueVersion===item.retryReviewVersion&&receipt.disposition==='retry-approved') : -1;
+      if(item.retryReviewVersion&&previous<0)throw Error('The saved retry approval for this input is unavailable');
+      const receipt=history[previous+1];
+      if(!receipt)continue;
+      if(history.length!==previous+2||!isDeepStrictEqual(item.presentation,receipt.presentation)||this.steerReviewVersion(identity,item)!==receipt.queueVersion)
         throw Error('The saved local-wait disposition does not match the original queued input');
-      remove.add(item.id);
+      if(receipt.disposition==='retry-approved'){
+        if(receipt.inputVersion!==this.steerRetryInputVersion(item))throw Error('The saved retry approval does not match the original queued input');
+        this.assertSteerRetrySource(identity,item);
+        queue.approveUncertainRetry(item.id,receipt.queueVersion);
+      }else remove.add(item.id);
+      changed=true;
     }
     if(remove.size)queue.discardPending(remove);
+    return changed;
   }
   private async uncertainCodexState<T>(id:string,operation:(state:{record:ChatRecord;identity:SteerIdentity;queue:DeliveryQueue;live:LiveChat|undefined})=>T){
+    if(this.closing)throw Error('Chat runtime is closing');
     const record=this.originIdentity(this.index.get(id)),identity=this.steerIdentity(record);
     this.assertWorkspaceAvailable(record.workspaceId);
     const version=this.index.snapshotVersion(id),live=this.live.get(id);
     if(live?.cleanup||this.opening.has(id))throw Error('Wait for this session to finish opening or closing');
     await this.profiles.getRef(identity.profile,'codex');
-    if(this.live.get(id)!==live||this.opening.has(id)||live?.cleanup||this.index.snapshotVersion(id)!==version)
+    this.assertWorkspaceAvailable(record.workspaceId);
+    if(this.closing||this.live.get(id)!==live||this.opening.has(id)||live?.cleanup||this.index.snapshotVersion(id)!==version)
       throw Error('Session ownership changed; refresh the uncertain input');
     if(live&&(live.handle as CodexSessionHandle).threadId!==identity.nativeSessionId)throw Error('Native session identity changed');
-    const completed=live?live.handle.completedDeliveryIds():readCodexMetadata(join(this.sessionDir,'..','codex'),identity.nativeSessionId).completed;
+    const completed=live?live.handle.completedDeliveryIds():this.savedCodexCompletion(record);
     const before=live?.queue.pendingCount??DeliveryQueue.persistedCount(this.queueDir,id);
-    const queue=live?.queue??new DeliveryQueue({directory:this.queueDir,sessionId:id,startPaused:true,completedIds:()=>completed,
+    const queue=live?.queue??new DeliveryQueue({directory:this.queueDir,sessionId:id,startPaused:true,holdLegacyCodexSteers:true,completedIds:()=>completed,
       onError:()=>{},execute:async()=>{throw Error('Review cannot start native work');}});
-    if(queue.isPaused&&!queue.busy&&!queue.hasLiveSteering){queue.reconcileCompletedSteers();this.reconcileSteerDispositions(record,queue);}
-    if(!live&&queue.pendingCount!==before)this.publishQueueState(id,queue);
+    let reconciled=false;
+    if(queue.isPaused&&!queue.busy&&!queue.hasLiveSteering){
+      queue.reconcileCompletedSteers();
+      reconciled=this.reconcileSteerDispositions(record,queue);
+    }
+    if(!live&&(reconciled||queue.pendingCount!==before))this.publishQueueState(id,queue);
     // Do not return an offline queue across an await boundary. Ownership check,
     // fresh spool read, receipt commit and queue mutation run in one synchronous
     // turn, so concurrent reviews/discards or native opens cannot use stale owners.
     return operation({record,identity,queue,live});
   }
+  private assertSteerRetrySource(identity:SteerIdentity,item:DeliveryItem):void{
+    const presentation=item.presentation;
+    if(presentation?.origin!=='user')throw Error('Only the original user input can be retried');
+    if(presentation.messageSequence===undefined)return;
+    const source=this.hive.getUserInput(identity.workspaceId,identity.originAgentId,presentation.messageSequence);
+    if(source?.type!=='user_input'||source.text!==(presentation.sourceText??presentation.displayText))
+      throw Error('The original Hive input has changed or is unavailable; review the native history before discarding the local wait');
+  }
+  private assertApprovedSteerRetries(record:ChatRecord,queue:DeliveryQueue):void{
+    const approved=queue.approvedRetries;
+    if(!approved.length)return;
+    const identity=this.steerIdentity(record),receipts=this.steerDispositions.list(record.id);
+    for(const item of approved){
+      const last=receipts.findLast(receipt=>receipt.deliveryId===item.id);
+      if(!last||last.disposition!=='retry-approved'||last.queueVersion!==item.retryReviewVersion
+        ||!this.steerDispositions.matches(last,identity)||last.inputVersion!==this.steerRetryInputVersion(item))
+        throw Error('The saved retry approval does not match the original queued input');
+      this.assertSteerRetrySource(identity,item);
+    }
+  }
   private steerDispositionView(receipt:SteerDisposition){
-    return {deliveryId:receipt.deliveryId,text:receipt.presentation.displayText,origin:'user',attachments:receipt.presentation.attachments??[],version:receipt.queueVersion,
-      notice:`Local wait discarded at ${receipt.decidedAt}; native outcome was unknown. Receipt: ${receipt.deliveryId}`};
+    return {deliveryId:receipt.deliveryId,text:receipt.presentation.displayText,origin:'user',attachments:receipt.presentation.attachments??[],version:receipt.queueVersion,disposition:receipt.disposition,decidedAt:receipt.decidedAt,
+      notice:`${receipt.disposition==='retry-approved'?'Duplicate-risk retry approved':'Local wait discarded'} at ${receipt.decidedAt}; native outcome was unknown. Receipt: ${receipt.deliveryId}`};
+  }
+  private steerRetryInputVersion(item:DeliveryItem):string{
+    const {id,text,triggerTurn,presentation,images,contextRef,steerUser}=item;
+    return createHash('sha256').update(JSON.stringify({id,text,triggerTurn,presentation,images,contextRef,steerUser})).digest('hex');
   }
   private steerReviewVersion(identity:SteerIdentity,item:import('./delivery-queue.js').DeliveryItem):string{
     return createHash('sha256').update(JSON.stringify({identity,item})).digest('hex');
@@ -2083,7 +2143,7 @@ export class Chats implements StructuredSessionPort {
         blockedReason:'Stop and finish the current turn before reviewing uncertain input'};
       return {sessionId:id,profile:record.profile,nativeSessionId:identity.nativeSessionId,resolved,deliveries:queue.uncertainSteers.map(item=>({
         deliveryId:item.id,text:item.presentation!.displayText,origin:'user',attachments:item.presentation!.attachments??[],version:this.steerReviewVersion(identity,item),
-        notice:'This new appended input may already have been accepted. Discard only its local wait; native history and the original audit remain unchanged.'}))};
+        notice:'This input may already have been accepted. Review native history before explicitly approving a possibly duplicate retry or discarding only its local wait; native history and the original audit remain unchanged.'}))};
       });
     });
   }
@@ -2093,9 +2153,9 @@ export class Chats implements StructuredSessionPort {
       return this.uncertainCodexState(id,({identity,queue,live})=>{
       if(!isDeepStrictEqual(identity.profile,expectedProfile)||identity.nativeSessionId!==expectedNativeSessionId)throw Error('The reviewed session identity changed; refresh before discarding');
       if(!queue.isPaused||queue.busy||queue.hasLiveSteering)throw Error('Stop and finish the current turn before discarding a local wait');
-      const existing=this.steerDispositions.list(id).find(receipt=>receipt.deliveryId===deliveryId);
+      const existing=this.steerDispositions.list(id).find(receipt=>receipt.deliveryId===deliveryId&&receipt.queueVersion===expectedVersion);
       if(existing){
-        if(!this.steerDispositions.matches(existing,identity)||existing.presentation.displayText!==expectedText||existing.queueVersion!==expectedVersion)throw Error('The reviewed disposition changed');
+        if(existing.disposition!=='discarded-local-wait'||!this.steerDispositions.matches(existing,identity)||existing.presentation.displayText!==expectedText||existing.queueVersion!==expectedVersion)throw Error('The reviewed disposition changed');
         return {sessionId:id,deliveryId,discarded:true,alreadyDiscarded:true,nativeOutcome:'unknown',receipt:this.steerDispositionView(existing)};
       }
       const item=queue.uncertainSteers.find(item=>item.id===deliveryId);
@@ -2111,6 +2171,24 @@ export class Chats implements StructuredSessionPort {
       return {sessionId:id,deliveryId,discarded:true,alreadyDiscarded:false,nativeOutcome:'unknown',receipt:this.steerDispositionView(receipt)};
       });
     });
+  }
+  async retryUncertainDelivery(id:string,deliveryId:string,expectedText:string,expectedProfile:unknown,expectedNativeSessionId:string,expectedVersion:unknown){
+    return this.withWorkspace(this.index.get(id).workspaceId,async()=>this.uncertainCodexState(id,({identity,queue,live})=>{
+      if(!isDeepStrictEqual(identity.profile,expectedProfile)||identity.nativeSessionId!==expectedNativeSessionId)throw Error('The reviewed session identity changed; refresh before retrying');
+      const existing=this.steerDispositions.list(id).find(receipt=>receipt.deliveryId===deliveryId&&receipt.queueVersion===expectedVersion);
+      if(existing){
+        if(existing.disposition!=='retry-approved'||!this.steerDispositions.matches(existing,identity)||existing.presentation.displayText!==expectedText||existing.queueVersion!==expectedVersion)throw Error('The reviewed disposition changed');
+        return {sessionId:id,deliveryId,retryApproved:true,alreadyApproved:true,nativeOutcome:'unknown',receipt:this.steerDispositionView(existing)};
+      }
+      if(!queue.isPaused||queue.busy||queue.hasLiveSteering)throw Error('Stop and finish the current turn before approving a retry');
+      const item=queue.uncertainSteers.find(item=>item.id===deliveryId);
+      if(!item?.presentation||item.presentation.displayText!==expectedText||this.steerReviewVersion(identity,item)!==expectedVersion)throw Error('The reviewed input or attachment identity changed; refresh before retrying');
+      this.assertSteerRetrySource(identity,item);
+      const receipt=this.steerDispositions.record(identity,deliveryId,item.presentation,expectedVersion as string,'retry-approved',this.steerRetryInputVersion(item));
+      queue.approveUncertainRetry(deliveryId,receipt.queueVersion);
+      if(!live)this.publishQueueState(id,queue);
+      return {sessionId:id,deliveryId,retryApproved:true,alreadyApproved:false,nativeOutcome:'unknown',receipt:this.steerDispositionView(receipt)};
+    }));
   }
   listInteractionAttachments(id: string) {
     const record = this.index.get(id);
@@ -2142,6 +2220,9 @@ export class Chats implements StructuredSessionPort {
     this.preparingInteractions.add(key);
     try {
       const {record, chat, interaction} = this.pendingAttachmentInteraction(id, interactionId);
+      if (this.interactionAttachments.hasUncertainResponse(record.workspaceId, id, interaction)) {
+        throw new CodexInteractionError('INTERACTION_STALE', 'This response may already have been handed to Codex; automatic retry is disabled');
+      }
       const identity = interactionIdentity(interaction);
       const recheck = () => {
         const current = this.pendingAttachmentInteraction(id, interactionId);
@@ -2153,14 +2234,17 @@ export class Chats implements StructuredSessionPort {
       await this.runnableIdentity(record);
       await this.initializationReady(record);
       recheck();
-      const receipt = await this.interactionAttachments.prepare(record.workspaceId, id, interaction, attachmentsByQuestionId);
+      const {receipt, copies} = await this.interactionAttachments.prepare(record.workspaceId, id, interaction, attachmentsByQuestionId);
       recheck();
-      if (!submission) return {receipt: this.interactionAttachments.write(receipt, 'draft')};
+      if (!submission) {
+        this.interactionAttachments.validateCopies(copies);
+        return {receipt: this.interactionAttachments.write(receipt, 'draft')};
+      }
       const composed = composeQuestionAttachmentResponse(submission.response, receipt);
       chat.handle.validateInteractionResponse!(interactionId, composed);
       // Verify copies before durable preparation and the final pending check.
       // No answer text enters the receipt. Cold reads never replay this native callback.
-      await this.interactionAttachments.validateCopies(receipt);
+      this.interactionAttachments.validateCopies(copies);
       recheck();
       const prepared = this.interactionAttachments.write(receipt, 'prepared');
       recheck();
@@ -2234,7 +2318,10 @@ export class Chats implements StructuredSessionPort {
       await this.activateOnce(id);
       const ready = await this.require(id);
       if (ready.failure || ready.cleanup) throw ready.failure ?? new Error('Conversation cleanup is still active');
-      ready.queue.resume();
+      if(this.index.get(id).backend==='codex'){
+        this.assertApprovedSteerRetries(this.index.get(id),ready.queue);
+        ready.queue.resume({allowApprovedRetries:true});
+      }else ready.queue.resume();
       return { ok: true };
       }finally{this.handoffStarting.delete(id);}
     });

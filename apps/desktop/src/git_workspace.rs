@@ -468,6 +468,7 @@ pub(crate) struct GitWorkspace {
     index_refresh_required: bool,
     commit_preview: Option<CommitPreview>,
     commit_message: Entity<TextareaState>,
+    commit_trigger_focus: FocusHandle,
     commit_include_outside: bool,
     commit_result: Option<CommitResult>,
     commit_scroll: ScrollHandle,
@@ -586,6 +587,7 @@ impl HiveApp {
                         .auto_grow(2, 5)
                         .placeholder(tr("提交说明"))
                 }),
+                commit_trigger_focus: cx.focus_handle(),
                 commit_include_outside: false,
                 commit_result: None,
                 commit_scroll: ScrollHandle::new(),
@@ -1700,7 +1702,11 @@ impl Render for GitWorkspace {
                                                     .on_click(cx.listener(|this, _, _, cx| this.preview_index(IndexOperation::Unstage, cx))),
                                             )
                                             .child(
-                                                Button::new("git-commit-preview")
+                                                crate::focus_scroll::Reveal::new(
+                                                    "git-commit-preview-reveal",
+                                                    &self.body_scroll,
+                                                    Button::new("git-commit-preview")
+                                                    .track_focus(&self.commit_trigger_focus)
                                                     .primary()
                                                     .xsmall()
                                                     .h(px(22.))
@@ -1710,6 +1716,7 @@ impl Render for GitWorkspace {
                                                     .tooltip(tr("提交已暂存改动"))
                                                     .disabled(!can_index || !has_any_staged)
                                                     .on_click(cx.listener(|this, _, _, cx| this.preview_commit(cx))),
+                                                ),
                                             ),
                                     ),
                             )
@@ -2215,9 +2222,10 @@ impl Render for GitWorkspace {
                                             .xsmall()
                                             .label(tr("取消"))
                                             .disabled(self.index_busy)
-                                            .on_click(cx.listener(|this, _, _, cx| {
+                                            .on_click(cx.listener(|this, _, window, cx| {
                                                 this.index_generation += 1;
                                                 this.clear_commit_preview();
+                                                this.commit_trigger_focus.focus(window, cx);
                                                 cx.notify();
                                             })),
                                     ),

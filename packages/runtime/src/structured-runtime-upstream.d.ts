@@ -61,10 +61,14 @@ declare module "@tt-a1i/hive/dist/src/server/team-memory-injection.js" {
 	}): void;
 }
 declare module "@tt-a1i/hive/dist/src/server/http-errors.js" {
-	export class PtyInactiveError extends Error {
+	export class HttpError extends Error {
+		readonly statusCode: number;
+		constructor(statusCode: number, message: string);
+	}
+	export class PtyInactiveError extends HttpError {
 		constructor(message: string);
 	}
-	export class ConflictError extends Error {
+	export class ConflictError extends HttpError {
 		constructor(message: string);
 	}
 }

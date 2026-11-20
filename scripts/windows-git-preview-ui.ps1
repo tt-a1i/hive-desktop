@@ -128,8 +128,8 @@ try {
             $result.stages.focusAfterTab = Wait-UsableFocus 3
         }
         $result.stages.cancelledExpandedPatch = $true
-        if (-not $result.stages.focusAfterCancel.valid -and -not $result.stages.focusAfterTab.valid) {
-            throw 'Focus did not reach an actionable current-window control after Cancel or Tab.'
+        if (-not $result.stages.focusAfterCancel.valid -or $result.stages.focusAfterCancel.final.name -cne 'Commit…') {
+            throw 'Cancel did not restore focus to the visible Commit action.'
         }
         Invoke-Control (Wait-Name 'Close Git drawer')
         $composer = Wait-Name 'Conversation messages'
