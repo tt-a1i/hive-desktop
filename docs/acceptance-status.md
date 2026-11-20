@@ -962,6 +962,10 @@ Mac分发新增真实图标/版本与DMG，包内身份解码、六组后台gate
 
 近期欢迎/路径/图片/成员语义及删除后配置修复已进入46373f6 current/candidate：六组包gate＋包内删除后历史/路径专项通过，真实解压app项目草稿往返/冷读、Finder更新Applications/品牌欢迎及退出回收通过，见[本批开发包](validation/2026-11-10-navigation-package.md)。ZIP143,856,220字节，SHA4b0fe6ee…；前文“未入db6fb20”为历史阶段现已纳入。无新增厂商模型请求，完整UIUX/厂商/Windows原生与正式发行仍待。
 
+### Windows 中文输入法前置条件（2026-11-20）
+
+[托管 Windows Server 2025 作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44630032519)在前台窗口枚举到五个繁体和两个简体中文 TSF 配置，运行时均未激活。加载的键盘布局只有美式，TSF 活动语言列表只返回 0409。第一次收据未正确展开用户语言集合，也没有把组件状态转换为名称，不能据此断言已安装中文语言包。新版检查逐项保存用户语言、组件状态名称和输入服务类别，只在测试窗口线程尝试激活简体键盘服务，并记录 HRESULT、原生文本框的组合字节数以及恢复结果。Hive 内首次 Enter 确认候选、再次 Enter 只发送一次的 Windows 原生验收仍待完成。
+
 ### Windows 同一固定包区分 Codex 追加返回结果（2026-11-20）
 
 两项 Windows 原生回放都使用 478c03b 的同一 ZIP（SHA-256 `d05bfcd74d15af2114fbc9056887c72b066ecee35b82e1d0b75715ea4e370832`）和离线受控对端。[明确拒绝](https://github.com/tt-a1i/hive-desktop/actions/runs/44637214943)中，窗口停止后可编辑原投递；冷开再继续，只发送编辑后的内容一次。[结果不明](https://github.com/tt-a1i/hive-desktop/actions/runs/44637219730)中，停止后锁定原项，核对并二次确认只移除本地等待；处置阶段原生历史未变，原项始终没有重发，冷开后续项只送一次。两项均保留独立草稿及 57 字节附件，所有测试窗口正常退出。此范围是新格式记录与受控 Codex。

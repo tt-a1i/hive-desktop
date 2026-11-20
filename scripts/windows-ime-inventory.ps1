@@ -20,14 +20,36 @@ public interface IEnumLanguageProfiles {
 public interface IProfiles {
  void Register(); void Unregister(); void AddLanguageProfile(); void RemoveLanguageProfile(); void EnumInputProcessorInfo();
  void GetDefaultLanguageProfile(); void SetDefaultLanguageProfile(); void ActivateLanguageProfile(); void GetActiveLanguageProfile();
- void GetLanguageProfileDescription(); void GetCurrentLanguage(); void ChangeCurrentLanguage();
+ [PreserveSig] int GetLanguageProfileDescription(ref Guid clsid, ushort langid, ref Guid profile, [MarshalAs(UnmanagedType.BStr)] out string description);
+ void GetCurrentLanguage(); void ChangeCurrentLanguage();
  void GetLanguageList(out IntPtr languages, out uint count);
  void EnumLanguageProfiles(ushort langid, out IEnumLanguageProfiles profiles);
+}
+[ComImport, Guid("71c6e74c-0f28-11d8-a82a-00065b84435c"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IProfileManager {
+ [PreserveSig] int ActivateProfile(uint type, ushort langid, ref Guid clsid, ref Guid profile, IntPtr hkl, uint flags);
+ [PreserveSig] int DeactivateProfile(uint type, ushort langid, ref Guid clsid, ref Guid profile, IntPtr hkl, uint flags);
 }
 public static class ImeInventory {
  [DllImport("user32.dll")] public static extern int GetKeyboardLayoutList(int count, [Out] IntPtr[] layouts);
  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+ [DllImport("user32.dll")] public static extern IntPtr GetKeyboardLayout(uint thread);
+ [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr ActivateKeyboardLayout(IntPtr layout, uint flags);
+ [DllImport("imm32.dll")] public static extern IntPtr ImmGetContext(IntPtr window);
+ [DllImport("imm32.dll")] public static extern bool ImmReleaseContext(IntPtr window, IntPtr context);
+ [DllImport("imm32.dll", CharSet=CharSet.Unicode)] public static extern int ImmGetCompositionStringW(IntPtr context, uint index, IntPtr buffer, uint length);
+ public static int CompositionBytes(IntPtr window) {
+  var context = ImmGetContext(window); if (context == IntPtr.Zero) return -1;
+  try { return ImmGetCompositionStringW(context, 8, IntPtr.Zero, 0); }
+  finally { ImmReleaseContext(window, context); }
+ }
+ public static int ActivateChinese(string clsid, string profile) {
+  var manager = (IProfileManager)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("33c53a50-f456-4884-b049-85fd643ecfed")));
+  var serviceId = new Guid(clsid); var profileId = new Guid(profile);
+  try { return manager.ActivateProfile(1, 0x0804, ref serviceId, ref profileId, IntPtr.Zero, 0); }
+  finally { Marshal.ReleaseComObject(manager); }
+ }
  public static object Snapshot() {
   int count = GetKeyboardLayoutList(0, null); if (count <= 0) throw new Exception("Unable to enumerate loaded keyboard layouts");
   var layouts = new IntPtr[count]; if (GetKeyboardLayoutList(count, layouts) != count) throw new Exception("Loaded keyboard layouts changed during enumeration");
@@ -43,8 +65,13 @@ public static class ImeInventory {
     try {
      profiles.EnumLanguageProfiles(id, out enumeration);
      LanguageProfile profile; uint fetched; int hr;
-     while ((hr = enumeration.Next(1, out profile, out fetched)) == 0 && fetched == 1)
-      entries.Add(new { language = id.ToString("X4"), clsid = profile.clsid.ToString(), category = profile.catid.ToString(), profile = profile.profile.ToString(), active = profile.active != 0 });
+     while ((hr = enumeration.Next(1, out profile, out fetched)) == 0 && fetched == 1) {
+      string description; int descriptionResult = profiles.GetLanguageProfileDescription(ref profile.clsid, id, ref profile.profile, out description);
+      entries.Add(new { language = id.ToString("X4"), clsid = profile.clsid.ToString(), category = profile.catid.ToString(),
+       keyboardInputProcessor = profile.catid == new Guid("34745c63-b2f0-4784-8b67-5e12c8701a31"),
+       profile = profile.profile.ToString(), active = profile.active != 0, description = description,
+       descriptionHresult = "0x" + unchecked((uint)descriptionResult).ToString("X8") });
+     }
      if (hr < 0) Marshal.ThrowExceptionForHR(hr);
     } finally { if (enumeration != null) Marshal.ReleaseComObject(enumeration); }
    }
@@ -53,13 +80,16 @@ public static class ImeInventory {
  }
 }
 '@
-$receipt = [ordered]@{ status='failed'; meaning='Read-only inventory, not an IME interaction test'; windows=$null; desktop=$null; userLanguages=$null; chineseCapabilities=$null; capabilityError=$null; tsf=$null; error=$null }
+$receipt = [ordered]@{ status='failed'; meaning='Read-only inventory, not an IME interaction test'; windows=$null; desktop=$null; userLanguages=$null; chineseCapabilities=$null; capabilityError=$null; tsf=$null; control=$null; error=$null }
 $form = $null
 try {
  $os = Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber
  $receipt.windows = $os
- $receipt.userLanguages = @(Get-WinUserLanguageList | Select-Object LanguageTag, InputMethodTips)
- try { $receipt.chineseCapabilities = @(Get-WindowsCapability -Online | Where-Object { $_.Name -match '^Language\..*~~~zh-' } | Select-Object Name, State) }
+ $languageList = Get-WinUserLanguageList
+ $receipt.userLanguages = @(foreach ($language in $languageList) {
+  [pscustomobject]@{ LanguageTag = $language.LanguageTag; InputMethodTips = @($language.InputMethodTips) }
+ })
+ try { $receipt.chineseCapabilities = @(Get-WindowsCapability -Online | Where-Object { $_.Name -match '^Language\..*~~~zh-' } | Select-Object Name, @{ Name='State'; Expression={ $_.State.ToString() } }) }
  catch { $receipt.capabilityError = $_.Exception.ToString() }
  $oldForeground = [ImeInventory]::GetForegroundWindow()
  $form = New-Object Windows.Forms.Form
@@ -68,6 +98,35 @@ try {
  [Windows.Forms.Application]::DoEvents()
  $receipt.desktop = @{ userInteractive=[Environment]::UserInteractive; previousForegroundPresent=($oldForeground -ne [IntPtr]::Zero); fixtureForeground=([ImeInventory]::GetForegroundWindow() -eq $form.Handle) }
  $receipt.tsf = [ImeInventory]::Snapshot()
+ # Activate only on this fixture thread. Never enable a profile or change the
+ # language list. A successful HRESULT alone is not evidence of composition.
+ $oldLayout = [ImeInventory]::GetKeyboardLayout(0)
+ $control = [ordered]@{ attempts=@(); compositionBytes=$null; restored=$false; activeProfilesRestored=$false; error=$null }
+ try {
+  $textbox = New-Object Windows.Forms.TextBox
+  $form.Controls.Add($textbox); $textbox.Focus() | Out-Null; [Windows.Forms.Application]::DoEvents()
+  foreach ($profile in @($receipt.tsf.chineseTsfProfiles | Where-Object { $_.language -eq '0804' -and $_.keyboardInputProcessor })) {
+   $hr = [ImeInventory]::ActivateChinese($profile.clsid, $profile.profile)
+   $control.attempts += @{ clsid=$profile.clsid; profile=$profile.profile; hresult=('0x{0:X8}' -f ([uint32]([int64]$hr -band 0xffffffff))) }
+   if ($hr -eq 0) {
+    if (-not $textbox.Focused -or [ImeInventory]::GetForegroundWindow() -ne $form.Handle) { throw 'Fixture textbox lost foreground focus before input.' }
+    [Windows.Forms.SendKeys]::SendWait('ni')
+    $end = [DateTime]::UtcNow.AddSeconds(3)
+    do { [Windows.Forms.Application]::DoEvents(); $control.compositionBytes = [ImeInventory]::CompositionBytes($textbox.Handle); if ($control.compositionBytes -gt 0) { break }; Start-Sleep -Milliseconds 100 } while ([DateTime]::UtcNow -lt $end)
+    break
+   }
+  }
+ } catch { $control.error = $_.Exception.ToString() }
+ finally {
+  if ([ImeInventory]::GetKeyboardLayout(0) -ne $oldLayout) { [void][ImeInventory]::ActivateKeyboardLayout($oldLayout, 0) }
+  $control.restored = [ImeInventory]::GetKeyboardLayout(0) -eq $oldLayout
+  $after = [ImeInventory]::Snapshot()
+  $beforeActive = @($receipt.tsf.chineseTsfProfiles | Where-Object { $_.active } | ForEach-Object { $_.profile } | Sort-Object) -join ','
+  $afterActive = @($after.chineseTsfProfiles | Where-Object { $_.active } | ForEach-Object { $_.profile } | Sort-Object) -join ','
+  $control.activeProfilesRestored = $beforeActive -ceq $afterActive
+  $receipt.control = $control
+ }
+ if (-not $control.restored -or -not $control.activeProfilesRestored) { throw 'Fixture input state failed to restore.' }
  $receipt.status = 'passed'
 } catch { $receipt.error = $_.Exception.ToString() }
 finally {
