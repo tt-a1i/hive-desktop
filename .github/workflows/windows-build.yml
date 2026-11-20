@@ -289,6 +289,7 @@ jobs:
           path: |
             target/windows-*.png
             target/windows-html-preview-*.json
+            target/windows-html-recovery-*.json
           if-no-files-found: warn
       - name: Verify update and rollback from the extracted Windows desktop
         if: ${{ !cancelled() && steps.extracted_runtime.outcome == 'success' }}
@@ -614,6 +615,7 @@ jobs:
             target/windows-*.png
             target/windows-replay.log
             target/windows-html-preview-*.json
+            target/windows-html-recovery-*.json
             target/windows-terminal-smoke.log
             target/replay-provenance.json
             target/checkpoint-fixture-provenance.json

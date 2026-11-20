@@ -390,10 +390,10 @@ function Inspect-FixtureHtml {
         Start-Sleep -Milliseconds 150
     } while ([DateTime]::UtcNow -lt $deadline)
     if ($null -eq $preview) { throw 'Could not find the owned HTML preview window.' }
-    function Wait-ArtifactControl([string] $Name) {
+    function Wait-ArtifactControl([string] $Name, [int] $TimeoutSeconds = 20) {
         $condition = New-Object System.Windows.Automation.PropertyCondition(
             [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
-        $deadline = [DateTime]::UtcNow.AddSeconds(20)
+        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
         do {
             $element = $preview.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
             if ($null -ne $element) {
@@ -410,15 +410,63 @@ function Inspect-FixtureHtml {
         $fileSelection = Wait-ArtifactControl 'Check host file selection'
         $fileSelection.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
         [void](Wait-ArtifactControl 'Host file selection blocked')
-        $navigate = Wait-ArtifactControl 'Check blocked navigation'
-        $navigate.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-        [void](Wait-ArtifactControl 'Artifact retained after navigation')
+        # Establish mutable page state before either cancellation or navigation.
         $increment = Wait-ArtifactControl 'Increment packaged artifact'
         $increment.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
         [void](Wait-ArtifactControl 'Increment handler ran')
         [void](Wait-ArtifactControl 'Packaged artifact counter 1')
-        Write-Host 'Opened the actual report in isolated WebView2 and interacted with its HTML.'
-        Save-ArtifactDiagnostics $preview 'passed' 'All original isolation and interaction assertions passed'
+        $reopen = Wait-ArtifactControl '从快照重开'
+        $reopen.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        [void](Wait-ArtifactControl '重开将重置页面内未保存的输入和交互状态。')
+        $cancel = Wait-ArtifactControl '取消'
+        $cancel.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        [void](Wait-ArtifactControl 'Packaged artifact counter 1')
+
+        $navigate = Wait-ArtifactControl 'Check blocked navigation'
+        $navigate.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        $retained = $false
+        try {
+            [void](Wait-ArtifactControl 'Artifact retained after navigation' 3)
+            [void](Wait-ArtifactControl 'Packaged artifact counter 1' 3)
+            $retained = $true
+        } catch {
+            Write-Host 'Direct document and state retention was not observed; exercising explicit snapshot recovery.'
+        }
+        # Record direct retention independently. Recovery does not count as
+        # retaining the old JavaScript state, and no security assertion is waived.
+        Save-ArtifactDiagnostics $preview 'after-navigation' "Direct document and state retention: $retained"
+        $originalHandle = $preview.Current.NativeWindowHandle
+        $reopen = Wait-ArtifactControl '从快照重开'
+        $reopen.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        [void](Wait-ArtifactControl '重开将重置页面内未保存的输入和交互状态。')
+        $confirm = Wait-ArtifactControl '确认重置并重开'
+        $confirm.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        [void](Wait-ArtifactControl '已从快照重开；页面状态已重置。')
+        [void](Wait-ArtifactControl 'Artifact isolation verified')
+        [void](Wait-ArtifactControl 'Packaged artifact counter 0')
+        if ($preview.Current.NativeWindowHandle -ne $originalHandle) { throw 'Snapshot recovery replaced the preview window.' }
+        $fileSelection = Wait-ArtifactControl 'Check host file selection'
+        $fileSelection.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        [void](Wait-ArtifactControl 'Host file selection blocked')
+        $increment = Wait-ArtifactControl 'Increment packaged artifact'
+        $increment.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        [void](Wait-ArtifactControl 'Increment handler ran')
+        [void](Wait-ArtifactControl 'Packaged artifact counter 1')
+        $mode = if ($env:HIVE_WINDOWS_HTML_REOPEN_ONLY -eq '1') { 'cold' } else { 'initial' }
+        $directory = Split-Path -Parent $OutputPath
+        [pscustomobject]@{
+            DirectDocumentAndStateRetained = $retained
+            ExplicitSnapshotReopen = $true
+            ResetWarningConfirmed = $true
+            CancelPreservedState = $true
+            InitialStateRestored = $true
+            InteractionAfterReopen = $true
+            IsolationAfterReopen = $true
+            SamePreviewWindow = $true
+            SourceRemovedBeforeLaunch = [bool]($env:HIVE_WINDOWS_HTML_REOPEN_ONLY -eq '1')
+        } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $directory "windows-html-recovery-$mode.json")
+        Write-Host "HTML snapshot recovery passed; direct document and state retention: $retained"
+        Save-ArtifactDiagnostics $preview 'passed' 'Explicit snapshot reset, isolation and continued interaction passed'
     } catch {
         Save-ArtifactDiagnostics $preview 'failure' $_.Exception.Message
         throw

@@ -139,7 +139,12 @@ mod engine {
 
     fn frame_document(html: &str) -> Vec<u8> {
         let mut page = format!(
-            r#"<!doctype html><meta charset="utf-8"><meta http-equiv="x-dns-prefetch-control" content="off"><style>html,body,iframe{{margin:0;width:100%;height:100%;overflow:hidden;border:0;display:block}}</style><iframe title="HTML artifact" sandbox="allow-scripts" allow="{FRAME_PERMISSIONS}" referrerpolicy="no-referrer" srcdoc=""#
+            r#"<!doctype html><meta charset="utf-8"><meta http-equiv="x-dns-prefetch-control" content="off"><style>html,body{{margin:0;width:100%;height:100%;overflow:hidden}}body{{display:flex;flex-direction:column;font:14px system-ui,sans-serif;background:#fff;color:#202020}}header{{flex:none;padding:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid #ddd}}button{{font:inherit;padding:5px 10px}}[hidden]{{display:none!important}}iframe{{width:100%;flex:1;min-height:0;border:0;display:block}}</style><header><button id="reopen">{}</button><span id="hint">{}</span><span id="confirmation" hidden><span>{}</span> <button id="confirm">{}</button> <button id="cancel">{}</button></span><span id="status" role="status"></span></header><iframe title="HTML artifact" sandbox="allow-scripts" allow="{FRAME_PERMISSIONS}" referrerpolicy="no-referrer" srcdoc=""#,
+            tr("从快照重开"),
+            tr("页面空白或无法操作时，可从已保存的快照重开。"),
+            tr("重开将重置页面内未保存的输入和交互状态。"),
+            tr("确认重置并重开"),
+            tr("取消"),
         );
         let policy = format!(
             r#"<!doctype html><meta charset="utf-8"><meta http-equiv="x-dns-prefetch-control" content="off"><meta http-equiv="Content-Security-Policy" content="{OFFLINE_CSP}; frame-src 'none'">"#
@@ -154,6 +159,45 @@ mod engine {
             }
         }
         page.push_str("\"></iframe>");
+        // The recovery UI belongs to the trusted outer document. The opaque
+        // artifact cannot reach it or replace the captured snapshot. Reassigning
+        // srcdoc deliberately resets the page, without relaxing any navigation
+        // guard, re-serving the one-shot document, or rereading a source file.
+        page.push_str(
+            r#"<script>(() => {
+            const frame = document.querySelector('iframe');
+            const snapshot = frame.getAttribute('srcdoc');
+            const reopen = document.getElementById('reopen');
+            const confirmation = document.getElementById('confirmation');
+            const hint = document.getElementById('hint');
+            const status = document.getElementById('status');
+            const finish = () => {
+                confirmation.hidden = true;
+                hint.hidden = false;
+                reopen.hidden = false;
+                reopen.focus();
+            };
+            reopen.onclick = () => {
+                reopen.hidden = true;
+                hint.hidden = true;
+                status.textContent = '';
+                confirmation.hidden = false;
+                document.getElementById('cancel').focus();
+            };
+            document.getElementById('cancel').onclick = finish;
+            document.getElementById('confirm').onclick = () => {
+                frame.srcdoc = snapshot;
+                finish();
+                status.textContent = "#,
+        );
+        // Use JSON escaping rather than HTML interpolation in executable text.
+        // A less-than escape also prevents any translated text ending the script.
+        page.push_str(
+            &serde_json::to_string(tr("已从快照重开；页面状态已重置。"))
+                .expect("static recovery text")
+                .replace('<', "\\u003c"),
+        );
+        page.push_str("; }; })();</script>");
         page.into_bytes()
     }
 
