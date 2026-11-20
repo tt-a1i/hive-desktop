@@ -319,7 +319,9 @@ impl HiveApp {
                         use gpui_kit::component::{Disableable, Sizable, button::Button, h_flex};
                         let newer = direction == HistoryDirection::Newer;
                         let loading_here = loading == Some(direction);
-                        let label = if newer {
+                        let label = if this.history_navigation.snapshot_stale {
+                            tr("重新读取会话历史").to_owned()
+                        } else if newer {
                             tr(if loading_here { "正在加载更新历史…" } else { "加载更新历史" }).to_owned()
                         } else if loading_here {
                             tr("正在加载更早历史…").to_owned()

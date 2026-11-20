@@ -106,25 +106,25 @@ fn apply_screen(
                 next_before_message_id: Some("preview-m-1380".into()),
                 ..Default::default()
             });
-            app.upsert_tool(
+            let output = "Running test suite...\n[ok] 144 passed";
+            app.receive_message(
                 "preview-large-tool".into(),
-                "Bash".into(),
-                "完成",
-                "Running test suite...\n[ok] 144 passed\n… [已截断 98304 字符以保持流畅；可按字节窗口继续加载或导出完整 Markdown]".into(),
+                &serde_json::json!({
+                    "role": "toolResult",
+                    "toolName": "Bash",
+                    "content": [{
+                        "type": "text",
+                        "text": format!("{output}\n… [已截断 98304 字符以保持流畅；可按字节窗口继续加载或导出完整 Markdown]"),
+                        "hasMoreBytes": true,
+                        "loadedBytes": output.len(),
+                        "totalBytes": output.len() + 98_304,
+                    }],
+                }),
                 cx,
             );
             if let Some(msg) = app.message_mut("preview-large-tool") {
                 if let Some(tool) = &mut msg.tool {
                     tool.expanded = true;
-                    tool.output_window = Some(crate::app::ToolOutputWindow {
-                        history_message_id: "preview-large-tool".into(),
-                        window_start_bytes: 0,
-                        loaded_bytes: 32_768,
-                        total_bytes: 131_072,
-                        has_more: true,
-                        loading: false,
-                        error: None,
-                    });
                 }
             }
             app.expanded_tool_groups.insert("preview-large-tool".into());

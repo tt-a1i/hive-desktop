@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 2026-11-21 近期会话、跨项目收件箱、文件面板与历史分页
+
+欢迎页可批量导入 Codex、Claude Code 和 Pi 的已有会话。新增可定时暂缓的跨项目收件箱，以及聊天旁跟随工作树的键盘文件面板。普通旧会话可以先从存储分页读取。跨项目、重启和历史版本变化的验证见 [#56](https://github.com/tt-a1i/hive-desktop/issues/56) 与[本轮验收记录](validation/2026-11-21-comprehensive-workflows.md)。
+
 ## 2026-11-21 首次会话与日常操作
 
 欢迎页增加项目和 Agent 选择，可直接进入空白会话。协作收件箱保存暂缓状态，文件搜索支持键盘选择，长历史的记录分割与 Unicode 续读得到修正。对比与验收见 [#55](https://github.com/tt-a1i/hive-desktop/issues/55) 和[本轮记录](validation/2026-11-21-first-chat-and-usability.md)。

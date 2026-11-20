@@ -6,12 +6,19 @@ import { createInterface } from 'node:readline';
 import { isDeliveryPresentation } from '../delivery-presentation.js';
 import { readJsonlTailWindow } from '../history-cursor.js';
 
-function assertPiTranscriptHeader(header: unknown, expected?: string): void {
+export function assertPiTranscriptHeader(header: unknown, expected?: string): void {
   if (!header || typeof header !== 'object' || !('type' in header) || header.type !== 'session'
     || !('id' in header) || typeof header.id !== 'string' || !header.id)
     throw new Error('Invalid Pi transcript header');
   if (expected !== undefined && header.id !== expected)
     throw new Error('The saved Pi transcript does not match the original native session ID');
+}
+
+export function parsePiEntry(parsed: unknown): SessionEntry {
+  const entry = parsed as Partial<SessionEntry> | null;
+  if (!entry || typeof entry.type !== 'string' || typeof entry.id !== 'string' || !entry.id ||
+    !(entry.parentId === null || typeof entry.parentId === 'string')) throw new Error('Invalid Pi transcript entry');
+  return entry as SessionEntry;
 }
 
 async function* piTranscriptLines(file: string, signal?: AbortSignal): AsyncGenerator<string> {
@@ -52,11 +59,10 @@ export async function readPiTranscript(file: string, expectedId?: string, signal
       header = true;
       continue;
     }
-    const entry = parsed as Partial<SessionEntry> | null;
-    if (!entry || typeof entry.type !== 'string' || typeof entry.id !== 'string' || !entry.id ||
-      !(entry.parentId === null || typeof entry.parentId === 'string') || seen.has(entry.id)) throw new Error('Invalid Pi transcript entry');
+    const entry = parsePiEntry(parsed);
+    if (seen.has(entry.id)) throw new Error('Invalid Pi transcript entry');
     seen.add(entry.id);
-    entries.push(entry as SessionEntry);
+    entries.push(entry);
   }
   signal?.throwIfAborted();
   if (!header) throw new Error('Missing Pi transcript header');
@@ -191,6 +197,10 @@ export function externalPiMessage(entry: SessionEntry, input?: PiUserInput, back
     && 'deliveryId' in message.details && typeof message.details.deliveryId === 'string') message.presentation = message.details;
   if (message.role === 'user' && input) message.presentation = input;
   return { ...message, rawBackendItem: entry, source: { backend, entryId: entry.id } };
+}
+
+export function piHistoryMessageId(entryId: string, message: Record<string, unknown>): string {
+  return message.role === 'toolResult' && typeof message.toolCallId === 'string' ? message.toolCallId : entryId;
 }
 
 /** Pi RPC updates omit cumulative SDK messages; reconstruct only the current content block. */

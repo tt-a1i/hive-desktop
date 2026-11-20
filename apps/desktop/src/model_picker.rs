@@ -127,6 +127,9 @@ impl HiveApp {
             .w(px(620.).min(window.viewport_size().width - px(32.)))
             .open(self.choosing_model).track_focus(&self.model_search.read(cx).focus_handle(cx)).trigger(trigger)
             .on_open_change(cx.listener(|this, open, window, cx| {
+                if *open && this.connect_saved_session(crate::sessions::NativeSessionPanel::Models, cx) {
+                    return;
+                }
                 this.choosing_model = *open;
                 if *open {
                     this.model_search.update(cx, |input, cx| input.set_value("", window, cx));

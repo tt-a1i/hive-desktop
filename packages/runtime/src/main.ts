@@ -24,8 +24,9 @@ import { desktopDataDir } from './paths.js';
 import { remoteCommands } from './remote-commands.js';
 import { captureRuntimeInfo } from './runtime-info.js';
 import { DesktopUpdates } from './desktop-updates.js';
+import { DesktopImport } from './desktop-import.js';
 import { desktopHistoryMessage } from './desktop-history.js';
-import { boundOversizedToolOutput, clampHistoryLimit, sliceHistoryWindow } from './history-cursor.js';
+import { boundOversizedToolOutput, sliceHistoryWindow, StaleHistorySnapshotError } from './history-cursor.js';
 import { collectReadinessReport } from './readiness.js';
 import { collectSkillsAndRules } from './skills-rules.js';
 import {
@@ -73,6 +74,8 @@ const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agen
 });
 const updates = new DesktopUpdates(dataDir, new URL('../../desktop-update-channel.json', import.meta.url));
 const { hive, chats, profiles, settings, agentModels, terminal, piAuth } = runtime;
+const desktopImport = new DesktopImport(dataDir, profiles, runtime.requestHive,
+  (workspace, sessions) => chats.importNativeSessions(workspace, sessions));
 let closing: Promise<void> | undefined;
 let closingInstallerId: string | undefined;
 const searches = new Map<number | string, AbortController>();
@@ -87,7 +90,7 @@ const close = (installerId?: string) => {
   if (!closing) {
     for (const search of searches.values()) search.abort();
     closingInstallerId = installerId;
-    closing = Promise.allSettled([updates.close(installerId), runtime.close()]).then(([update, sidecar]) => {
+    closing = Promise.allSettled([updates.close(installerId), desktopImport.close().then(() => runtime.close())]).then(([update, sidecar]) => {
       if (sidecar.status === 'rejected') throw sidecar.reason;
       if (update.status === 'rejected') throw update.reason;
     });
@@ -134,6 +137,8 @@ function optionalModel(params: Record<string, unknown>) {
 async function dispatch(requestId: number | string, method: string, params: Record<string, unknown>): Promise<unknown> {
   if (closing && method !== 'shutdown') throw new Error('Desktop runtime is closing');
   switch (method) {
+    case 'desktop.import.discover': exact(params, []); return desktopImport.discover();
+    case 'desktop.import.apply': exact(params, ['projectIds']); return desktopImport.apply(params.projectIds);
     case 'desktop.updates.check': exact(params, []); return updates.check();
     case 'desktop.updates.stage': exact(params, ['version', 'sha256']); return updates.stage(text(params, 'version'), text(params, 'sha256'));
     case 'desktop.updates.prepare': exact(params, ['version', 'sha256']); return updates.prepare(text(params, 'version'), text(params, 'sha256'));
@@ -566,6 +571,9 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       if (params.includeLiveHistory !== undefined && typeof params.includeLiveHistory !== 'boolean') {
         throw new TypeError('includeLiveHistory must be a boolean');
       }
+      if (params.preferSavedHistory !== undefined && typeof params.preferSavedHistory !== 'boolean') {
+        throw new TypeError('preferSavedHistory must be a boolean');
+      }
       if (params.deferHistoryImages !== undefined && typeof params.deferHistoryImages !== 'boolean') {
         throw new TypeError('deferHistoryImages must be a boolean');
       }
@@ -576,45 +584,23 @@ async function dispatch(requestId: number | string, method: string, params: Reco
         throw new TypeError('historyAroundMessageId must be a string');
       }
       const id = text(params, 'sessionId');
-      const tailLimit = params.historyLimit !== undefined && !params.historyAroundMessageId && params.includeLiveHistory !== false
-        ? clampHistoryLimit(params.historyLimit)
-        : undefined;
+      const historyOptions = params.historyLimit !== undefined && params.includeLiveHistory !== false ? {
+        limit: params.historyLimit,
+        ...(params.historyAroundMessageId ? {aroundMessageId: params.historyAroundMessageId} : {}),
+      } : undefined;
       const snapshot = await (params.viewRevision === undefined
-        ? chats.open(id, params.includeLiveHistory, false, tailLimit)
-        : chats.openDesktopView(id, viewRevision(params.viewRevision), params.includeLiveHistory, tailLimit));
-      const paged = params.historyLimit !== undefined && params.includeLiveHistory !== false
-        ? (() => {
-            const sliced = sliceHistoryWindow(snapshot.history, snapshot.historyMessageIds, {
-              limit: params.historyLimit,
-              ...(params.historyAroundMessageId ? { aroundMessageId: params.historyAroundMessageId } : {}),
-            });
-            const diskHasMore = (snapshot as { hasEarlierOnDisk?: boolean }).hasEarlierOnDisk === true;
-            const hasOlder = sliced.historyPage.hasOlder || diskHasMore;
-            const nextBeforeMessageId = hasOlder
-              ? (sliced.historyPage.nextBeforeMessageId ?? sliced.historyMessageIds[0])
-              : undefined;
-            const nextBeforeIndex = hasOlder
-              ? Math.max(1, sliced.historyPage.nextBeforeIndex ?? sliced.historyPage.startIndex)
-              : undefined;
-            return {
-              ...snapshot,
-              history: sliced.history.map(m => boundOversizedToolOutput(m)),
-              historyMessageIds: sliced.historyMessageIds,
-              historyPage: {
-                ...sliced.historyPage,
-                hasOlder,
-                ...(nextBeforeIndex !== undefined && { nextBeforeIndex }),
-                ...(nextBeforeMessageId && { nextBeforeMessageId }),
-              },
-            };
-          })()
-        : snapshot;
+        ? chats.open(id, params.includeLiveHistory, false, historyOptions)
+        : chats.openDesktopView(id, viewRevision(params.viewRevision), params.includeLiveHistory, historyOptions, params.preferSavedHistory));
+      const page = historyOptions ? ('historyPage' in snapshot && snapshot.historyPage
+        ? {history: snapshot.history, historyMessageIds: snapshot.historyMessageIds, historyPage: snapshot.historyPage}
+        : sliceHistoryWindow(snapshot.history, snapshot.historyMessageIds, historyOptions)) : undefined;
+      const paged = page ? {...snapshot, ...page, history: page.history.map(message => boundOversizedToolOutput(message))} : snapshot;
       return params.deferHistoryImages ? {...paged, history: paged.history.map(
         (message, index) => desktopHistoryMessage(message, paged.historyMessageIds[index])
       )} : paged;
     }
     case 'chat.historyPage': {
-      exact(params, ['sessionId', 'beforeIndex', 'beforeMessageId', 'afterIndex', 'afterMessageId', 'limit', 'deferHistoryImages', 'viewRevision']);
+      exact(params, ['sessionId', 'beforeIndex', 'beforeMessageId', 'afterIndex', 'afterMessageId', 'limit', 'deferHistoryImages', 'viewRevision', 'snapshot']);
       const before = params.beforeIndex !== undefined;
       const after = params.afterIndex !== undefined;
       if (before === after || (!before && params.beforeMessageId !== undefined) || (!after && params.afterMessageId !== undefined)) {
@@ -638,11 +624,16 @@ async function dispatch(requestId: number | string, method: string, params: Reco
         throw new TypeError('deferHistoryImages must be a boolean');
       }
       const id = text(params, 'sessionId');
+      const snapshot = params.snapshot;
+      if (snapshot !== undefined && (typeof snapshot !== 'string' || !snapshot || snapshot.length > 256)) {
+        throw new TypeError('snapshot must be a nonempty history snapshot token');
+      }
       const read = () => chats.historyPage(id, {
         ...(before
           ? { beforeIndex: index, ...(messageId && { beforeMessageId: messageId }) }
           : { afterIndex: index, ...(messageId && { afterMessageId: messageId }) }),
         ...(limit !== undefined && { limit }),
+        ...(snapshot !== undefined && { snapshot }),
       });
       const page = await (params.viewRevision === undefined
         ? read()
@@ -765,7 +756,7 @@ input.on('line', line => {
       }
       await writeFrame({ id, error: {
         code: (method === 'chat.search' || method === 'project.files.search' || method === 'project.files.searchContent') && error instanceof Error && error.name === 'AbortError' ? 'SEARCH_CANCELLED'
-          : error instanceof ProjectCopyChangedError ? 'PROJECT_COPY_CHANGED' : error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError || error instanceof GitWorktreeError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
+          : error instanceof StaleHistorySnapshotError ? error.code : error instanceof ProjectCopyChangedError ? 'PROJECT_COPY_CHANGED' : error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError || error instanceof GitWorktreeError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),
       } });

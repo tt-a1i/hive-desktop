@@ -3,8 +3,9 @@ import type { AgentCapabilities } from './agent-capabilities.js';
 import type { AgentProfileRef } from './agent-profiles.js';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import type { NativeImportSource } from './native-import-source.js';
 
 export type ChatBackend = 'pi' | 'codex' | 'pi-rpc' | 'claude' | 'acp';
 
@@ -24,6 +25,7 @@ export interface ChatRecord {
   handoff?: {operationId:string;snapshotId:string;snapshotHash:string;sourceSessionId:string};
   profile?: AgentProfileRef;
   legacyConfiguration?: true;
+  nativeImport?: NativeImportSource;
   lineage?: {operationId:string;parentSessionId:string;nativeUserItemId:string;edit:boolean;codeRelation:{kind:'current'|'checkpoint';checkpointId:string};inheritedItemIds:string[]};
   rewindOperationId?: string;
   rewound?: true;
@@ -115,6 +117,12 @@ export class ChatIndex {
     const existing = this.peek(record.id);
     if (existing?.handoff && JSON.stringify(existing.handoff) !== JSON.stringify(record.handoff))
       throw new SessionIdentityError('SESSION_HANDOFF_CONFLICT', 'A fixed historical handoff cannot be changed.');
+    if (existing && !isDeepStrictEqual(existing.nativeImport, record.nativeImport))
+      throw new SessionIdentityError('NATIVE_IMPORT_CONFLICT', 'The original native import source cannot be changed.');
+    if (existing?.nativeImport && (existing.codexThreadId !== record.codexThreadId
+      || existing.nativeclaudeSessionId !== record.nativeclaudeSessionId
+      || existing.externalPiSessionId !== record.externalPiSessionId || existing.sessionFile !== record.sessionFile))
+      throw new SessionIdentityError('NATIVE_IMPORT_CONFLICT', 'The original native import identity cannot be changed.');
     if (existing && (existing.backend !== record.backend || existing.profile && (existing.profile.id !== record.profile?.id || existing.profile.revision !== record.profile?.revision)))
       throw new SessionIdentityError('SESSION_PROFILE_CONFLICT', 'The conversation backend and fixed profile cannot be changed.');
     if (existing?.identityState === 'unknown' && (record.agentId || record.originAgentId) && !existing.originAgentId)
@@ -126,6 +134,17 @@ export class ChatIndex {
       ? {...record, originAgentId: existing.originAgentId, identityState: 'known'}
       : existing ? {...record, identityState: existing.identityState ?? 'unknown'} : record);
     this.commit([...this.records.filter(item => item.id !== record.id), normalized],record.id);
+  }
+  addImported(records: ChatRecord[]): void {
+    const ids = new Set(this.records.map(record => record.id));
+    const next = [...this.records];
+    for (const record of records) {
+      if (ids.has(record.id) || !record.nativeImport || !isChatRecord(record))
+        throw new SessionIdentityError('NATIVE_IMPORT_CONFLICT', 'An imported conversation identity is invalid or already recorded.');
+      ids.add(record.id);
+      next.push(normalizeIdentity(record));
+    }
+    if (records.length) this.commit(next);
   }
   /** Only precise persisted provenance may repair a legacy unknown identity. */
   establishOrigin(id: string, agentId: string): ChatRecord {
@@ -145,11 +164,13 @@ export class ChatIndex {
     try {
       writeFileSync(temporary, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600, flush: true });
       renameSync(temporary, this.file);
-      if(process.platform!=='win32'){const directory=openSync(dirname(this.file),'r');try{fsyncSync(directory);}finally{closeSync(directory);}}
+      // A successful rename publishes the new index even if directory sync
+      // later fails. Keep retries and subsequent changes on that revision.
       const previous=new Map(this.records.map(record=>[record.id,record]));
       for(const record of next)if(record.id===touchedId||!previous.has(record.id)||!isDeepStrictEqual(previous.get(record.id),record))this.generations.set(record.id,++this.generation);
       const ids=new Set(next.map(record=>record.id));for(const id of this.generations.keys())if(!ids.has(id))this.generations.delete(id);
       this.records = next.map(recordSnapshot);
+      if(process.platform!=='win32'){const directory=openSync(dirname(this.file),'r');try{fsyncSync(directory);}finally{closeSync(directory);}}
     } finally { rmSync(temporary, { force: true }); }
   }
 }
@@ -178,6 +199,13 @@ function isChatRecord(value: unknown): value is ChatRecord {
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
   if (record.profile !== undefined && (!record.profile || typeof record.profile !== 'object' || typeof (record.profile as Record<string, unknown>).id !== 'string' || !(record.profile as Record<string, unknown>).id || !Number.isSafeInteger((record.profile as Record<string, unknown>).revision) || ((record.profile as Record<string, unknown>).revision as number) < 1)) return false;
   if (record.legacyConfiguration !== undefined && record.legacyConfiguration !== true) return false;
+  if (record.nativeImport !== undefined) {
+    const source = record.nativeImport as NativeImportSource | null;
+    if (!source || ![source.home, source.path, source.cwd].every(path => typeof path === 'string' && isAbsolute(path))
+      || !record.profile || record.execution
+      || !(record.backend === 'codex' && record.codexThreadId || record.backend === 'claude' && record.nativeclaudeSessionId
+        || record.backend === 'pi-rpc' && record.externalPiSessionId && record.sessionFile === source.path)) return false;
+  }
   if (record.lineage !== undefined) {
     const lineage=record.lineage as ChatRecord['lineage'];
     if(!lineage||typeof lineage.operationId!=='string'||typeof lineage.parentSessionId!=='string'||typeof lineage.nativeUserItemId!=='string'||typeof lineage.edit!=='boolean'||!['current','checkpoint'].includes(lineage.codeRelation?.kind)||typeof lineage.codeRelation.checkpointId!=='string'||!Array.isArray(lineage.inheritedItemIds)||!lineage.inheritedItemIds.every(id=>typeof id==='string')) return false;

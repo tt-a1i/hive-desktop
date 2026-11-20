@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { codexMetadataFile } from './codex-metadata.js';
-import { isCodexToolItem, type CodexItem, type CodexTurn } from './codex-history.js';
+import { codexMetadataFile, readCodexMetadata } from './codex-metadata.js';
+import { codexDeliveryLookup, isCodexToolItem, normalizeCodexItem, type CodexItem, type CodexTurn } from './codex-history.js';
+import { openIndexedHistory, savedHistoryFileVersion, visitSavedHistoryJson, type IndexedHistoryRow } from './saved-history-index.js';
 
 export type CodexDisplayEntry = { turnId: string; item: CodexItem };
 type Projection = { version: 1; entries: CodexDisplayEntry[]; completedTurns: string[]; completeHistory?: boolean; searchEntries?: CodexDisplayEntry[]; searchVersion?: number };
 
-function isDisplayEntry(entry: CodexDisplayEntry | null): boolean {
+function isDisplayEntry(value: unknown): value is CodexDisplayEntry {
+  const entry = value as CodexDisplayEntry | null | undefined;
   return typeof entry?.turnId === 'string' && typeof entry.item?.id === 'string' && typeof entry.item.type === 'string';
 }
 
@@ -34,6 +36,76 @@ export function parseCodexProjection(raw: string): { entries: CodexDisplayEntry[
   const completeHistory = saved.completeHistory === true && saved.searchVersion === 2 && Array.isArray(saved.searchEntries)
     && hasCompleteHistory(saved.entries, saved.searchEntries);
   return { entries: saved.entries, completedTurns: saved.completedTurns ?? [], completeHistory };
+}
+
+const DISPLAY_ARRAYS = new Set(['entries', 'searchEntries', 'completedTurns']);
+
+/** The display journal and Hive delivery metadata are one read snapshot. */
+export async function openSavedCodexProjection(directory: string, threadId: string, options: {
+  cacheKey: string; sourceSessionId: string; signal?: AbortSignal; snapshot?: string;
+}) {
+  const metadataFile = codexMetadataFile(directory, threadId);
+  const files = [`${metadataFile}.display.json`, metadataFile, `${metadataFile}.required`];
+  const versions = await Promise.all(files.map(async (file, i) => {
+    const optional = i > 0;
+    return {file, optional, version: await savedHistoryFileVersion(file, optional)};
+  }));
+  const source = await openIndexedHistory({
+    ...options,
+    cacheKey: JSON.stringify(['codex-display', options.cacheKey, threadId, options.sourceSessionId]),
+    versions,
+    async build(handle) {
+      const metadata = readCodexMetadata(directory, threadId);
+      const deliveryFor = codexDeliveryLookup(metadata);
+      const inheritedSources = new Map<string, string>();
+      for (const entry of metadata.inheritedSources ?? []) {
+        if (!inheritedSources.has(entry.itemId)) inheritedSources.set(entry.itemId, entry.sourceSessionId);
+      }
+      const focus = new Map<string, number>(), toolFocus = new Map<string, number>();
+      const rows: IndexedHistoryRow[] = [];
+      const visibleIdentities: (string | undefined)[] = [], searchIdentities: (string | undefined)[] = [];
+      const searchedIds = new Set<string>();
+      let version: unknown, searchVersion: unknown, completeHistory: unknown;
+      let hasEntries = false, hasSearchEntries = false;
+      await visitSavedHistoryJson(handle, DISPLAY_ARRAYS, (key, value, span, part) => {
+        if (part === 'field') {
+          if (key === 'version') version = value;
+          if (key === 'searchVersion') searchVersion = value;
+          if (key === 'completeHistory') completeHistory = value;
+        } else if (part === 'array') {
+          if (key === 'entries') hasEntries = true;
+          if (key === 'searchEntries') hasSearchEntries = true;
+        } else if (key === 'entries') {
+          if (!isDisplayEntry(value)) throw new Error('Invalid Codex UI projection');
+          const {turnId, item} = value;
+          if (item.type === 'userMessage') {
+            const alias = deliveryFor(turnId, item.id)?.deliveryId;
+            if (alias !== undefined && !focus.has(alias)) focus.set(alias, rows.length);
+          }
+          rows.push({...span, id: item.id});
+          visibleIdentities.push(item.status !== 'inProgress' ? JSON.stringify([turnId, item.id, item.type]) : undefined);
+        } else if (key === 'searchEntries') {
+          if (isDisplayEntry(value) && value.turnId && value.item.id && !searchedIds.has(value.item.id)
+            && value.item.status !== 'inProgress' && value.item.type !== 'hiveProjectionNotice') {
+            searchedIds.add(value.item.id);
+            searchIdentities.push(JSON.stringify([value.turnId, value.item.id, value.item.type]));
+          } else searchIdentities.push(undefined);
+        }
+      }, options.signal);
+      if (version !== 1 || !hasEntries) throw new Error('Invalid Codex UI projection');
+      const complete = completeHistory === true && searchVersion === 2 && hasSearchEntries
+        && searchIdentities.length === rows.length
+        && searchIdentities.every((identity, index) => identity !== undefined && identity === visibleIdentities[index]);
+      return {rows, focus, toolFocus, complete, deliveryFor, inheritedSources, completed: metadata.completed};
+    },
+    project(value, index) {
+      if (!isDisplayEntry(value)) throw new Error('Invalid Codex UI projection');
+      const {item, turnId} = value;
+      return normalizeCodexItem(item, index.deliveryFor(turnId, item.id), index.inheritedSources.get(item.id) ?? options.sourceSessionId);
+    },
+  });
+  const {index, ...reader} = source;
+  return {...reader, completeHistory: index.complete, completedDeliveryIds: index.completed};
 }
 
 /** A UI event journal only. Never supplied to thread/resume, turn/start, or a model. */

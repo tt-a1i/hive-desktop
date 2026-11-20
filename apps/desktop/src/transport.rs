@@ -31,6 +31,12 @@ struct PendingReply {
 enum WireFailure {
     Message(String),
     Interaction(InteractionRequestError),
+    HistorySnapshotStale,
+}
+
+pub(crate) enum HistoryPageRequestError {
+    StaleSnapshot,
+    Other(String),
 }
 
 #[derive(Debug)]
@@ -50,6 +56,9 @@ impl WireFailure {
             };
             return Self::Interaction(kind);
         }
+        if error["code"] == "HISTORY_SNAPSHOT_STALE" {
+            return Self::HistorySnapshotStale;
+        }
         Self::Message(
             error["message"]
                 .as_str()
@@ -63,6 +72,7 @@ impl WireFailure {
         match self {
             Self::Message(message) => message,
             Self::Interaction(_) => "后台请求失败，请查看后台日志。".into(),
+            Self::HistorySnapshotStale => crate::language::tr("已保存的历史发生变化，请重新读取会话历史。").into(),
         }
     }
 }
@@ -393,7 +403,15 @@ impl Runtime {
             .map_err(|_| InteractionRequestError::Other)?;
         await_wire_reply(reply).await.map_err(|error| match error {
             WireFailure::Interaction(kind) => kind,
-            WireFailure::Message(_) => InteractionRequestError::Other,
+            _ => InteractionRequestError::Other,
+        })
+    }
+    pub(crate) async fn history_page(&self, params: Value) -> Result<Value, HistoryPageRequestError> {
+        let (_, reply) = self.enqueue_request("chat.historyPage", params)
+            .map_err(HistoryPageRequestError::Other)?;
+        await_wire_reply(reply).await.map_err(|error| match error {
+            WireFailure::HistorySnapshotStale => HistoryPageRequestError::StaleSnapshot,
+            other => HistoryPageRequestError::Other(other.into_message()),
         })
     }
     pub async fn search(&self, params: Value) -> Reply {

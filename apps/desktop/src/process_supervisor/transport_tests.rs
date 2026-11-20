@@ -42,6 +42,20 @@ fn interaction_failure_accepts_a_wire_code_and_ignores_provider_message() {
 }
 
 #[test]
+fn history_snapshot_stale_requires_the_wire_code() {
+    let failure = json!({"code":"HISTORY_SNAPSHOT_STALE", "message":"Snapshot changed"});
+    assert!(matches!(
+        WireFailure::from_frame(&failure, false),
+        WireFailure::HistorySnapshotStale
+    ));
+    let unrelated = json!({"message":"HISTORY_SNAPSHOT_STALE"});
+    assert!(matches!(
+        WireFailure::from_frame(&unrelated, false),
+        WireFailure::Message(message) if message == "HISTORY_SNAPSHOT_STALE"
+    ));
+}
+
+#[test]
 fn a_large_history_frame_releases_the_wire_buffer_before_the_next_frame() {
     let history = "厚".repeat(2 * 1024 * 1024);
     let wire = format!("{}\r\n{{\"id\":2,\"result\":true}}", json!({"id":1,"result":{"history":history}}));

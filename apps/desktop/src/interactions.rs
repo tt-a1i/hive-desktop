@@ -234,6 +234,13 @@ impl InteractionCard {
 }
 
 impl HiveApp {
+    pub(crate) fn inbox_interaction_ids(&self, session: &str) -> std::collections::BTreeSet<String> {
+        self.interactions.sessions.get(session).into_iter().flatten()
+            .filter(|card| card.waiting())
+            .map(|card| card.raw.id.clone())
+            .collect()
+    }
+
     pub fn interaction_count(&self, session: &str) -> usize {
         self.interactions.sessions.get(session).map_or(0, |cards| {
             cards.iter().filter(|card| card.waiting()).count()

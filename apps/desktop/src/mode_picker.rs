@@ -126,6 +126,9 @@ impl HiveApp {
         {
             return;
         }
+        if self.connect_saved_session(crate::sessions::NativeSessionPanel::Models, cx) {
+            return;
+        }
         let next = match self.mode_picker.mode.state.as_ref() {
             None => {
                 self.load_mode(None, cx);

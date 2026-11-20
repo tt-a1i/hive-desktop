@@ -10,28 +10,54 @@ export function piUserInput(value: unknown): PiUserInput | undefined {
     || typeof value.deliveryId !== 'string' || !value.deliveryId || !('rawText' in value) || typeof value.rawText !== 'string') return;
   return value as PiUserInput;
 }
-/** Markers live in Pi's state-only entries; they never become model context. */
-export function piUserInputSources(branch: readonly SessionEntry[]) {
-  const users = new Map<string, PiUserInput>();
-  const notes = new Map<string, PiUserInput>();
-  let pending: { entryId: string; input: PiUserInput } | undefined;
-  for (const entry of branch) {
-    if (entry.type === 'custom' && entry.customType === PI_USER_INPUT) {
-      const input = piUserInput(entry.data);
-      pending = input ? { entryId: entry.id, input } : undefined;
-      if (input) notes.set(entry.id, input);
-    } else if (entry.type === 'custom' && entry.customType === PI_USER_INPUT_RESULT) {
-      if (pending && entry.data && typeof entry.data === 'object' && 'deliveryId' in entry.data
-        && entry.data.deliveryId === pending.input.deliveryId) pending = undefined;
-    } else if (entry.type === 'message' && entry.message.role === 'user' && pending) {
-      users.set(entry.id, pending.input);
+
+type PiInputEvent<T> = { type: 'marker'; input: T | undefined } | { type: 'result'; deliveryId: string | undefined }
+  | { type: 'user' } | { type: 'delivery' };
+
+export function piInputEvent<T>(entry: SessionEntry, marker: (input: PiUserInput) => T): PiInputEvent<T> | undefined {
+  if (entry.type === 'custom' && entry.customType === PI_USER_INPUT) {
+    const input = piUserInput(entry.data);
+    return {type: 'marker', input: input && marker(input)};
+  }
+  if (entry.type === 'custom' && entry.customType === PI_USER_INPUT_RESULT) {
+    const deliveryId = entry.data && typeof entry.data === 'object' && 'deliveryId' in entry.data ? entry.data.deliveryId : undefined;
+    return {type: 'result', deliveryId: typeof deliveryId === 'string' ? deliveryId : undefined};
+  }
+  if (entry.type === 'message' && entry.message.role === 'user') return {type: 'user'};
+  if (entry.type === 'custom_message' && entry.customType === 'hive-delivery') return {type: 'delivery'};
+  return;
+}
+
+export function collectPiInputSources<T extends {deliveryId: string}>(
+  branch: Iterable<{id: string; event: PiInputEvent<T> | undefined}>,
+) {
+  const users = new Map<string, {entryId: string; input: T}>();
+  const notes = new Map<string, T>();
+  let pending: {entryId: string; input: T} | undefined;
+  for (const {id, event} of branch) {
+    if (event?.type === 'marker') {
+      pending = event.input ? {entryId: id, input: event.input} : undefined;
+      if (event.input) notes.set(id, event.input);
+    } else if (event?.type === 'result') {
+      if (pending && event.deliveryId === pending.input.deliveryId) pending = undefined;
+    } else if (event?.type === 'user' && pending) {
+      users.set(id, pending);
       notes.delete(pending.entryId);
       pending = undefined;
-    } else if (entry.type === 'custom_message' && entry.customType === 'hive-delivery') {
+    } else if (event?.type === 'delivery') {
       pending = undefined;
     }
   }
-  return { users, notes };
+  return {users, notes};
+}
+
+/** Markers live in Pi's state-only entries; they never become model context. */
+export function piUserInputSources(branch: readonly SessionEntry[]) {
+  function* events() {
+    for (const entry of branch) yield {id: entry.id, event: piInputEvent(entry, input => input)};
+  }
+  const {users, notes} = collectPiInputSources(events());
+  return {users: new Map([...users].map(([id, source]) => [id, source.input])), notes};
 }
 export function piUserInputNote(entry: SessionEntry, input: PiUserInput, backend: 'pi' | 'pi-rpc') {
   return { role: 'custom', customType: 'hive-delivery', content: input.rawText, display: false,

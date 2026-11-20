@@ -64,9 +64,12 @@ pub struct ProjectMcpForm {
     pub saving: bool,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug)]
 pub struct ToolOutputWindow {
     pub history_message_id: String,
+    pub block_index: usize,
+    pub display_range: std::ops::Range<usize>,
+    pub generation: Arc<()>,
     pub window_start_bytes: u64,
     pub loaded_bytes: u64,
     pub total_bytes: u64,
@@ -81,7 +84,7 @@ pub struct ToolPresentation {
     pub status: &'static str,
     pub expanded: bool,
     pub details_scroll: ScrollHandle,
-    pub output_window: Option<ToolOutputWindow>,
+    pub output_windows: Vec<ToolOutputWindow>,
 }
 pub struct DeliveryCard {
     pub dispatch_id: Option<String>,
@@ -172,6 +175,7 @@ pub struct HiveApp {
     pub nav_forward: Vec<(Option<String>, Option<String>)>,
     pub nav_suppress_record: bool,
     pub git_drawer_open: bool,
+    pub(crate) project_file_dock: Option<Entity<crate::project_files::FileBrowser>>,
     pub git_drawer_width: f32,
     pub git_drawer_drag: Option<(f32, f32)>,
     pub terminal_drawer_height: f32,
@@ -507,6 +511,9 @@ impl HiveApp {
                 {
                     return;
                 }
+                if this.connect_saved_session(crate::sessions::NativeSessionPanel::Models, cx) {
+                    return;
+                }
                 this.choosing_model = !this.choosing_model;
                 if this.choosing_model {
                     this.model_search
@@ -694,6 +701,7 @@ impl HiveApp {
             nav_forward: Vec::new(),
             nav_suppress_record: false,
             git_drawer_open: false,
+            project_file_dock: None,
             git_drawer_width: 460.,
             git_drawer_drag: None,
             terminal_drawer_height: 240.,

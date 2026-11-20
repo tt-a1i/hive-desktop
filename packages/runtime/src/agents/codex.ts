@@ -7,6 +7,7 @@ import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-p
 import { CodexTransport, CodexRpcError, type CodexServerRequest } from './codex-transport.js';
 import { updateCodexSettings } from './codex-settings.js';
 import { mkdirSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { CodexModes, type CodexThreadModeReceipt } from './codex-modes.js';
 import { CodexInteractions } from './codex-interactions.js';
 import { CodexProjection } from './codex-projection.js';
@@ -25,6 +26,7 @@ export interface CodexSessionOptions {
   cwd: string;
   sessionDir: string;
   threadId?: string;
+  expectedTranscriptPath?: string;
   deferGoalContinuation?: boolean;
   command?: string;
   args?: readonly string[];
@@ -223,14 +225,18 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     },
   });
   const defersNativeGoals=supportsCodexDeferredContinuation(transport.initializeResult);
-  if(options.deferGoalContinuation&&!defersNativeGoals){await transport.close();throw new Error('This native history fork requires Codex 0.169.0 deferred continuation support');}
+  if(options.deferGoalContinuation&&!defersNativeGoals){await transport.close();throw new Error('Connecting this saved session requires Codex 0.169.0 deferred continuation support');}
   const modes = new CodexModes(transport, options.mode, options.permissionMode);
   const resume = async (extra: Record<string, unknown> = {}) => {
     response = await transport.sendRequest<ThreadLaunchReceipt>('thread/resume', { threadId, excludeTurns: true, ...(defersNativeGoals&&{deferGoalContinuation:true}), ...extra });
     if (response.thread.id !== threadId) throw new Error('Codex returned a different thread ID');
+    if (options.expectedTranscriptPath && (!response.thread.path || await realpath(response.thread.path) !== options.expectedTranscriptPath))
+      throw new Error('Codex returned a different native transcript');
     if (response.thread.historyMode === 'legacy' && response.thread.turns.length === 0 && response.thread.path) {
       const { thread } = await transport.sendRequest<{ thread: CodexThreadResponse['thread'] }>('thread/read', { threadId, includeTurns: true });
       if (thread.id !== threadId) throw new Error('Codex returned a different thread ID');
+      if (options.expectedTranscriptPath && (!thread.path || await realpath(thread.path) !== options.expectedTranscriptPath))
+        throw new Error('Codex returned a different native transcript');
       response = { ...response, thread };
     }
   };

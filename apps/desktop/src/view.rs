@@ -1138,6 +1138,7 @@ impl Render for HiveApp {
         } else {
             None
         };
+        let project_file_pane = self.project_file_pane(window, cx);
         let terminal_view = cx.entity().downgrade();
         let git_view = cx.entity().downgrade();
         let has_session_failure =
@@ -1169,7 +1170,7 @@ impl Render for HiveApp {
             && self.conversation_ready
             && self.model.is_none()
             && !self.conversation_is_read_only()
-            && !self.current_history_access().is_some_and(|a| a.handoff_passive())
+            && !self.current_history_access().is_some_and(|a| a.handoff_passive() || a.saved_history_passive)
             && !self.loading;
         self.ensure_attachment_previews(cx);
         let acp_images = self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) && self.attachments.refs(self.draft_target.as_ref()).iter().any(|a| a.is_image());
@@ -1736,7 +1737,7 @@ impl Render for HiveApp {
                                                                     active_project.clone(),
                                                                     |tools, _| {
                                                                         tools
-                                                                            .child(self.project_file_browser_button("topbar-project-files", cx))
+                                                                            .child(self.project_file_browser_button("topbar-project-files", window, cx))
                                                                             .child(
                                                                                 Button::new(
                                                                                     "topbar-quick-terminal",
@@ -2156,7 +2157,8 @@ impl Render for HiveApp {
                                         })
                                         .when_some(split_peek_panel, |row, peek| {
                                             row.child(peek)
-                                        }),
+                                        })
+                                        .children(project_file_pane),
                                 )
                                 .into_any_element()
                         })

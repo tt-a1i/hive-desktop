@@ -160,6 +160,8 @@ pub struct MemberDesktopActivity {
     #[serde(default)]
     pub pending_interaction_count: u64,
     #[serde(default)]
+    pub pending_interaction_ids: Vec<String>,
+    #[serde(default)]
     pub queued_input_count: u64,
     #[serde(default)]
     pub pending_report_count: u64,
@@ -458,6 +460,8 @@ pub struct ReadinessReport {
 #[serde(rename_all = "camelCase")]
 pub struct HistoryPageMeta {
     #[serde(default)]
+    pub snapshot: Option<String>,
+    #[serde(default)]
     pub start_index: usize,
     #[serde(default)]
     pub has_older: bool,
@@ -474,6 +478,10 @@ pub struct HistoryPageMeta {
 }
 
 impl HistoryPageMeta {
+    pub(crate) fn matches_snapshot(&self, expected: Option<&str>) -> bool {
+        expected.is_none_or(|expected| self.snapshot.as_deref() == Some(expected))
+    }
+
     pub(crate) fn extend(&mut self, page: Self, newer: bool) {
         if newer {
             self.has_newer = page.has_newer;
@@ -518,6 +526,8 @@ pub struct OpenSession {
     pub handoff_delivery: Option<Value>,
     #[serde(default)]
     pub passive: Option<bool>,
+    #[serde(default)]
+    pub saved_history_passive: bool,
     #[serde(default)]
     pub lineage: Option<Value>,
     #[serde(default)]
@@ -789,20 +799,24 @@ mod tests {
     #[test]
     fn extending_focused_history_keeps_the_opposite_cursor() {
         let mut window: HistoryPageMeta = serde_json::from_value(json!({
+            "snapshot": "source-1",
             "startIndex": 50, "hasOlder": true, "nextBeforeIndex": 50,
             "nextBeforeMessageId": "m50", "hasNewer": true,
             "nextAfterIndex": 149, "nextAfterMessageId": "m149"
         })).unwrap();
         let older: HistoryPageMeta = serde_json::from_value(json!({
+            "snapshot": "source-1",
             "startIndex": 0, "hasOlder": false, "hasNewer": true,
             "nextAfterIndex": 49, "nextAfterMessageId": "m49"
         })).unwrap();
+        assert!(older.matches_snapshot(window.snapshot.as_deref()));
         window.extend(older, false);
         assert!(!window.has_older);
         assert_eq!(window.next_before_index, None);
         assert_eq!(window.next_after_message_id.as_deref(), Some("m149"));
 
         let newer: HistoryPageMeta = serde_json::from_value(json!({
+            "snapshot": "source-1",
             "startIndex": 150, "hasOlder": true, "nextBeforeIndex": 150,
             "nextBeforeMessageId": "m150", "hasNewer": false
         })).unwrap();
@@ -811,6 +825,9 @@ mod tests {
         assert_eq!(window.next_before_message_id, None);
         assert!(!window.has_newer);
         assert_eq!(window.next_after_index, None);
+        assert_eq!(window.snapshot.as_deref(), Some("source-1"));
+        assert!(!window.matches_snapshot(Some("source-2")));
+        assert!(window.matches_snapshot(None));
     }
 
     #[test]

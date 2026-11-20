@@ -22,6 +22,8 @@ use serde_json::{Value, json};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 const PAGE_SIZE: usize = 100;
+const DOCK_WIDTH: f32 = 320.;
+const CHAT_MIN_WIDTH: f32 = 600.;
 
 #[derive(Deserialize)]
 struct DirectoryEntry {
@@ -71,19 +73,70 @@ struct Preview {
     scroll: ScrollHandle,
 }
 
-struct FileBrowser {
-    app: WeakEntity<HiveApp>,
-    runtime: Arc<Runtime>,
+#[derive(Clone, PartialEq, Eq)]
+struct Scope {
     workspace: String,
     session: Option<String>,
     connection: u64,
     open_request: u64,
     source_directory: Option<String>,
+}
+
+impl Scope {
+    fn params(&self, mut params: Value) -> Value {
+        params["workspaceId"] = json!(self.workspace);
+        if let Some(session) = &self.session {
+            params["sessionId"] = json!(session);
+        }
+        params
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum TreeItem {
+    Entry(String),
+    LoadMore(String),
+}
+
+enum TreeRow<'a> {
+    Entry(&'a DirectoryEntry, usize),
+    Status(&'a Directory, usize),
+    LoadMore(&'a str, &'a Directory, usize),
+}
+
+impl TreeRow<'_> {
+    fn item(&self) -> Option<TreeItem> {
+        match self {
+            Self::Entry(entry, _) => Some(TreeItem::Entry(entry.path.clone())),
+            Self::LoadMore(path, _, _) => Some(TreeItem::LoadMore((*path).to_owned())),
+            Self::Status(..) => None,
+        }
+    }
+
+    fn matches_item(&self, item: &TreeItem) -> bool {
+        match (self, item) {
+            (Self::Entry(entry, _), TreeItem::Entry(path)) => entry.path == *path,
+            (Self::LoadMore(path, ..), TreeItem::LoadMore(item_path)) => *path == item_path,
+            _ => false,
+        }
+    }
+}
+
+pub(crate) struct FileBrowser {
+    app: WeakEntity<HiveApp>,
+    docked: bool,
     dismissed: bool,
+    scope: Option<Scope>,
+    scope_generation: u64,
+    runtime: Option<Arc<Runtime>>,
     query: Entity<InputState>,
     contents: bool,
     directories: HashMap<String, Directory>,
-    scroll: ScrollHandle,
+    root_focus: FocusHandle,
+    tree_focus: FocusHandle,
+    tree_selected: Option<TreeItem>,
+    tree_scroll: ScrollHandle,
+    search_scroll: ScrollHandle,
     search: SearchPage,
     search_offset: usize,
     search_selected: usize,
@@ -103,40 +156,16 @@ impl HiveApp {
             && self.workspace.is_some()
     }
 
-    pub(crate) fn project_file_browser_button(
-        &self,
-        id: &'static str,
-        cx: &Context<Self>,
-    ) -> Button {
-        Button::new(id)
-            .custom(palette::quiet_icon_variant(cx))
-            .compact()
-            .xsmall()
-            .h(px(26.))
-            .w(px(26.))
-            .rounded_md()
-            .icon(Glyph::FolderOpen)
-            .tooltip(tr("浏览项目文件"))
-            .accessibility_label(tr("浏览项目文件"))
-            .disabled(!self.can_browse_project_files())
-            .on_click(cx.listener(|this, _, window, cx| this.open_project_file_browser(window, cx)))
-    }
-
-    pub(crate) fn open_project_file_browser(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.can_browse_project_files() || window.has_active_dialog(cx) {
-            return;
+    fn project_file_scope(&self) -> Option<Scope> {
+        if !self.can_browse_project_files() {
+            return None;
         }
-        let (Some(runtime), Some(workspace)) = (self.runtime.clone(), self.workspace.clone())
-        else {
-            return;
-        };
-        let source_directory = self
+        let workspace = self.workspace.clone()?;
+        let session = self
             .session
             .as_ref()
+            .filter(|session| session.workspace_id == workspace);
+        let source_directory = session
             .and_then(|session| session.execution.as_ref())
             .filter(|execution| execution.kind == "worktree")
             .map(|execution| execution.path.clone())
@@ -146,57 +175,112 @@ impl HiveApp {
                     .find(|project| project.id == workspace)
                     .map(|project| project.path.clone())
             });
-        let session = self.session.as_ref().map(|session| session.id.clone());
-        let connection = self.connection_generation;
-        let open_request = self.open_request;
+        Some(Scope {
+            workspace,
+            session: session.map(|session| session.id.clone()),
+            connection: self.connection_generation,
+            open_request: self.open_request,
+            source_directory,
+        })
+    }
+
+    fn can_dock_project_files(&self, window: &Window) -> bool {
+        let viewport = window.viewport_size().width;
+        let navigation = if self.sidebar_open {
+            self.sidebar.resolved(viewport)
+        } else {
+            px(0.)
+        };
+        self.viewing_conversation()
+            && !self.showing_welcome_guide
+            && (!self.sidebar_open || viewport >= px(820.))
+            && !self.git_drawer_open
+            && !(self.split_peek.is_some() && viewport >= px(960.))
+            && viewport - navigation >= px(DOCK_WIDTH + CHAT_MIN_WIDTH)
+    }
+
+    pub(crate) fn project_file_browser_button(
+        &self,
+        id: &'static str,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Button {
+        let docked = self.project_file_dock.is_some() && self.can_dock_project_files(window);
+        let label = if docked {
+            "隐藏项目文件"
+        } else {
+            "浏览项目文件"
+        };
+        Button::new(id)
+            .custom(palette::quiet_icon_variant(cx))
+            .compact()
+            .xsmall()
+            .h(px(26.))
+            .w(px(26.))
+            .rounded_md()
+            .icon(Glyph::FolderOpen)
+            .selected(docked)
+            .tooltip(tr(label))
+            .accessibility_label(tr(label))
+            .disabled(!docked && !self.can_browse_project_files())
+            .on_click(cx.listener(|this, _, window, cx| this.open_project_file_browser(window, cx)))
+    }
+
+    pub(crate) fn open_project_file_browser(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        let docked = self.can_dock_project_files(window);
+        if docked && self.project_file_dock.is_some() {
+            self.close_project_file_dock(window, cx);
+            return;
+        }
+        let (Some(scope), Some(runtime)) = (self.project_file_scope(), self.runtime.clone()) else {
+            return;
+        };
         let app = cx.weak_entity();
         let browser = cx.new(|cx| {
             let query = cx.new(|cx| InputState::new(window, cx).placeholder(tr("搜索项目文件…")));
             cx.subscribe(
                 &query,
-                |this: &mut FileBrowser, _, event: &InputEvent, cx| match event {
-                    InputEvent::Change => {
+                |this: &mut FileBrowser, _, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
                         this.search_offset = 0;
                         this.load_search(true, cx);
                     }
-                    InputEvent::PressEnter {
-                        secondary: false,
-                        shift: false,
-                    } => {
-                        if let Some(hit) = this.search.matches.get(this.search_selected).cloned() {
-                            this.select(hit, cx);
-                        }
-                    }
-                    _ => {}
                 },
             )
             .detach();
-            if let Some(parent) = app.upgrade() {
-                cx.observe(&parent, |this: &mut FileBrowser, _, cx| {
-                    if !this.current(cx) {
-                        this.dismiss();
-                    }
-                    cx.notify();
-                })
-                .detach();
+            if !docked {
+                if let Some(parent) = app.upgrade() {
+                    cx.observe(&parent, |this: &mut FileBrowser, _, cx| {
+                        if !this.current(cx) {
+                            this.dismiss();
+                            cx.notify();
+                        }
+                    })
+                    .detach();
+                }
             }
-            let pending = cx.weak_entity();
-            cx.defer(move |cx| {
-                let _ = pending.update(cx, |this, cx| this.load_directory(String::new(), cx));
-            });
-            FileBrowser {
+            let mut browser = FileBrowser {
                 app,
-                runtime,
-                workspace,
-                session,
-                connection,
-                open_request,
-                source_directory,
+                docked,
                 dismissed: false,
+                scope: None,
+                scope_generation: 0,
+                runtime: None,
                 query,
                 contents: false,
                 directories: HashMap::new(),
-                scroll: ScrollHandle::new(),
+                root_focus: cx.focus_handle(),
+                tree_focus: cx.focus_handle(),
+                tree_selected: None,
+                tree_scroll: ScrollHandle::new(),
+                search_scroll: ScrollHandle::new(),
                 search: SearchPage::default(),
                 search_offset: 0,
                 search_selected: 0,
@@ -205,9 +289,18 @@ impl HiveApp {
                 search_task: None,
                 preview: None,
                 preview_task: None,
-            }
+            };
+            browser.set_scope(Some(scope), Some(runtime), cx);
+            browser
         });
         let focus = browser.read(cx).query.read(cx).focus_handle(cx);
+        if docked {
+            self.project_file_dock = Some(browser);
+            // Keep typing in the same place when opening the side panel.
+            cx.notify();
+            return;
+        }
+
         let width = (window.viewport_size().width - px(44.)).min(px(1040.));
         let dismiss = browser.downgrade();
         window.open_dialog(cx, move |dialog, _, _| {
@@ -228,19 +321,95 @@ impl HiveApp {
             }
         });
     }
+
+    fn close_project_file_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(browser) = self.project_file_dock.take() {
+            if browser.read(cx).root_focus.contains_focused(window, cx) {
+                self.input.read(cx).focus_handle(cx).focus(window, cx);
+            }
+            browser.update(cx, |browser, _| browser.dismiss());
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn project_file_pane(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let browser = self.project_file_dock.clone()?;
+        if !self.can_dock_project_files(window) || self.workspace.is_none() {
+            return None;
+        }
+        let scope = self.project_file_scope();
+        if browser.read(cx).scope != scope {
+            let runtime = self.runtime.clone();
+            browser.update(cx, |browser, cx| browser.set_scope(scope, runtime, cx));
+        }
+        let root_focus = browser.read(cx).root_focus.clone();
+        Some(
+            v_flex()
+                .id("project-file-dock")
+                .track_focus(&root_focus)
+                .tab_stop(false)
+                .w(px(DOCK_WIDTH))
+                .h_full()
+                .min_h_0()
+                .flex_shrink_0()
+                .border_l_1()
+                .border_color(Color::Divider.get(cx))
+                .bg(Color::Surface.get(cx))
+                .child(
+                    h_flex()
+                        .h(px(crate::chrome::TOPBAR_HEIGHT))
+                        .flex_shrink_0()
+                        .px_3()
+                        .justify_between()
+                        .items_center()
+                        .gap_2()
+                        .border_b_1()
+                        .border_color(Color::Divider.get(cx))
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(tr("项目文件")),
+                        )
+                        .child(
+                            Button::new("close-project-file-dock")
+                                .custom(palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .size(px(26.))
+                                .icon(Glyph::X)
+                                .tooltip(tr("隐藏项目文件"))
+                                .accessibility_label(tr("隐藏项目文件"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.close_project_file_dock(window, cx)
+                                })),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_hidden()
+                        .p_2()
+                        .child(browser),
+                )
+                .into_any_element(),
+        )
+    }
 }
 
 impl FileBrowser {
     fn current(&self, cx: &App) -> bool {
         !self.dismissed
-            && self.app.upgrade().is_some_and(|app| {
-                let app = app.read(cx);
-                app.can_browse_project_files()
-                    && app.connection_generation == self.connection
-                    && app.open_request == self.open_request
-                    && app.workspace.as_ref() == Some(&self.workspace)
-                    && app.session.as_ref().map(|session| &session.id) == self.session.as_ref()
-            })
+            && self.scope.is_some()
+            && self
+                .app
+                .upgrade()
+                .is_some_and(|app| self.scope == app.read(cx).project_file_scope())
     }
 
     fn dismiss(&mut self) {
@@ -250,12 +419,40 @@ impl FileBrowser {
         self.preview = None;
     }
 
-    fn params(&self, mut params: Value) -> Value {
-        params["workspaceId"] = json!(self.workspace);
-        if let Some(session) = &self.session {
-            params["sessionId"] = json!(session);
+    fn set_scope(
+        &mut self,
+        scope: Option<Scope>,
+        runtime: Option<Arc<Runtime>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.scope = scope;
+        self.runtime = runtime;
+        self.scope_generation += 1;
+        self.directories.clear();
+        self.tree_selected = None;
+        self.tree_scroll = ScrollHandle::new();
+        self.search = SearchPage::default();
+        self.search_offset = 0;
+        self.search_selected = 0;
+        self.search_loading = false;
+        self.search_error = None;
+        self.search_scroll = ScrollHandle::new();
+        self.search_task = None;
+        self.preview_task = None;
+        self.preview = None;
+        if self.scope.is_some() {
+            // Scope changes can happen during the parent view update.
+            let generation = self.scope_generation;
+            let pending = cx.weak_entity();
+            cx.defer(move |cx| {
+                let _ = pending.update(cx, |this, cx| {
+                    if this.scope_generation == generation {
+                        this.load_directory(String::new(), cx);
+                        this.load_search(false, cx);
+                    }
+                });
+            });
         }
-        params
     }
 
     fn load_directory(&mut self, path: String, cx: &mut Context<Self>) {
@@ -270,8 +467,10 @@ impl FileBrowser {
         folder.loading = true;
         folder.error = None;
         let offset = folder.next_offset;
-        let params = self.params(json!({"directory":path, "offset":offset}));
-        let runtime = self.runtime.clone();
+        let scope = self.scope.as_ref().expect("current file scope");
+        let params = scope.params(json!({"directory":path, "offset":offset}));
+        let runtime = self.runtime.clone().expect("current file runtime");
+        let generation = self.scope_generation;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -282,13 +481,14 @@ impl FileBrowser {
                         .map_err(|error| error.to_string())
                 });
             let _ = this.update(cx, |this, cx| {
-                if !this.current(cx) {
+                if this.scope_generation != generation || !this.current(cx) {
                     return;
                 }
                 let Some(folder) = this.directories.get_mut(&path) else {
                     return;
                 };
                 folder.loading = false;
+                let original_len = folder.entries.len();
                 match result {
                     Ok(page) => {
                         folder.loaded = true;
@@ -306,6 +506,11 @@ impl FileBrowser {
                         }
                     }
                     Err(error) => folder.error = Some(FileError::Request(error)),
+                }
+                if matches!(this.tree_selected.as_ref(), Some(TreeItem::LoadMore(selected)) if selected == &path)
+                    && let Some(path) = folder.entries.get(original_len).map(|entry| entry.path.clone())
+                {
+                    this.select_tree_item(TreeItem::Entry(path), cx);
                 }
                 cx.notify();
             });
@@ -329,16 +534,18 @@ impl FileBrowser {
         self.search_selected = 0;
         self.search_error = None;
         self.search_loading = false;
-        self.scroll = ScrollHandle::new();
+        self.search_scroll = ScrollHandle::new();
         cx.notify();
         let query = self.query.read(cx).value().trim().to_owned();
         if query.is_empty() || !self.current(cx) {
             return;
         }
         self.search_loading = true;
-        let runtime = self.runtime.clone();
+        let scope = self.scope.as_ref().expect("current file scope");
+        let runtime = self.runtime.clone().expect("current file runtime");
         let contents = self.contents;
-        let params = self.params(json!({"query":query,"offset":self.search_offset}));
+        let params = scope.params(json!({"query":query,"offset":self.search_offset}));
+        let generation = self.scope_generation;
         self.search_task = Some(cx.spawn(async move |this, cx| {
             if debounce {
                 smol::Timer::after(Duration::from_millis(180)).await;
@@ -350,7 +557,7 @@ impl FileBrowser {
                     serde_json::from_value::<SearchPage>(value).map_err(|error| error.to_string())
                 });
             let _ = this.update(cx, |this, cx| {
-                if !this.current(cx) {
+                if this.scope_generation != generation || !this.current(cx) {
                     return;
                 }
                 this.search_loading = false;
@@ -373,31 +580,161 @@ impl FileBrowser {
         }));
     }
 
+    fn search_composing(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.query.update(cx, |input, cx| {
+            input.marked_text_range(window, cx).is_some()
+        })
+    }
+
     fn move_search_selection(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         if !self.query.read(cx).focus_handle(cx).is_focused(window)
-            || self.query.update(cx, |input, cx| {
-                input.marked_text_range(window, cx).is_some()
-            })
-            || self.query.read(cx).value().trim().is_empty()
-            || self.search.matches.is_empty()
+            || self.search_composing(window, cx)
         {
             cx.propagate();
             return;
         }
-        self.search_selected = self
-            .search_selected
-            .saturating_add_signed(delta)
-            .min(self.search.matches.len() - 1);
-        self.scroll.scroll_to_item(self.search_selected);
-        cx.notify();
+        if self.query.read(cx).value().trim().is_empty() {
+            self.tree_focus.focus(window, cx);
+            self.move_tree_selection(delta, cx);
+            return;
+        }
+        if !self.search.matches.is_empty() {
+            self.search_selected = self
+                .search_selected
+                .saturating_add_signed(delta)
+                .min(self.search.matches.len() - 1);
+            self.search_scroll.scroll_to_item(self.search_selected);
+            cx.notify();
+        }
+    }
+
+    fn open_search_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search_composing(window, cx) {
+            cx.propagate();
+        } else if let Some(hit) = self.search.matches.get(self.search_selected).cloned() {
+            self.select(hit, cx);
+        }
+    }
+
+    fn move_tree_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let rows = self.tree_rows();
+        let selectable = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| !matches!(row, TreeRow::Status(..)))
+            .collect::<Vec<_>>();
+        let selected = self.tree_selected.as_ref().and_then(|item| {
+            selectable
+                .iter()
+                .position(|(_, row)| row.matches_item(item))
+        });
+        let next = match selected {
+            Some(index) => {
+                selectable.get(index.saturating_add_signed(delta).min(selectable.len() - 1))
+            }
+            None if delta < 0 => selectable.last(),
+            None => selectable.first(),
+        };
+        if let Some((index, item)) = next.and_then(|(index, row)| Some((*index, row.item()?))) {
+            self.tree_selected = Some(item);
+            self.tree_scroll.scroll_to_item(index);
+            cx.notify();
+        }
+    }
+
+    fn select_tree_item(&mut self, item: TreeItem, cx: &mut Context<Self>) {
+        let index = self
+            .tree_rows()
+            .iter()
+            .position(|row| row.matches_item(&item));
+        if let Some(index) = index {
+            self.tree_selected = Some(item);
+            self.tree_scroll.scroll_to_item(index);
+            cx.notify();
+        }
+    }
+
+    fn activate_tree_item(&mut self, item: TreeItem, cx: &mut Context<Self>) {
+        match item {
+            TreeItem::Entry(path) if self.is_directory(&path) => self.toggle_directory(path, cx),
+            TreeItem::Entry(path) => self.select(Match { path, line: None }, cx),
+            TreeItem::LoadMore(path) => self.load_directory(path, cx),
+        }
+    }
+
+    fn open_tree_selection(&mut self, cx: &mut Context<Self>) {
+        if !self.current(cx) {
+            return;
+        }
+        if self.tree_selected.is_none() {
+            self.move_tree_selection(1, cx);
+        }
+        if let Some(item) = self.tree_selected.clone() {
+            self.activate_tree_item(item, cx);
+        }
+    }
+
+    fn is_directory(&self, path: &str) -> bool {
+        let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+        self.directories.get(parent).is_some_and(|folder| {
+            folder
+                .entries
+                .iter()
+                .any(|entry| entry.directory && entry.path == path)
+        })
+    }
+
+    fn tree_key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let modifiers = event.keystroke.modifiers;
+        if modifiers.control
+            || modifiers.platform
+            || modifiers.alt
+            || modifiers.shift
+            || !self.current(cx)
+        {
+            return;
+        }
+        let Some(item) = self.tree_selected.clone() else {
+            return;
+        };
+        match (event.keystroke.key.as_str(), item) {
+            ("left", TreeItem::Entry(path)) => {
+                if self
+                    .directories
+                    .get(&path)
+                    .is_some_and(|folder| folder.expanded)
+                {
+                    self.toggle_directory(path, cx);
+                } else if let Some((parent, _)) = path.rsplit_once('/') {
+                    self.select_tree_item(TreeItem::Entry(parent.to_owned()), cx);
+                }
+            }
+            ("left", TreeItem::LoadMore(path)) if !path.is_empty() => {
+                self.select_tree_item(TreeItem::Entry(path), cx);
+            }
+            ("right", TreeItem::Entry(path)) if self.is_directory(&path) => {
+                if let Some(folder) = self.directories.get(&path).filter(|folder| folder.expanded) {
+                    if let Some(child) = folder.entries.first() {
+                        self.select_tree_item(TreeItem::Entry(child.path.clone()), cx);
+                    } else if folder.error.is_some() {
+                        self.select_tree_item(TreeItem::LoadMore(path), cx);
+                    }
+                } else {
+                    self.toggle_directory(path, cx);
+                }
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
     }
 
     fn select(&mut self, selection: Match, cx: &mut Context<Self>) {
         if !self.current(cx) {
             return;
         }
-        let params = self.params(json!({"relativePath":selection.path}));
-        let runtime = self.runtime.clone();
+        let scope = self.scope.as_ref().expect("current file scope");
+        let params = scope.params(json!({"relativePath":selection.path}));
+        let runtime = self.runtime.clone().expect("current file runtime");
         self.preview = Some(Preview {
             selection,
             loading: true,
@@ -405,6 +742,7 @@ impl FileBrowser {
             error: None,
             scroll: ScrollHandle::new(),
         });
+        let generation = self.scope_generation;
         self.preview_task = Some(cx.spawn(async move |this, cx| {
             let result = runtime
                 .request("project.files.preview", params)
@@ -416,7 +754,7 @@ impl FileBrowser {
                         .ok_or_else(|| tr("读取失败").to_owned())
                 });
             let _ = this.update(cx, |this, cx| {
-                if !this.current(cx) {
+                if this.scope_generation != generation || !this.current(cx) {
                     return;
                 }
                 let Some(preview) = this.preview.as_mut() else {
@@ -468,22 +806,7 @@ impl FileBrowser {
         }
     }
 
-    fn file_row(
-        &self,
-        hit: Match,
-        label: String,
-        depth: usize,
-        active: Option<usize>,
-        cx: &Context<Self>,
-    ) -> Button {
-        let path = hit.path.clone();
-        let selected = active
-            .map(|index| index == self.search_selected)
-            .unwrap_or_else(|| {
-                self.preview
-                    .as_ref()
-                    .is_some_and(|preview| preview.selection.path == path)
-            });
+    fn file_row(&self, hit: Match, label: String, active: usize, cx: &Context<Self>) -> Button {
         Button::new(SharedString::from(format!(
             "browser-file-{}-{:?}",
             hit.path, hit.line
@@ -493,131 +816,136 @@ impl FileBrowser {
         .w_full()
         .min_w_0()
         .justify_start()
-        .pl(px(8. + depth.min(12) as f32 * 12.))
-        .selected(selected)
+        .selected(active == self.search_selected)
         .icon(Glyph::FileText)
         .tooltip(label.clone())
         .accessibility_label(label.clone())
         .child(div().min_w_0().truncate().child(label))
         .on_click(cx.listener(move |this, _, _, cx| {
-            if let Some(index) = active {
-                this.search_selected = index;
-            }
+            this.search_selected = active;
             this.select(hit.clone(), cx);
         }))
     }
 
-    fn directory_rows(
-        &self,
-        path: &str,
-        depth: usize,
-        rows: &mut Vec<AnyElement>,
-        cx: &Context<Self>,
-    ) {
+    fn tree_rows(&self) -> Vec<TreeRow<'_>> {
+        let mut rows = Vec::new();
+        self.directory_rows("", 0, &mut rows);
+        rows
+    }
+
+    fn directory_rows<'a>(&'a self, path: &'a str, depth: usize, rows: &mut Vec<TreeRow<'a>>) {
         let Some(folder) = self.directories.get(path).filter(|folder| folder.expanded) else {
             return;
         };
         for entry in &folder.entries {
-            let name = entry
-                .path
-                .rsplit('/')
-                .next()
-                .unwrap_or(&entry.path)
-                .to_owned();
-            if !entry.directory {
-                rows.push(
-                    self.file_row(
-                        Match {
-                            path: entry.path.clone(),
-                            line: None,
-                        },
-                        name,
-                        depth,
-                        None,
-                        cx,
-                    )
-                    .into_any_element(),
-                );
-                continue;
+            rows.push(TreeRow::Entry(entry, depth));
+            if entry.directory {
+                self.directory_rows(&entry.path, depth + 1, rows);
             }
-            let path = entry.path.clone();
-            let expanded = self
-                .directories
-                .get(&path)
-                .is_some_and(|child| child.expanded);
-            let toggle = path.clone();
-            rows.push(
-                Button::new(SharedString::from(format!("browser-folder-{path}")))
+        }
+        if folder.loading || folder.error.is_some() || folder.entries.is_empty() {
+            rows.push(TreeRow::Status(folder, depth));
+        }
+        if (!folder.loading && folder.error.is_some()) || folder.next_offset < folder.total {
+            rows.push(TreeRow::LoadMore(path, folder, depth));
+        }
+    }
+
+    fn tree_row(&self, row: &TreeRow<'_>, cx: &Context<Self>) -> AnyElement {
+        let (id, item, label, title, depth, enabled, icon, expanded) = match row {
+            TreeRow::Entry(entry, depth) => {
+                let path = entry.path.clone();
+                let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
+                let expanded = entry.directory.then(|| {
+                    self.directories
+                        .get(&path)
+                        .is_some_and(|folder| folder.expanded)
+                });
+                let icon = match expanded {
+                    None => Glyph::FileText,
+                    Some(false) => Glyph::ChevronRight,
+                    Some(true) => Glyph::ChevronDown,
+                };
+                (
+                    format!("browser-entry-{path}"),
+                    TreeItem::Entry(path.clone()),
+                    name,
+                    path,
+                    *depth,
+                    true,
+                    Some(icon),
+                    expanded,
+                )
+            }
+            TreeRow::LoadMore(path, folder, depth) => {
+                let label = tr(if folder.error.is_some() {
+                    "重试"
+                } else {
+                    "加载更多"
+                })
+                .to_owned();
+                (
+                    format!("browser-more-{path}"),
+                    TreeItem::LoadMore((*path).to_owned()),
+                    label.clone(),
+                    label,
+                    *depth,
+                    !folder.loading,
+                    None,
+                    None,
+                )
+            }
+            TreeRow::Status(folder, depth) => {
+                let (label, color) = if folder.loading {
+                    (tr("正在读取…").to_owned(), Color::Muted)
+                } else if let Some(error) = &folder.error {
+                    (error.text(), Color::Error)
+                } else {
+                    (tr("此文件夹为空").to_owned(), Color::Muted)
+                };
+                return div()
+                    .pl(px(8. + (*depth).min(12) as f32 * 12.))
+                    .text_xs()
+                    .text_color(color.get(cx))
+                    .child(label)
+                    .into_any_element();
+            }
+        };
+        let selected = self.tree_selected.as_ref() == Some(&item);
+        div()
+            .id(SharedString::from(id))
+            .role(Role::TreeItem)
+            .aria_label(label.clone())
+            .aria_level(depth + 1)
+            .aria_selected(selected)
+            .when(selected, |row| row.aria_active_descendant())
+            .when_some(expanded, |row, expanded| row.aria_expanded(expanded))
+            .child(
+                Button::new("activate")
+                    .role(None)
                     .ghost()
                     .compact()
+                    .tab_stop(false)
                     .w_full()
                     .min_w_0()
                     .justify_start()
                     .pl(px(8. + depth.min(12) as f32 * 12.))
-                    .tooltip(path.clone())
-                    .accessibility_label(path.clone())
-                    .icon(if expanded {
-                        Glyph::ChevronDown
-                    } else {
-                        Glyph::ChevronRight
-                    })
-                    .child(div().min_w_0().truncate().child(name))
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| {
-                            this.toggle_directory(toggle.clone(), cx)
-                        }),
-                    )
-                    .into_any_element(),
-            );
-            if expanded {
-                self.directory_rows(&path, depth + 1, rows, cx);
-            }
-        }
-        let detail = if folder.loading {
-            Some(tr("正在读取…").to_owned())
-        } else if let Some(error) = &folder.error {
-            Some(error.text())
-        } else if folder.entries.is_empty() {
-            Some(tr("此文件夹为空").to_owned())
-        } else {
-            None
-        };
-        if let Some(detail) = detail {
-            rows.push(
-                div()
-                    .pl(px(8. + depth.min(12) as f32 * 12.))
-                    .text_xs()
-                    .text_color(
-                        if folder.error.is_some() {
-                            Color::Error
-                        } else {
-                            Color::Muted
-                        }
-                        .get(cx),
-                    )
-                    .child(detail)
-                    .into_any_element(),
-            );
-        }
-        if !folder.loading && (folder.error.is_some() || folder.next_offset < folder.total) {
-            let path = path.to_owned();
-            rows.push(
-                Button::new(SharedString::from(format!("browser-more-{path}")))
-                    .ghost()
-                    .compact()
-                    .justify_start()
-                    .pl(px(8. + depth.min(12) as f32 * 12.))
-                    .label(tr(if folder.error.is_some() {
-                        "重试"
-                    } else {
-                        "加载更多"
-                    }))
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.load_directory(path.clone(), cx)),
-                    )
-                    .into_any_element(),
-            );
-        }
+                    .tooltip(title)
+                    .selected(selected)
+                    .disabled(!enabled)
+                    .when_some(icon, |row, icon| row.icon(icon))
+                    .child(div().min_w_0().truncate().child(label)),
+            )
+            .when(enabled, |row| {
+                row.on_click(cx.listener(move |this, _, window, cx| {
+                    if this.current(cx) {
+                        this.tree_focus.focus(window, cx);
+                        this.select_tree_item(item.clone(), cx);
+                        this.activate_tree_item(item.clone(), cx);
+                    }
+                }))
+            })
+            .into_any_element()
     }
 }
 
@@ -671,7 +999,7 @@ impl FileBrowser {
                 let label = hit
                     .line
                     .map_or_else(|| hit.path.clone(), |line| format!("{}:{line}", hit.path));
-                self.file_row(hit.clone(), label, 0, Some(index), cx)
+                self.file_row(hit.clone(), label, index, cx)
                     .into_any_element()
             })
             .collect()
@@ -741,6 +1069,7 @@ impl FileBrowser {
         panel
             .child(
                 text_reading::region("browser-preview".into(), path, &preview.scroll, height, cx)
+                    .when(self.docked, |region| region.flex_1().min_h_0())
                     .child(
                         text_reading::selectable_text("browser-text-preview", content)
                             .text_sm()
@@ -782,36 +1111,39 @@ impl FileBrowser {
 impl Render for FileBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut view = v_flex()
-            .key_context("HiveProjectFileSearch")
             .min_w_0()
             .gap_2()
-            .on_action(
-                cx.listener(|this, _: &crate::NextSessionResult, window, cx| {
-                    this.move_search_selection(1, window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|this, _: &crate::PreviousSessionResult, window, cx| {
-                    this.move_search_selection(-1, window, cx)
-                }),
-            );
+            .when(self.docked, |view| view.size_full().min_h_0());
         if !self.current(cx) {
+            let label = if self.docked {
+                tr("项目文件暂不可用。")
+            } else {
+                tr("项目、会话或后台连接已变化，请关闭后重新选择。")
+            };
             return view.child(
                 div()
                     .id("browser-stale")
                     .role(Role::Status)
                     .text_sm()
-                    .child(tr("项目、会话或后台连接已变化，请关闭后重新选择。")),
+                    .child(label),
             );
         }
         let searching = !self.query.read(cx).value().trim().is_empty();
-        let mut rows = Vec::new();
-        if searching {
-            rows = self.search_rows(cx);
+        let rows = if searching {
+            self.search_rows(cx)
         } else {
-            self.directory_rows("", 0, &mut rows, cx);
-        }
-        let narrow = window.viewport_size().width < px(690.);
+            let rows = self.tree_rows();
+            if self
+                .tree_selected
+                .as_ref()
+                .is_some_and(|item| !rows.iter().any(|row| row.item().as_ref() == Some(item)))
+            {
+                self.tree_selected = None;
+            }
+            let rows = self.tree_rows();
+            rows.iter().map(|row| self.tree_row(row, cx)).collect()
+        };
+        let narrow = self.docked || window.viewport_size().width < px(690.);
         let body = window.viewport_size().height * 0.62;
         let list_height = if narrow { body * 0.40 } else { body };
         let preview_height = if narrow {
@@ -824,20 +1156,50 @@ impl Render for FileBrowser {
         } else {
             tr("项目目录树")
         };
+        let scroll = if searching {
+            &self.search_scroll
+        } else {
+            &self.tree_scroll
+        };
         let list = v_flex()
             .min_w_0()
+            .when(self.docked, |list| list.flex_1().min_h_0())
             .gap_1()
             .when(!narrow, |list| list.w(px(320.)).flex_shrink_0())
             .child(
                 v_flex()
                     .id("browser-list")
-                    .role(Role::List)
+                    .role(if searching { Role::List } else { Role::Tree })
                     .aria_label(name)
-                    .h(list_height)
+                    .when(self.docked, |list| list.flex_1().min_h_0())
+                    .when(!self.docked, |list| list.h(list_height))
                     .min_w_0()
                     .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .vertical_scrollbar(&self.scroll)
+                    .track_scroll(scroll)
+                    .vertical_scrollbar(scroll)
+                    .when(!searching, |list| {
+                        list.key_context("HiveProjectFileTree")
+                            .track_focus(&self.tree_focus)
+                            .tab_stop(true)
+                            .focus(|style| style.border_color(Color::Secondary.get(cx)))
+                            .border_1()
+                            .border_color(gpui::transparent_black())
+                            .rounded_md()
+                            .on_action(cx.listener(|this, _: &crate::NextSessionResult, _, cx| {
+                                this.move_tree_selection(1, cx)
+                            }))
+                            .on_action(cx.listener(
+                                |this, _: &crate::PreviousSessionResult, _, cx| {
+                                    this.move_tree_selection(-1, cx)
+                                },
+                            ))
+                            .on_action(cx.listener(
+                                |this, _: &crate::OpenProjectFileSelection, _, cx| {
+                                    this.open_tree_selection(cx)
+                                },
+                            ))
+                            .capture_key_down(cx.listener(Self::tree_key))
+                    })
                     .children(rows),
             )
             .when(searching && self.search.limited, |list| {
@@ -889,22 +1251,45 @@ impl Render for FileBrowser {
                         ),
                 )
             });
-        let preview = self.preview_view(preview_height, cx);
-        let panels = if narrow {
+        let panels = if self.docked {
+            v_flex()
+                .flex_1()
+                .min_h_0()
+                .gap_2()
+                .child(list)
+                .when(self.preview.is_some(), |panels| {
+                    panels.child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .flex()
+                            .border_t_1()
+                            .border_color(Color::Divider.get(cx))
+                            .pt_2()
+                            .child(self.preview_view(window.viewport_size().height, cx)),
+                    )
+                })
+                .into_any_element()
+        } else if narrow {
             v_flex()
                 .gap_2()
                 .child(list)
-                .child(preview)
+                .child(self.preview_view(preview_height, cx))
                 .into_any_element()
         } else {
             h_flex()
                 .items_start()
                 .gap_3()
                 .child(list)
-                .child(preview)
+                .child(self.preview_view(preview_height, cx))
                 .into_any_element()
         };
-        view = view.when_some(self.source_directory.clone(), |view, source| {
+        let source = self
+            .scope
+            .as_ref()
+            .and_then(|scope| scope.source_directory.clone());
+        view = view.when_some(source, |view, source| {
             view.child(text_reading::selectable_text("browser-directory", source).text_xs())
         });
         view.child(
@@ -913,13 +1298,32 @@ impl Render for FileBrowser {
                 .items_center()
                 .flex_wrap()
                 .child(
-                    div().min_w(px(180.)).flex_1().child(
-                        Input::new(&self.query)
-                            .cleanable(true)
-                            .aria_label(tr("搜索项目文件")),
-                    ),
+                    div()
+                        .key_context("HiveProjectFileSearch")
+                        .min_w(px(180.))
+                        .flex_1()
+                        .on_action(
+                            cx.listener(|this, _: &crate::NextSessionResult, window, cx| {
+                                this.move_search_selection(1, window, cx)
+                            }),
+                        )
+                        .on_action(cx.listener(
+                            |this, _: &crate::PreviousSessionResult, window, cx| {
+                                this.move_search_selection(-1, window, cx)
+                            },
+                        ))
+                        .on_action(cx.listener(
+                            |this, _: &crate::OpenProjectFileSelection, window, cx| {
+                                this.open_search_selection(window, cx)
+                            },
+                        ))
+                        .child(
+                            Input::new(&self.query)
+                                .cleanable(true)
+                                .aria_label(tr("搜索项目文件")),
+                        ),
                 )
-                .children(
+                .child(h_flex().gap_1().flex_shrink_0().children(
                     [(false, "文件名"), (true, "文件内容")].map(|(contents, label)| {
                         Button::new(("browser-search-mode", usize::from(contents)))
                             .outline()
@@ -932,7 +1336,7 @@ impl Render for FileBrowser {
                                 this.load_search(false, cx);
                             }))
                     }),
-                ),
+                )),
         )
         .child(panels)
     }

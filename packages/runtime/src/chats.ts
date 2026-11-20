@@ -1,5 +1,5 @@
 import { checkoutGithubPrReview, prepareGithubPrReview, previewGithubPrReview } from './github-pr-review.js';
-import { AcpHistory } from './agents/acp-history.js';
+import { AcpHistory, openSavedAcpHistory } from './agents/acp-history.js';
 import {SteerDispositions,type SteerIdentity,type SteerDisposition} from './steer-dispositions.js';
 import { unavailableAcpMode } from './agents/acp-modes.js';
 import { HandoffRuntime } from './handoff-runtime.js';
@@ -31,7 +31,7 @@ import type { AgentModels } from './agent-models.js';
 import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalStage } from './workspace-removal.js';
 import { createHash,randomUUID } from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { readSessionMessages as readClaudeSessionMessages, type ClaudeSessionHandle } from './agents/claude.js';
 import { type CodexSessionHandle } from './agents/codex.js';
@@ -40,12 +40,14 @@ import { CodexTransport } from './agents/codex-transport.js';
 import { type ExternalPiSessionHandle } from './agents/external-pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
 import { ChatIndex, SessionIdentityError, type ChatRecord, type ChatBackend } from './chat-index.js';
-import { externalPiBranch, externalPiMessage, externalPiTailBranch, readPiTranscript, readPiTranscriptTailWindow, verifyPiTranscriptIdentity } from './agents/external-pi-history.js';
+import { externalPiBranch, externalPiMessage, piHistoryMessageId, readPiTranscript, verifyPiTranscriptIdentity } from './agents/external-pi-history.js';
+import { PiHistoryPages } from './agents/pi-history-pages.js';
 import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
 import { ClaudeProjection } from './agents/claude-projection.js';
-import { readClaudeMetadata } from './agents/claude-metadata.js';
-import { CodexProjection } from './agents/codex-projection.js';
-import { readCodexMetadata } from './agents/codex-metadata.js';
+import { claudeHistoryCacheDirectory, openClaudeSavedHistory, removeClaudeHistoryCache } from './agents/claude-history-pages.js';
+import { claudeMetadataPath, readClaudeMetadata } from './agents/claude-metadata.js';
+import { CodexProjection, openSavedCodexProjection } from './agents/codex-projection.js';
+import { codexMetadataFile, readCodexMetadata } from './agents/codex-metadata.js';
 import { codexDeliveryLookup, normalizeCodexItem } from './agents/codex-history.js';
 import { foldSearchText, searchConversation, type ConversationSearchMatch } from './conversation-search.js';
 import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffOptions } from './git-workspace.js';
@@ -53,7 +55,7 @@ import { previewGitStage, previewGitUnstage, stageGitPaths, unstageGitPaths, pre
 import { listGitRemotes, previewGitPush, pushGitBranch } from './git-remotes.js';
 import { previewGithubPr, createGithubPr, updateGithubPr, type GithubPrTarget, type GithubPrWriteRequest } from './github-prs.js';
 import { createManagedWorktree, GitWorktreeError, previewManagedWorktreeRemoval, readWorktreeIntent, recordManagedWorktreePush, recoverManagedWorktree, removeManagedWorktree, validateManagedWorktree, type WorktreeCreation } from './git-worktrees.js';
-import { readdir, realpath } from 'node:fs/promises';
+import { readdir, realpath, stat } from 'node:fs/promises';
 import type { DesktopSettings } from './desktop-settings.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
 import { DeliveryQueue, type DeliveryItem } from './delivery-queue.js';
@@ -62,7 +64,7 @@ import type { HiveHost } from './hive-host.js';
 import type { HiveAgentRuntime, WorkspaceSummary } from './hive-runtime-contract.js';
 import type { StructuredSessionPort, StructuredSessionHandle } from './structured-runtime.js';
 import { createTeamTool, createTeamCommand } from './team-tool.js';
-import { readToolOutputByteWindow, sliceHistoryWindow, type HistorySliceResult, type HistoryWindowOptions, type ToolOutputByteWindow } from './history-cursor.js';
+import { readToolOutputByteWindow, sliceHistoryWindow, StaleHistorySnapshotError, type HistorySliceResult, type HistoryWindowOptions, type ToolOutputByteWindow } from './history-cursor.js';
 import {
   checkoutGitBranch,
   discardGitFile,
@@ -77,6 +79,8 @@ import {
   pushGitStash,
 } from './git-branches-stash.js';
 import { collectLocalUsageSummary } from './usage-summary.js';
+import { importedCodexHistoryWarning, openImportedCodexHistory, readImportedCodexHistory } from './agents/imported-codex-history.js';
+import { inside, isImportBackend, nativeImportHome, verifyImportSource, type NativeImportSession } from './native-import-source.js';
 
 export interface MemberDesktopActivity {
   sessionId?: string;
@@ -85,6 +89,7 @@ export interface MemberDesktopActivity {
   activeTool?: string;
   activeTarget?: string;
   pendingInteractionCount: number;
+  pendingInteractionIds: string[];
   queuedInputCount: number;
   pendingReportCount: number;
   deliveryFailureMessage?: string;
@@ -109,6 +114,8 @@ function extractToolTarget(args: unknown): string | undefined {
   }
   return undefined;
 }
+
+type AcpHistoryReceipt = {file: string; state: Pick<AcpHistory['state'], 'sessionId' | 'deliveries'>};
 
 interface LiveChat {
   handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
@@ -346,6 +353,57 @@ export class Chats implements StructuredSessionPort {
   }
   capabilities(id:string){const record=this.index.get(id),live=this.live.get(id);return record.backend==='acp'?{...acpCapabilities(live?.handle as AcpSessionHandle|undefined,!!record.sessionFile),...(!live&&record.capabilities&&{lastObserved:record.capabilities})}:agentCapabilities(record.backend);}
   list(workspaceId: string) { return this.index.list(workspaceId); }
+  async importNativeSessions(workspace: WorkspaceSummary, sources: NativeImportSession[]) {
+    return this.withWorkspace(workspace.id, async () => {
+      this.assertWorkspaceAvailable(workspace.id);
+      this.closeAbort.signal.throwIfAborted();
+      const current = await this.workspace(workspace.id);
+      const cwd = await realpath(current.path);
+      this.assertWorkspaceAvailable(workspace.id);
+      this.closeAbort.signal.throwIfAborted();
+      const owned = this.index.all();
+      const codex = new Set(owned.flatMap(record => record.codexThreadId ? [record.codexThreadId] : []));
+      const claude = new Set(owned.flatMap(record => record.nativeclaudeSessionId ? [record.nativeclaudeSessionId] : []));
+      const pi = new Set(owned.flatMap(record => [record.piSessionId, record.externalPiSessionId].filter(Boolean)));
+      const files = new Set(owned.flatMap(record => record.sessionFile ? [record.sessionFile] : []));
+      let alreadyImported = 0, skipped = 0;
+      const records: ChatRecord[] = [];
+      for (const source of sources) {
+        const ids = source.backend === 'codex' ? codex : source.backend === 'claude' ? claude : pi;
+        const metadata = source.backend === 'codex' ? codexMetadataFile(join(this.sessionDir, '..', 'codex'), source.id)
+          : source.backend === 'claude' ? claudeMetadataPath(join(this.sessionDir, '..', 'claude'), source.id) : undefined;
+        if (ids.has(source.id) || files.has(source.path) || metadata && (existsSync(metadata) || existsSync(`${metadata}.required`))) {
+          alreadyImported++;
+          continue;
+        }
+        if ((source.cwd !== cwd && !inside(cwd, source.cwd)) || current.controller_mode === 'codex_app') { skipped++; continue; }
+        ids.add(source.id);
+        files.add(source.path);
+        records.push({
+          id:randomUUID(), workspaceId:workspace.id, backend:source.backend, title:source.title,
+          profile:source.profile, updatedAt:source.updatedAt, identityState:'new',
+          nativeImport:{home:source.home, path:source.path, cwd:source.cwd},
+          sessionFile:source.backend === 'pi-rpc' ? source.path : null,
+          ...(source.backend === 'codex' ? {codexThreadId:source.id} : source.backend === 'claude'
+            ? {nativeclaudeSessionId:source.id} : {externalPiSessionId:source.id}),
+        });
+      }
+      this.index.addImported(records);
+      return {imported:records.length, alreadyImported, skipped};
+    });
+  }
+  private async verifyNativeImport(record: ChatRecord, executionPath: string, launch: boolean) {
+    if (!record.nativeImport || !record.profile || !isImportBackend(record.backend)) return;
+    try {
+      const profile = launch ? await this.profiles.resolveForExecution(record.profile, record.backend)
+        : await this.profiles.getRef(record.profile, record.backend);
+      const id = record.codexThreadId ?? record.nativeclaudeSessionId ?? record.externalPiSessionId!;
+      await verifyImportSource(record.nativeImport, record.backend, id, nativeImportHome(profile), executionPath);
+    } catch (error) {
+      this.closeAbort.signal.throwIfAborted();
+      throw new SessionIdentityError('NATIVE_IMPORT_SOURCE_UNAVAILABLE', `Cannot restore the imported native conversation: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   private originIdentity(record: ChatRecord): ChatRecord {
     const current = this.index.get(record.id);
     const source = this.dispatchOrigins.sourceAgentForSession(current.workspaceId, current.id);
@@ -481,6 +539,14 @@ export class Chats implements StructuredSessionPort {
   /** Resolve only persisted ownership. A missing worktree never falls back to the team root. */
   private async executionPath(record: ChatRecord, workspace: WorkspaceSummary): Promise<string> {
     await this.assertHistoryReady(record);
+    if (record.nativeImport) {
+      try {
+        const root = await realpath(workspace.path);
+        const cwd = record.nativeImport.cwd;
+        if ((root === cwd || inside(root, cwd)) && await realpath(cwd) === cwd && (await stat(cwd)).isDirectory()) return cwd;
+      } catch { /* Missing or moved imports cannot execute from the workspace root. */ }
+      throw new SessionIdentityError('NATIVE_IMPORT_SOURCE_UNAVAILABLE', 'The imported conversation’s original project directory is unavailable.');
+    }
     if (!record.execution) return workspace.path;
     try {
       const {record: owned, creation} = await readWorktreeIntent(this.dataDir, record.id);
@@ -1279,7 +1345,8 @@ export class Chats implements StructuredSessionPort {
     });
     const record = candidates[0];
     const live = record ? this.live.get(record.id) : undefined;
-    const pendingInteractionCount = live?.handle.interactions?.().length ?? 0;
+    const pendingInteractionIds = live?.handle.interactions?.().map(interaction => interaction.id) ?? [];
+    const pendingInteractionCount = pendingInteractionIds.length;
     const queuedInputCount = live ? live.queue.pendingUserInputs.length : (record ? DeliveryQueue.persistedCount(this.queueDir, record.id) : 0);
     const pendingReportCount = live?.queue.pendingReports.length ?? 0;
     const failure = record ? (live ? this.deliveryFailure(record.id, live.queue) : record.lastDeliveryFailure) : undefined;
@@ -1319,6 +1386,7 @@ export class Chats implements StructuredSessionPort {
       ...(activeTool && { activeTool }),
       ...(activeTarget && { activeTarget }),
       pendingInteractionCount,
+      pendingInteractionIds,
       queuedInputCount,
       pendingReportCount,
       ...(failure?.message && { deliveryFailureMessage: failure.message }),
@@ -1333,12 +1401,13 @@ export class Chats implements StructuredSessionPort {
     if (!workspace) throw new Error('Workspace not found');
     return workspace;
   }
-  private async load(record: ChatRecord, recoveryFailure?: Error): Promise<LiveChat> {
+  private async load(record: ChatRecord, recoveryFailure?: Error, deferCodexBrowseGoals = false): Promise<LiveChat> {
     await this.assertHistoryReady(record);
     await this.initializationReady(record);
     record = await this.runnableIdentity(record);
     const workspace = await this.workspace(record.workspaceId);
     const executionPath = await this.executionPath(record, workspace);
+    await this.verifyNativeImport(record, executionPath, true);
     if (record.backend === 'acp' && (record.model || record.reasoning || record.nativeMode)) throw new SessionIdentityError('ACP_SETTING_UNSUPPORTED','ACP does not accept locally stored model, reasoning or mode overrides');
     const sessionFile = record.sessionFile;
     if (record.backend === 'acp' && record.acpSessionId && !sessionFile)
@@ -1380,14 +1449,15 @@ export class Chats implements StructuredSessionPort {
     };
     const model = record.model && { provider: record.model.provider, id: record.model.id };
     const command = createTeamCommand(binding);
-    const profile = await this.selectedProfile(record.backend, record.profile);
+    const resolvedProfile = await this.selectedProfile(record.backend, record.profile);
+    const profile = record.nativeImport ? {...resolvedProfile, launch:{...resolvedProfile.launch, configDir:record.nativeImport.home}} : resolvedProfile;
     this.closeAbort.signal.throwIfAborted();
     const handle = await createAgentSession({backend: record.backend, profile, ...(record.backend === 'acp'
       ? {acp:{command:profile.launch.command!,cwd:executionPath,sessionDir:join(this.sessionDir,'..','acp'),...(sessionFile&&{sessionFile}),signal:this.closeAbort.signal,onEvent,onUnexpectedExit,teamBinding:binding}}
       : record.backend === 'codex'
       ? {codex: { cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'codex'),
         signal: this.closeAbort.signal,
-        ...(record.codexThreadId && { threadId: record.codexThreadId }), ...((record.lineage||record.rewound||record.rewindOperationId)&&{deferGoalContinuation:true}), ...(record.nativeMode?.permissionMode && {permissionMode: record.nativeMode.permissionMode}), ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent,
+        ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(record.nativeImport && { expectedTranscriptPath: record.nativeImport.path }), ...((record.lineage||record.rewound||record.rewindOperationId||deferCodexBrowseGoals)&&{deferGoalContinuation:true}), ...(record.nativeMode?.permissionMode && {permissionMode: record.nativeMode.permissionMode}), ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent,
         onUnexpectedExit,
         onMaterialized: threadId => this.index.save({ ...this.index.get(record.id), codexThreadId: threadId }),
         customTools: [{ name: command.name, description: command.description, parameters: command.parameters,
@@ -1396,6 +1466,7 @@ export class Chats implements StructuredSessionPort {
       : record.backend === 'claude'
       ? {claude: { cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'claude'),
         signal: this.closeAbort.signal, ...(record.nativeclaudeSessionId && { sessionId: record.nativeclaudeSessionId }),
+        ...(record.nativeImport && {expectedTranscriptPath:record.nativeImport.path}),
         ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding }}
       : record.backend === 'pi-rpc'
       ? {externalPi: { cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'external-pi'),
@@ -1410,6 +1481,8 @@ export class Chats implements StructuredSessionPort {
       if (earlyFailure) throw earlyFailure;
       if (piNativeId && handle.sessionId !== piNativeId)
         throw new SessionIdentityError('PI_SESSION_IDENTITY_CONFLICT', 'Pi did not restore the original native session');
+      if (record.nativeImport && record.backend === 'pi-rpc' && (!handle.sessionFile || await realpath(handle.sessionFile) !== record.nativeImport.path))
+        throw new SessionIdentityError('PI_SESSION_IDENTITY_CONFLICT', 'Pi did not restore the original native transcript');
       if (record.backend === 'acp') {
         const acp=handle as AcpSessionHandle;
         this.index.save({...this.index.get(record.id),sessionFile:handle.sessionFile??null,acpSessionId:handle.sessionId,capabilities:acpCapabilities(acp,true)});
@@ -1432,7 +1505,7 @@ export class Chats implements StructuredSessionPort {
           reasoningFailure = error instanceof Error ? error : new Error(String(error));
           if (applying) {
             await handle.dispose();
-            return this.load(record, reasoningFailure);
+            return this.load(record, reasoningFailure, deferCodexBrowseGoals);
           }
         }
       }
@@ -1457,7 +1530,7 @@ export class Chats implements StructuredSessionPort {
         ? (handle as CodexSessionHandle).materialized ? { codexThreadId: handle.sessionId } : {}
         : record.backend === 'claude' ? { sessionFile: null, nativeclaudeSessionId: handle.sessionId }
         : record.backend === 'acp' ? {sessionFile:handle.sessionFile??null,acpSessionId:handle.sessionId}
-        : { sessionFile: handle.sessionFile ?? null, ...(record.backend === 'pi-rpc'
+        : { sessionFile: record.nativeImport?.path ?? handle.sessionFile ?? null, ...(record.backend === 'pi-rpc'
           ? { externalPiSessionId: handle.sessionId } : { piSessionId: handle.sessionId }) }), ...(model ? { model } : {}) });
       const handoffContext=record.handoff?await this.handoffRuntime!.contextText(this.index.get(record.id)):'';
       const completedIds=()=>record.handoff?handoffNativeCompletedIds(this.index.get(record.id),handle,this.handoffDeliveries.get(record.id)??{},handoffContext):handle.completedDeliveryIds();
@@ -1547,22 +1620,29 @@ export class Chats implements StructuredSessionPort {
       (dispatchId, payload) => this.hive.findReportPresentation(state.workspaceId, agentId, dispatchId, payload))) : snapshot.history;
     return {...state, ...snapshot, history: history.map((message, index) => handoffMessage(state.backend, message, snapshot.historyMessageIds[index]))};
   }
-  private async readProfileClaudeHistory(record: ChatRecord, directory: string) {
+  private async profileClaudeHistoryLocation(record: ChatRecord, directory: string) {
     if (!record.nativeclaudeSessionId || !record.profile) throw new Error('The saved Claude session or profile reference is missing; its native history directory is unavailable');
     const profile = await this.profiles.getRef(record.profile, 'claude');
-    return readClaudeSessionMessages(record.nativeclaudeSessionId, directory, nativeProfileLaunch(profile).env, this.closeAbort.signal);
+    const cwd = record.nativeImport ? await this.executionPath(record, await this.workspace(record.workspaceId)) : directory;
+    const env = nativeProfileLaunch(profile).env;
+    return {sessionId: record.nativeclaudeSessionId, cwd, env: record.nativeImport ? {...env, CLAUDE_CONFIG_DIR:record.nativeImport.home} : env};
+  }
+  private async readProfileClaudeHistory(record: ChatRecord, directory: string) {
+    const {sessionId, cwd, env} = await this.profileClaudeHistoryLocation(record, directory);
+    if (record.nativeImport) await this.verifyNativeImport(record, cwd, false);
+    return readClaudeSessionMessages(sessionId, cwd, env, this.closeAbort.signal, record.nativeImport?.path);
   }
   /** Project saved messages without opening an Agent or touching its delivery queue. */
-  private async readSavedHistory(record: ChatRecord, workspace: WorkspaceSummary, imageMessageId?: string, tailLimit?: number) {
+  private async readSavedHistory(record: ChatRecord, workspace: WorkspaceSummary, imageMessageId?: string) {
     let history: unknown[] = [], historyMessageIds: string[] = [];
     const piUserImageMatches: number[] = [];
     let historyWarning: string | undefined;
     let acpTranscript: AcpHistory | undefined;
-    let hasEarlierOnDisk = false;
     const hasDurableSource = record.backend === 'pi' || record.backend === 'pi-rpc' || record.backend === 'acp' ? !!record.sessionFile
       : record.backend === 'codex' ? !!record.codexThreadId : !!record.nativeclaudeSessionId;
     if (!hasDurableSource) historyWarning = 'No durable native history source is recorded for this older conversation; history completeness cannot be verified';
     try {
+      if (record.nativeImport) await this.verifyNativeImport(record, await this.executionPath(record, workspace), false);
       if (record.backend === 'acp') {
         if (record.sessionFile) {
           const transcript = await AcpHistory.load(record.sessionFile);
@@ -1577,71 +1657,40 @@ export class Chats implements StructuredSessionPort {
       } else if (record.backend === 'pi' || record.backend === 'pi-rpc') {
         if (record.sessionFile) {
           const nativeId = record.backend === 'pi' ? record.piSessionId : record.externalPiSessionId;
-          let usedTailFast = false;
-          if (tailLimit && tailLimit > 0 && !imageMessageId) {
-            try {
-              const info = statSync(record.sessionFile);
-              if (info.size >= 262_144) {
-                const tail = await readPiTranscriptTailWindow(record.sessionFile, {
-                  maxEntries: tailLimit * 3 + 32,
-                  ...(nativeId ? { expectedId: nativeId } : {}),
-                  signal: this.closeAbort.signal,
-                });
-                const resolved = externalPiTailBranch(tail.entries);
-                if (resolved) {
-                  const sources = piUserInputSources(resolved.branch);
-                  const tailHistory: unknown[] = [];
-                  const tailIds: string[] = [];
-                  for (const entry of resolved.branch) {
-                    const note = sources.notes.get(entry.id);
-                    if (note) { tailHistory.push(piUserInputNote(entry, note, record.backend)); tailIds.push(note.deliveryId); }
-                    const input = sources.users.get(entry.id);
-                    const message = externalPiMessage(entry, input, record.backend);
-                    if (message) {
-                      tailHistory.push(message);
-                      tailIds.push(message.role === 'toolResult' && typeof message.toolCallId === 'string' ? message.toolCallId : entry.id);
-                    }
-                  }
-                  if (resolved.reachedRoot || tailHistory.length >= tailLimit) {
-                    history = tailHistory;
-                    historyMessageIds = tailIds;
-                    hasEarlierOnDisk = !resolved.reachedRoot;
-                    usedTailFast = true;
-                  }
-                }
-              }
-            } catch {
-              // Fall back cleanly to authoritative full transcript read on any anomaly.
-            }
-          }
-          if (!usedTailFast) {
-            const entries = await readPiTranscript(record.sessionFile, nativeId, this.closeAbort.signal);
-            const branch = externalPiBranch(entries, entries.at(-1)?.id ?? null), sources = piUserInputSources(branch);
-            for (const entry of branch) {
-              const note = sources.notes.get(entry.id);
-              if (note) { history.push(piUserInputNote(entry, note, record.backend)); historyMessageIds.push(note.deliveryId); }
-              const input = sources.users.get(entry.id);
-              const message = externalPiMessage(entry, input, record.backend);
-              if (message) {
-                // Built-in Pi uses a delivery ID for explicit user input while live.
-                if (record.backend === 'pi' && input && input.deliveryId === imageMessageId) piUserImageMatches.push(history.length);
-                history.push(message);
-                historyMessageIds.push(message.role === 'toolResult' && typeof message.toolCallId === 'string' ? message.toolCallId : entry.id);
-              }
+          const entries = await readPiTranscript(record.sessionFile, nativeId, this.closeAbort.signal);
+          const branch = externalPiBranch(entries, entries.at(-1)?.id ?? null), sources = piUserInputSources(branch);
+          for (const entry of branch) {
+            const note = sources.notes.get(entry.id);
+            if (note) { history.push(piUserInputNote(entry, note, record.backend)); historyMessageIds.push(note.deliveryId); }
+            const input = sources.users.get(entry.id);
+            const message = externalPiMessage(entry, input, record.backend);
+            if (message) {
+              // Built-in Pi uses a delivery ID for explicit user input while live.
+              if (record.backend === 'pi' && input && input.deliveryId === imageMessageId) piUserImageMatches.push(history.length);
+              history.push(message);
+              historyMessageIds.push(piHistoryMessageId(entry.id, message));
             }
           }
         } else if (record.piSessionId || record.externalPiSessionId) throw new Error('Saved Pi transcript path is unavailable');
       } else if (record.backend === 'codex' && record.codexThreadId) {
         const directory = join(this.sessionDir, '..', 'codex'), metadata = readCodexMetadata(directory, record.codexThreadId);
-        const projection = new CodexProjection(directory, record.codexThreadId, { requireSaved: true });
-        const deliveryFor = codexDeliveryLookup(metadata);
-        for (const {item, turnId} of projection.current()) {
-          const source = metadata.inheritedSources?.find(entry => entry.itemId === item.id)?.sourceSessionId ?? record.id;
-          history.push(normalizeCodexItem(item, deliveryFor(turnId, item.id), source));
-          historyMessageIds.push(item.id);
+        try {
+          const projection = new CodexProjection(directory, record.codexThreadId, { requireSaved: true });
+          const deliveryFor = codexDeliveryLookup(metadata);
+          for (const {item, turnId} of projection.current()) {
+            const source = metadata.inheritedSources?.find(entry => entry.itemId === item.id)?.sourceSessionId ?? record.id;
+            history.push(normalizeCodexItem(item, deliveryFor(turnId, item.id), source));
+            historyMessageIds.push(item.id);
+          }
+          if (!projection.hasCompleteHistory())
+            historyWarning = 'Saved Codex display history may omit native items; no native process was opened to fill the gap';
+        } catch (error) {
+          if (!record.nativeImport || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          const preview = await readImportedCodexHistory(record.nativeImport.path, record.codexThreadId,
+            this.historyStorageScope(record, workspace), this.closeAbort.signal);
+          history = preview.history; historyMessageIds = preview.historyMessageIds;
+          historyWarning = importedCodexHistoryWarning;
         }
-        if (!projection.hasCompleteHistory())
-          historyWarning = 'Saved Codex display history may omit native items; no native process was opened to fill the gap';
       } else if (record.backend === 'claude' && record.nativeclaudeSessionId) {
         const metadata = readClaudeMetadata(join(this.sessionDir, '..', 'claude'), record.nativeclaudeSessionId);
         const projection = new ClaudeProjection(() => metadata);
@@ -1651,27 +1700,144 @@ export class Chats implements StructuredSessionPort {
         historyWarning = 'Claude SDK history completeness cannot be verified; no native process was opened';
       }
     } catch (error) { historyWarning = `Saved history could not be fully read: ${error instanceof Error ? error.message : String(error)}`; }
-    return {history, historyMessageIds, historyWarning, acpTranscript, piUserImageMatches, hasEarlierOnDisk};
+    return {history, historyMessageIds, historyWarning, acpTranscript, piUserImageMatches};
+  }
+
+  private readonly piHistoryPages = new PiHistoryPages();
+
+  private historyStorageScope(record: ChatRecord, workspace: WorkspaceSummary): string {
+    return JSON.stringify([record.workspaceId, record.id, record.backend, record.profile,
+      record.sessionFile, record.piSessionId, record.externalPiSessionId, record.codexThreadId,
+      record.nativeclaudeSessionId, record.acpSessionId, record.nativeImport,
+      record.originAgentId ?? record.agentId, record.execution?.path ?? workspace.path]);
+  }
+
+  private async openIndexedSavedHistory(record: ChatRecord, workspace: WorkspaceSummary, snapshot?: string): Promise<{
+    page: (options: HistoryWindowOptions) => Promise<HistorySliceResult<unknown>>;
+    imageRow: (id: string) => Promise<unknown | undefined>;
+    historyWarning?: string;
+    acpTranscript?: AcpHistoryReceipt;
+    completedDeliveryIds?: readonly string[];
+  } | undefined> {
+    const scope = this.historyStorageScope(record, workspace);
+    const signal = this.closeAbort.signal;
+    const context = {signal, ...(snapshot !== undefined && {snapshot})};
+    const checkBinding = () => {
+      this.assertWorkspaceAvailable(record.workspaceId);
+      const current = this.index.peek(record.id);
+      if (!current || this.historyStorageScope(current, workspace) !== scope) throw new StaleHistorySnapshotError();
+    };
+    function checked<T, A>(read: (arg: A) => Promise<T>): (arg: A) => Promise<T> {
+      return async arg => {
+        checkBinding();
+        const result = await read(arg);
+        checkBinding();
+        return result;
+      };
+    }
+    checkBinding();
+    if (record.nativeImport) await this.verifyNativeImport(record, await this.executionPath(record, workspace), false);
+    if ((record.backend === 'pi' || record.backend === 'pi-rpc') && record.sessionFile) {
+      const nativeId = record.backend === 'pi' ? record.piSessionId : record.externalPiSessionId;
+      if (nativeId) {
+        const source = {nativeId, backend: record.backend, file: record.sessionFile, scope};
+        return {
+          page: checked(options => this.piHistoryPages.page(source, options, signal)),
+          imageRow: checked(id => this.piHistoryPages.imageRow(source, id, signal)),
+        };
+      }
+    } else if (record.backend === 'acp' && record.sessionFile && record.acpSessionId) {
+      const source = await openSavedAcpHistory(record.sessionFile, record.acpSessionId, {cacheKey: scope, ...context});
+      return {
+        page: checked(source.page),
+        imageRow: checked(id => source.byId(id, {unique: true})),
+        historyWarning: 'This is the local ACP transcript; native restore support is checked only on explicit activation',
+        acpTranscript: {file: record.sessionFile, state: {sessionId: record.acpSessionId, deliveries: source.deliveries}},
+      };
+    } else if (record.backend === 'codex' && record.codexThreadId) {
+      try {
+        const source = await openSavedCodexProjection(join(this.sessionDir, '..', 'codex'), record.codexThreadId,
+          {cacheKey: scope, sourceSessionId: record.id, ...context});
+        return {
+          page: checked(source.page),
+          imageRow: checked(id => source.byId(id, {unique: true})),
+          completedDeliveryIds: source.completedDeliveryIds,
+          ...(!source.completeHistory && {historyWarning: 'Saved Codex display history may omit native items; no native process was opened to fill the gap'}),
+        };
+      } catch (error) {
+        if (!record.nativeImport || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        const source = await openImportedCodexHistory(record.nativeImport.path, record.codexThreadId, {cacheKey: scope, ...context});
+        return {
+          page: checked(source.page),
+          imageRow: checked(id => source.byId(id, {unique: true})),
+          historyWarning: importedCodexHistoryWarning,
+        };
+      }
+    } else if (record.backend === 'claude' && record.nativeclaudeSessionId) {
+      const location = await this.profileClaudeHistoryLocation(record, record.execution?.path ?? workspace.path);
+      const source = await openClaudeSavedHistory({
+        ...location, ...context, scope,
+        cacheDirectory: claudeHistoryCacheDirectory(this.dataDir, record.workspaceId),
+        metadataDirectory: join(this.sessionDir, '..', 'claude'),
+        assertCurrent: checkBinding,
+        ...(record.nativeImport && {nativePath: record.nativeImport.path}),
+      });
+      if (source) return {
+        page: checked(source.page),
+        imageRow: checked(id => source.byId(id, {unique: true})),
+        historyWarning: 'Claude SDK history completeness cannot be verified; no native process was opened',
+      };
+    }
+    return;
+  }
+
+  private async indexedSavedHistory(record: ChatRecord, workspace: WorkspaceSummary, options: HistoryWindowOptions) {
+    try {
+      const source = await this.openIndexedSavedHistory(record, workspace, options.snapshot);
+      if (source) return {
+        page: await source.page(options), historyWarning: source.historyWarning,
+        acpTranscript: source.acpTranscript, completedDeliveryIds: source.completedDeliveryIds,
+      };
+    } catch (error) {
+      this.closeAbort.signal.throwIfAborted();
+      if (error instanceof StaleHistorySnapshotError) throw error;
+      // Unsupported layouts and unreadable files keep the authoritative full
+      // reader and its warning. A previously issued snapshot cannot fall back.
+    }
+    this.assertWorkspaceAvailable(record.workspaceId);
+    if (options.snapshot !== undefined) throw new StaleHistorySnapshotError();
+    return;
+  }
+
+  private decorateSavedHistory(record: ChatRecord, history: unknown[], ids: string[]): unknown[] {
+    const sourceAgent = record.originAgentId ?? record.agentId;
+    return history.map((message, index) => {
+      const restored = sourceAgent ? restoreHistoricalReport(message,
+        (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, sourceAgent, dispatchId, payload)) : message;
+      return handoffMessage(record.backend, restored, ids[index]);
+    });
   }
 
   /** Disk projection only: neither an SDK agent session nor a vendor process is opened. */
   private async readOnlySnapshot(record: ChatRecord, identityError: SessionSnapshotError,
-      {allowOfflineQueueEdits = false, includeHistory = true, tailLimit}: { allowOfflineQueueEdits?: boolean; includeHistory?: boolean; tailLimit?: number } = {}) {
+      {allowOfflineQueueEdits = false, includeHistory = true, historyOptions, indexedHistory}: {
+        allowOfflineQueueEdits?: boolean; includeHistory?: boolean; historyOptions?: HistoryWindowOptions;
+        indexedHistory?: NonNullable<Awaited<ReturnType<Chats['indexedSavedHistory']>>>;
+      } = {}) {
     const codexVersion = record.backend==='codex' && isDeepStrictEqual(this.index.peek(record.id),record)
       ? this.index.snapshotVersion(record.id) : undefined;
     const acpVersion = allowOfflineQueueEdits && this.canEditOfflineAcp(record) ? this.index.snapshotVersion(record.id) : undefined;
     const workspace = await this.workspace(record.workspaceId);
-    const executionPath = record.execution?.path ?? workspace.path;
-    const saved = includeHistory ? await this.readSavedHistory(record, workspace, undefined, tailLimit) : undefined;
-    const {history = [], historyMessageIds = [], historyWarning, hasEarlierOnDisk = false} = saved ?? {};
+    const executionPath = record.nativeImport?.cwd ?? record.execution?.path ?? workspace.path;
+    const indexed = indexedHistory ?? (includeHistory && historyOptions ? await this.indexedSavedHistory(record, workspace, historyOptions) : undefined);
+    const saved = includeHistory && !indexed ? await this.readSavedHistory(record, workspace) : undefined;
+    const {history = [], historyMessageIds = []} = indexed?.page ?? saved ?? {};
+    const historyWarning = indexed?.historyWarning ?? saved?.historyWarning;
     // A state-only handoff refresh needs native receipt data only while it
     // has a queue to display. Do not read the transcript for idle refreshes.
-    const acpTranscript = saved?.acpTranscript ?? (!includeHistory && acpVersion !== undefined
+    const acpTranscript = indexed?.acpTranscript ?? saved?.acpTranscript ?? (!includeHistory && acpVersion !== undefined
       && DeliveryQueue.persistedCount(this.queueDir, record.id)
       ? await AcpHistory.load(record.sessionFile!).catch(() => undefined) : undefined);
-    const sourceAgent = record.originAgentId ?? record.agentId;
-    const restoredHistory = sourceAgent ? history.map(message => restoreHistoricalReport(message,
-      (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, sourceAgent, dispatchId, payload))) : history;
     let acpQueue: DeliveryQueue | undefined;
     if (acpVersion !== undefined && acpTranscript) {
       // Pending worktree initialization keeps the transcript visible but disables edits.
@@ -1693,13 +1859,14 @@ export class Chats implements StructuredSessionPort {
       &&this.index.peek(record.id)&&this.index.snapshotVersion(record.id)===codexVersion;
     let completed:readonly string[]=[];
     if(ownsColdCodex&&record.identityState==='known'&&record.originAgentId&&(!record.agentId||record.agentId===record.originAgentId)){
-      try{completed=this.savedCodexCompletion(record);}
+      try{completed=indexed?.completedDeliveryIds ?? this.savedCodexCompletion(record);}
       catch{/* The read-only history warning covers inaccessible metadata. No results are inferred. */}
     }
     const queue = codexOwner?.queue??acpQueue ?? (allowOfflineQueueEdits && this.offlineHandoffEditable(record) ? this.offlineHandoffQueue(record)
       : new DeliveryQueue({directory: this.queueDir, sessionId: record.id, startPaused: true,
       holdLegacyCodexSteers:!!ownsColdCodex,completedIds: () => completed, userInputMutationReason: () => 'read-only', onError: () => {}, execute: async () => { throw identityError; }}));
-    return {...record, ...(record.backend==='acp'&&{capabilities:{...acpCapabilities(undefined,!!record.sessionFile),...(record.capabilities&&{lastObserved:record.capabilities})}}), executionPath, history:restoredHistory.map((message,index)=>handoffMessage(record.backend,message,historyMessageIds[index])), historyMessageIds, ...(hasEarlierOnDisk ? { hasEarlierOnDisk: true } : {}),
+    if (indexed && (this.live.has(record.id) || this.opening.has(record.id))) throw new StaleHistorySnapshotError();
+    return {...record, ...(record.backend==='acp'&&{capabilities:{...acpCapabilities(undefined,!!record.sessionFile),...(record.capabilities&&{lastObserved:record.capabilities})}}), executionPath, history:this.decorateSavedHistory(record, history, historyMessageIds), historyMessageIds, ...(indexed && {historyPage: indexed.page.historyPage}),
       readOnly: true, identityError: {code: identityError.code, message: identityError.message},
       ...(historyWarning && {historyIncomplete: true, historyWarning}),
       interactions: [], models: [], model: record.model, busy: false, pending: queue.pendingCount,
@@ -1707,9 +1874,11 @@ export class Chats implements StructuredSessionPort {
       deliveryFailure: this.deliveryFailure(record.id, queue), completedDeliveryIds: [], runId: null,
       eventSequence: this.sequences.get(record.id) ?? 0};
   }
-  private async require(id: string, browse = false): Promise<LiveChat> {
+  private async require(id: string, browse = false, explicitDesktopConnect = false): Promise<LiveChat> {
     if (this.closing) throw new Error('Chat runtime is closing');
     const requested=this.index.get(id);
+    if (browse && requested.nativeImport && !explicitDesktopConnect && !this.live.has(id))
+      throw new SessionIdentityError('NATIVE_IMPORT_PASSIVE', 'Continue the imported conversation before reading live backend settings.');
     if(requested.rewindOperationId) await this.assertHistoryReady(requested);
     if(requested.handoff&&!this.live.has(id)&&!this.handoffStarting.has(id)&&this.handoffDeliveries.get(id)?.status!=='consumed')
       throw new SessionIdentityError('HANDOFF_INPUT_REQUIRED','This new context handoff starts only after an explicit ordinary text input');
@@ -1719,12 +1888,12 @@ export class Chats implements StructuredSessionPort {
     const probe = this.probingCodexModes.get(id);
     if (probe) {
       await probe;
-      return this.require(id, browse);
+      return this.require(id, browse, explicitDesktopConnect);
     }
-    const chat = this.live.get(id) ?? await this.requireOpening(id);
+    const chat = this.live.get(id) ?? await this.requireOpening(id, requested.backend === 'codex' && !!requested.nativeImport && explicitDesktopConnect);
     if (chat.cleanup) {
       await chat.cleanup;
-      return this.require(id, browse);
+      return this.require(id, browse, explicitDesktopConnect);
     }
     // Any operation outside the window's read requests owns the handle it gets
     // back, including Hive start before its exit callback has been installed.
@@ -1795,46 +1964,22 @@ export class Chats implements StructuredSessionPort {
     return slept;
   }
 
-  private historyPageCache?: {
-    sessionId: string;
-    sessionFile?: string;
-    mtimeMs: number;
-    size: number;
-    history: unknown[];
-    historyMessageIds: string[];
-  } | undefined;
-
-  async historyPage(
-    id: string,
-    options: HistoryWindowOptions,
-  ): Promise<HistorySliceResult<unknown>> {
-    const record = this.index.peek(id);
-    const live = this.live.get(id);
-    if (!live && record?.sessionFile && this.historyPageCache?.sessionId === id && this.historyPageCache.sessionFile === record.sessionFile) {
-      try {
-        const st = statSync(record.sessionFile);
-        if (st.mtimeMs === this.historyPageCache.mtimeMs && st.size === this.historyPageCache.size) {
-          return sliceHistoryWindow(this.historyPageCache.history, this.historyPageCache.historyMessageIds, options);
-        }
-      } catch {
-        this.historyPageCache = undefined;
-      }
+  async historyPage(id: string, options: HistoryWindowOptions): Promise<HistorySliceResult<unknown>> {
+    if (options.snapshot !== undefined || this.isDesktopSavedHistory(id, true)) {
+      // An issued disk cursor already owns its saved source. Verify that
+      // source again without opening an Agent or rebuilding queue state.
+      const record = this.index.get(id);
+      this.assertWorkspaceAvailable(record.workspaceId);
+      if (this.live.has(id) || this.opening.has(id)) throw new StaleHistorySnapshotError();
+      const workspace = await this.workspace(record.workspaceId);
+      const indexed = await this.indexedSavedHistory(record, workspace, options);
+      if (!indexed || this.live.has(id) || this.opening.has(id)) throw new StaleHistorySnapshotError();
+      const {page} = indexed;
+      return {...page, history: this.decorateSavedHistory(record, page.history, page.historyMessageIds)};
     }
-    const snapshot = await this.open(id, true, true);
-    if (!this.live.has(id) && record?.sessionFile) {
-      try {
-        const st = statSync(record.sessionFile);
-        this.historyPageCache = {
-          sessionId: id,
-          sessionFile: record.sessionFile,
-          mtimeMs: st.mtimeMs,
-          size: st.size,
-          history: snapshot.history,
-          historyMessageIds: snapshot.historyMessageIds,
-        };
-      } catch {
-        this.historyPageCache = undefined;
-      }
+    const snapshot = await this.open(id, true, true, options);
+    if ('historyPage' in snapshot && snapshot.historyPage) {
+      return {history: snapshot.history, historyMessageIds: snapshot.historyMessageIds, historyPage: snapshot.historyPage};
     }
     return sliceHistoryWindow(snapshot.history, snapshot.historyMessageIds, options);
   }
@@ -1843,41 +1988,15 @@ export class Chats implements StructuredSessionPort {
     id: string,
     options: { messageId: string; blockIndex?: number; byteOffset?: number; byteLength?: number },
   ): Promise<ToolOutputByteWindow> {
-    const record = this.index.peek(id);
-    const live = this.live.get(id);
-    let history: unknown[];
-    let historyMessageIds: string[];
-
-    if (!live && record?.sessionFile && this.historyPageCache?.sessionId === id && this.historyPageCache.sessionFile === record.sessionFile) {
-      let cacheValid = false;
-      try {
-        const st = statSync(record.sessionFile);
-        cacheValid = st.mtimeMs === this.historyPageCache.mtimeMs && st.size === this.historyPageCache.size;
-      } catch {
-        this.historyPageCache = undefined;
-      }
-      if (cacheValid && this.historyPageCache) {
-        history = this.historyPageCache.history;
-        historyMessageIds = this.historyPageCache.historyMessageIds;
-      } else {
-        const snapshot = await this.open(id, true, true);
-        history = snapshot.history;
-        historyMessageIds = snapshot.historyMessageIds;
-      }
-    } else {
-      const snapshot = await this.open(id, true, true);
-      history = snapshot.history;
-      historyMessageIds = snapshot.historyMessageIds;
-    }
-
-    const idx = historyMessageIds.indexOf(options.messageId);
-    if (idx < 0) {
-      throw new Error('找不到对应的工具输出消息');
-    }
-    const message = history[idx] as Record<string, unknown> | undefined;
-    if (!message || typeof message !== 'object') {
-      throw new Error('消息格式无效');
-    }
+    // Saved readers can seek to an exact row. A live handle still supplies its
+    // current authoritative snapshot, including unfinished tool updates.
+    const window = {limit: 1, aroundMessageId: options.messageId};
+    const snapshot = this.isDesktopSavedHistory(id, true) ? await this.historyPage(id, window) : await this.open(id, true, true, window);
+    const ids: readonly string[] = snapshot.historyMessageIds;
+    const idx = ids.indexOf(options.messageId);
+    if (idx < 0) throw new Error('找不到对应的工具输出消息');
+    const message = snapshot.history[idx] as Record<string, unknown> | undefined;
+    if (!message || typeof message !== 'object') throw new Error('消息格式无效');
     const content = message.content;
     let fullText: string | undefined;
     if (typeof content === 'string') {
@@ -1895,11 +2014,11 @@ export class Chats implements StructuredSessionPort {
     }
     return readToolOutputByteWindow(fullText, options.byteOffset ?? 0, options.byteLength);
   }
-  private requireOpening(id: string): Promise<LiveChat> {
+  private requireOpening(id: string, deferCodexBrowseGoals = false): Promise<LiveChat> {
     const pending = this.opening.get(id);
     if (pending) return pending;
     const release=this.executionMutations?.begin(this.index.get(id).workspaceId);
-    const opening = this.load(this.index.get(id)).finally(() => {this.opening.delete(id);release?.();});
+    const opening = this.load(this.index.get(id), undefined, deferCodexBrowseGoals).finally(() => {this.opening.delete(id);release?.();});
     this.opening.set(id, opening);
     return opening;
   }
@@ -1928,8 +2047,8 @@ export class Chats implements StructuredSessionPort {
     const previous = this.desktopSession;
     this.desktopViewRevision = revision;
     this.desktopSession = id;
+    this.desktopSavedHistory = undefined;
     if (previous && previous !== id) {
-      if (this.historyPageCache?.sessionId === previous) this.historyPageCache = undefined;
       this.releaseDesktopBrowse(previous);
     }
   }
@@ -1960,10 +2079,30 @@ export class Chats implements StructuredSessionPort {
     }
   }
 
-  openDesktopView(id: string, revision: number, includeLiveHistory = true, tailLimit?: number) {
+  private desktopSavedHistory: {id: string; indexed: boolean} | undefined;
+
+  private isDesktopSavedHistory(id: string, indexed = false): boolean {
+    return this.desktopSavedHistory?.id === id && (!indexed || this.desktopSavedHistory.indexed) && !this.live.has(id) && !this.opening.has(id);
+  }
+
+  async openDesktopView(id: string, revision: number, includeLiveHistory = true, historyOptions?: HistoryWindowOptions, preferSavedHistory = true) {
     this.index.get(id);
     this.setDesktopView(revision, id);
-    return this.readDesktopView(id, revision, () => this.open(id, includeLiveHistory, true, tailLimit));
+    const desktopHistory = includeLiveHistory && historyOptions ? (preferSavedHistory ? 'saved' : 'connect') : undefined;
+    const result = await this.readDesktopView(id, revision, async () => {
+      const snapshot = await this.open(id, includeLiveHistory, true, historyOptions, desktopHistory);
+      if ('savedHistoryPassive' in snapshot && snapshot.savedHistoryPassive && !snapshot.nativeImport
+        && !this.canBrowseSavedHistory(this.index.get(id))) {
+        this.assertDesktopView(id, revision);
+        return this.open(id, includeLiveHistory, true, historyOptions);
+      }
+      return snapshot;
+    });
+    this.assertDesktopView(id, revision);
+    if ('savedHistoryPassive' in result && result.savedHistoryPassive) this.desktopSavedHistory = {
+      id, indexed: !!('historyPage' in result && result.historyPage?.snapshot),
+    };
+    return result;
   }
   /** Recover only from this target's private durable receipt; never opens a vendor session. */
   private async reconcileHandoffOffline(record:ChatRecord){
@@ -2031,7 +2170,7 @@ export class Chats implements StructuredSessionPort {
     return handoff?.status === 'consumed' && handoff.nativeSessionId === record.acpSessionId
       && handoff.operationId === record.handoff.operationId && handoff.snapshotHash === record.handoff.snapshotHash;
   }
-  private offlineAcpQueue(record: ChatRecord, version: number, transcript: AcpHistory): DeliveryQueue | undefined {
+  private offlineAcpQueue(record: ChatRecord, version: number, transcript: AcpHistoryReceipt): DeliveryQueue | undefined {
     // The transcript read yields to native startup. Re-check ownership before a
     // synchronous spool operation can proceed, including starts initiated by Hive.
     if (!this.index.peek(record.id) || this.index.snapshotVersion(record.id) !== version || !this.canEditOfflineAcp(record)
@@ -2152,7 +2291,44 @@ export class Chats implements StructuredSessionPort {
     const record = await this.createRecord(workspaceId, backend, options);
     return this.open(record.id);
   }
-  async open(id: string, includeLiveHistory = true, browse = false, tailLimit?: number) {
+
+  private canBrowseSavedHistory(record: ChatRecord): boolean {
+    const {id, workspaceId, agentId} = record;
+    if (this.live.has(id) || this.opening.has(id) || this.activating.has(id) || this.startingForInput.has(id)
+      || this.handoffStarting.has(id) || this.mutatingQueues.has(id) || this.probingCodexModes.has(id)
+      || record.lastDeliveryFailure) return false;
+    const run = agentId && this.runtime.getActiveRunByAgentId(workspaceId, agentId);
+    if (run && (run.status === 'starting' || run.status === 'running')) return false;
+    return DeliveryQueue.persistedCount(this.queueDir, id) === 0;
+  }
+
+  private async browseSavedHistory(record: ChatRecord, historyOptions: HistoryWindowOptions) {
+    const {backend, sessionFile, piSessionId, externalPiSessionId, codexThreadId, nativeclaudeSessionId} = record;
+    const hasIdentity = backend === 'codex' ? !!codexThreadId : backend === 'claude' ? !!nativeclaudeSessionId
+      : !!sessionFile && (backend === 'pi' ? !!piSessionId : !!externalPiSessionId);
+    if (!hasIdentity || !this.canBrowseSavedHistory(record)) return;
+    this.assertWorkspaceAvailable(record.workspaceId);
+    await this.initializationReady(record);
+    record = await this.runnableIdentity(record);
+    const workspace = await this.workspace(record.workspaceId);
+    await this.executionPath(record, workspace);
+    await this.selectedProfile(record.backend, record.profile);
+    if (!this.canBrowseSavedHistory(this.index.get(record.id))) return;
+    try {
+      const indexedHistory = await this.indexedSavedHistory(record, workspace, historyOptions);
+      if (!indexedHistory || !this.canBrowseSavedHistory(this.index.get(record.id))) return;
+      const {readOnly, identityError, ...snapshot} = await this.readOnlySnapshot(record,
+        new SessionIdentityError('SAVED_HISTORY_PASSIVE', 'Saved history opened without connecting an Agent'), {indexedHistory});
+      if (!this.canBrowseSavedHistory(this.index.get(record.id))) return;
+      return {...snapshot, readOnly:false, passive:true, savedHistoryPassive:true};
+    } catch (error) {
+      // A concurrent activation should win over the passive history view.
+      if (error instanceof StaleHistorySnapshotError && !this.canBrowseSavedHistory(this.index.get(record.id))) return;
+      throw error;
+    }
+  }
+
+  async open(id: string, includeLiveHistory = true, browse = false, historyOptions?: HistoryWindowOptions, desktopHistory?: 'saved' | 'connect') {
     try {
     const cleanup=this.live.get(id)?.cleanup;
     if(cleanup)await cleanup;
@@ -2165,7 +2341,7 @@ export class Chats implements StructuredSessionPort {
       await this.assertHistoryReady(record);await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
       await this.reconcileHandoffOffline(record);
       const handoffSnapshot=await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId);
-      const snapshot=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_HANDOFF','Handoff opened without starting an Agent'),{allowOfflineQueueEdits:true,...(tailLimit!==undefined&&{tailLimit})});
+      const snapshot=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_HANDOFF','Handoff opened without starting an Agent'),{allowOfflineQueueEdits:true,...(historyOptions&&{historyOptions})});
       return {...snapshot,readOnly:false,passive:true,handoffSnapshot,handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'},
         canCheckSavedCodexModes: record.backend === 'codex' && !!record.nativeMode};
     }
@@ -2173,25 +2349,38 @@ export class Chats implements StructuredSessionPort {
       await this.runnableIdentity(record);
       await this.executionDirectory(record.workspaceId,id);
       const current = this.index.get(id);
-      const {identityError,readOnly,...snapshot}=await this.readOnlySnapshot(current,new SessionIdentityError('ACP_PASSIVE_SESSION','Activate explicitly to negotiate native restore and the Hive team bridge'),{allowOfflineQueueEdits:true});
+      const {identityError,readOnly,...snapshot}=await this.readOnlySnapshot(current,new SessionIdentityError('ACP_PASSIVE_SESSION','Activate explicitly to negotiate native restore and the Hive team bridge'),{allowOfflineQueueEdits:true,...(historyOptions&&{historyOptions})});
       const nativeReadOnly=!!current.sessionFile&&current.capabilities?.features?.nativeResume?.state==='unsupported';
       return {...snapshot,readOnly:nativeReadOnly,passive:true,...(nativeReadOnly&&{identityError:{code:'ACP_NATIVE_RESUME_UNAVAILABLE',message:'The last agent handshake did not support native restore; only the local transcript is available. Explicit activation can recheck this capability.'}})};
     }
     if(record.lineage&&!this.live.has(id)){
       await this.assertHistoryReady(record);await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
       await this.initialization?.created(record.workspaceId,id,{deferLaunch:true});
-      const {readOnly,identityError,...snapshot}=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_FORK','Fork opened without activating an Agent'),{...(tailLimit!==undefined&&{tailLimit})});
+      const {readOnly,identityError,...snapshot}=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_FORK','Fork opened without activating an Agent'),{...(historyOptions&&{historyOptions})});
       return {...snapshot,readOnly:false,initialization:await this.initialization?.get(record.workspaceId,id),
         canCheckSavedCodexModes: record.backend === 'codex' && !!record.nativeMode};
     }
-    const snapshot=this.snapshot(id,await this.require(id,browse),includeLiveHistory);
+    if (record.nativeImport && !this.live.has(id) && desktopHistory !== 'connect') {
+      await this.runnableIdentity(record);
+      const directory = await this.executionDirectory(record.workspaceId, id);
+      await this.verifyNativeImport(record, directory, true);
+      const {readOnly, identityError, ...snapshot} = await this.readOnlySnapshot(record,
+        new SessionIdentityError('NATIVE_IMPORT_PASSIVE', 'Imported conversation opened without activating an Agent'),
+        {includeHistory:includeLiveHistory, ...(historyOptions&&{historyOptions})});
+      return {...snapshot, readOnly:false, passive:true, ...(desktopHistory === 'saved' && {savedHistoryPassive:true})};
+    }
+    if (desktopHistory === 'saved' && historyOptions) {
+      const saved = await this.browseSavedHistory(record, historyOptions);
+      if (saved) return saved;
+    }
+    const snapshot=this.snapshot(id,await this.require(id,browse,desktopHistory === 'connect'),includeLiveHistory);
     return record.handoff?{...snapshot,passive:false,handoffSnapshot:await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId),handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}}:snapshot; }
     catch (error) {
       if (!isSessionSnapshotError(error)) throw error;
       const live = this.live.get(id);
       if (live) await this.stopLive(id, live);
       const current=this.index.get(id);
-      return {...await this.readOnlySnapshot(current, error, {...(tailLimit!==undefined&&{tailLimit})}),
+      return {...await this.readOnlySnapshot(current, error, {...(historyOptions&&{historyOptions})}),
         ...(current.handoff&&{handoffSnapshot:await this.handoffs!.getSnapshot(current.workspaceId,current.handoff.snapshotId),handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}}),
         ...(error instanceof WorktreeInitializationError && {initialization: await this.initialization?.get(this.index.get(id).workspaceId, id)})};
     }
@@ -2239,8 +2428,27 @@ export class Chats implements StructuredSessionPort {
     const record = this.index.get(id);
     if (record.workspaceId !== workspaceId) throw new Error('History image belongs to another workspace');
     const live = this.live.get(id);
-    const snapshot = live && !live.failure && !live.cleanup ? live.handle.snapshot()
-      : await this.readSavedHistory(record, await this.workspace(workspaceId), messageId);
+    const usableLive = live && !live.failure && !live.cleanup;
+    const workspace = usableLive ? undefined : await this.workspace(workspaceId);
+    if (workspace) {
+      let selected: {message: unknown} | undefined;
+      try {
+        const source = await this.openIndexedSavedHistory(record, workspace);
+        if (source) selected = {message: await source.imageRow(messageId)};
+      } catch (error) {
+        this.closeAbort.signal.throwIfAborted();
+        if (error instanceof StaleHistorySnapshotError) throw error;
+        // Files without a verified index retain the existing exact lookup.
+      }
+      this.assertWorkspaceAvailable(workspaceId);
+      if (selected) {
+        if (selected.message === undefined) throw new Error('History image message is unavailable');
+        const data = desktopHistoryImage(selected.message, imageIndex);
+        if (data === undefined) throw new Error('History image is unavailable');
+        return {messageId, imageIndex, data};
+      }
+    }
+    const snapshot = usableLive ? live.handle.snapshot() : await this.readSavedHistory(record, workspace!, messageId);
     let position = snapshot.historyMessageIds.indexOf(messageId);
     if (position !== snapshot.historyMessageIds.lastIndexOf(messageId)) throw new Error('History image message is unavailable');
     if ('piUserImageMatches' in snapshot) {
@@ -2296,7 +2504,7 @@ export class Chats implements StructuredSessionPort {
     return {
       sessionId: chat.handle.sessionId,
       resumed: chat.handle.hasContext('hive-context'),
-      ...(record.handoff && {includeRecentUserInputs: false as const}),
+      ...((record.handoff || record.nativeImport) && {includeRecentUserInputs: false as const}),
       ...(chat.handle.sessionFile ? { sessionFile: chat.handle.sessionFile } : {}),
       deliver: async (text, options) => {
         let images = promptImages(options?.images);
@@ -2413,6 +2621,7 @@ export class Chats implements StructuredSessionPort {
       throw new TypeError('Invalid busyMode');
     }
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
+    const desktopSavedHistory = this.desktopSavedHistory?.id === id;
     const before=this.index.get(id);
     if(before.handoff){
       await this.reconcileHandoffOffline(before);
@@ -2466,7 +2675,7 @@ export class Chats implements StructuredSessionPort {
       } finally {
         this.steerNextUserInput.delete(id);
       }
-      return { accepted: true, session: this.index.get(id), ...(before.handoff && { passive: false, handoffDelivery: this.handoffDeliveries.get(id) ?? { status: 'pending' } }) };
+      return { accepted: true, session: this.index.get(id), ...((desktopSavedHistory || before.handoff || before.nativeImport) && {passive:false}), ...(before.handoff && {handoffDelivery: this.handoffDeliveries.get(id) ?? {status:'pending'}}) };
       }finally{this.handoffStarting.delete(id);}
     });
   }
@@ -2933,12 +3142,14 @@ export class Chats implements StructuredSessionPort {
     const record = this.index.get(id);
     this.assertWorkspaceAvailable(record.workspaceId);
     if(record.backend==='acp')return {supported:false,commands:[],reason:'ACP command discovery is not implemented'};
+    if (this.isDesktopSavedHistory(id)) return {supported:false,commands:[],reason:'Connect to the Agent to read its native commands.'};
     const chat = await this.require(id);
     return {supported: !!chat.handle.commands, commands: chat.handle.commands ? await chat.handle.commands() : []};
   }
   async usage(id:string) {
     const record=this.index.get(id);this.assertWorkspaceAvailable(record.workspaceId);
     if(record.backend==='acp')return {source:'acp',reports:[],notice:'ACP usage reporting is not implemented'};
+    if (this.isDesktopSavedHistory(id)) return {source:record.backend,reports:[],notice:'Connect to the Agent to read current usage.'};
     const chat=await this.require(id);
     return chat.handle.usage ? chat.handle.usage() : {source:record.backend,reports:[],notice:'该原生后端未提供用量读取接口。'};
   }
@@ -3041,6 +3252,10 @@ export class Chats implements StructuredSessionPort {
     this.assertWorkspaceAvailable(record.workspaceId);
     if (selected !== undefined && typeof selected !== 'string') throw new TypeError('Session mode must be text');
     return this.withWorkspace(record.workspaceId, async () => {
+      if (browse && selected === undefined && this.isDesktopSavedHistory(id)) return {
+        backend: record.backend, selected: (permission ? record.nativeMode?.permissionMode : record.nativeMode?.mode) ?? null,
+        applied: null, pendingNextTurn: false, options: [], description: 'Connect to the Agent to read its native modes.',
+      };
       const acp = record.backend === 'acp';
       const chat = acp ? this.live.get(id) : await this.require(id, browse);
       if (acp && (!chat || chat.failure || chat.cleanup)) {
@@ -3092,6 +3307,10 @@ export class Chats implements StructuredSessionPort {
     if(record.backend==='acp')throw new Error('ACP reasoning selection is not implemented');
     if (level !== undefined && typeof level !== 'string') throw new TypeError('推理强度必须是文本。');
     return this.withWorkspace(workspaceId, async () => {
+      if (browse && level === undefined && this.isDesktopSavedHistory(id)) return {
+        backend: record.backend, level: record.reasoning?.level ?? '', levels: [],
+        description: 'Connect to the Agent to read its reasoning controls.', ...(record.model && {model: record.model}),
+      };
       const chat = await this.require(id, browse);
       if (!chat.handle.reasoning || !chat.handle.setReasoning) throw new Error('此后端尚未接入推理强度设置。');
       const decorate = (state: Awaited<ReturnType<NonNullable<PiSessionHandle['reasoning']>>>) => ({...state,
@@ -3187,6 +3406,7 @@ export class Chats implements StructuredSessionPort {
         const cleanup = await Promise.allSettled(sessionIds.flatMap(id => { const chat = this.live.get(id); return chat ? [this.stopLive(id, chat)] : []; }));
         const errors = cleanup.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
         if (errors.length) throw new AggregateError(errors, '工作区会话清理失败。');
+        await removeClaudeHistoryCache(this.dataDir, workspaceId);
         progress.stage = 'delete';
         await this.hive.request('DELETE', path);
         progress.deleted = true; progress.stage = 'index';
@@ -3292,7 +3512,6 @@ export class Chats implements StructuredSessionPort {
     this.closeAbort.abort(new Error('Chat runtime is closing'));
   }
   async close() {
-    this.historyPageCache = undefined;
     if (this.idleSweepTimer) {
       clearInterval(this.idleSweepTimer);
       this.idleSweepTimer = undefined;

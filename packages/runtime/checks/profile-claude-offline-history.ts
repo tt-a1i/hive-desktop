@@ -1,10 +1,11 @@
 /** Official SDK history reader against synthetic local transcripts only; no vendor CLI or account. */
 import assert from 'node:assert/strict';
-import {mkdir,mkdtemp,realpath,writeFile} from 'node:fs/promises';
+import {mkdir,mkdtemp,realpath,stat,writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createDesktopRuntime} from '../src/desktop-runtime.js';
+import {claudeHistoryCacheDirectory} from '../src/agents/claude-history-pages.js';
 import {readSessionMessages} from '../src/agents/claude.js';
 import type {ChatIndex} from '../src/chat-index.js';
 const directory=await realpath(await mkdtemp(join(tmpdir(),'hive-profile-claude-history-'))),project=join(directory,'project'),profileDir=join(directory,'profile'),hostDir=join(directory,'host');
@@ -22,9 +23,19 @@ try{
  const chat=await runtime.chats.createRecord(workspace.id,'claude',{profile:profile.ref});
  // Seed only the synthetic native-history fixture reference, never a fabricated Hive business result.
  let index=(runtime.chats as unknown as {index:ChatIndex}).index;index.save({...index.get(chat.id),nativeclaudeSessionId:nativeId});
+ const writable=await runtime.chats.openDesktopView(chat.id,1,true,{limit:1});
+ assert.equal(writable.readOnly,false);
+ assert.ok('savedHistoryPassive' in writable&&writable.savedHistoryPassive);
+ assert.ok('historyPage' in writable&&writable.historyPage?.snapshot);
+ assert.match(JSON.stringify(writable.history),/PROFILE_ONLY_SYNTHETIC_HISTORY/);
  await runtime.profiles.enableDisable(profile.ref.id,false,(await runtime.profiles.list()).storeVersion);
  const first=await runtime.chats.open(chat.id);assert.equal(first.readOnly,true);assert.equal(first.history.length,1);assert.ok(JSON.stringify(first.history).includes('PROFILE_ONLY_SYNTHETIC_HISTORY'));assert.ok(!JSON.stringify(first.history).includes('HOST_HISTORY_MUST_NOT_LEAK'));
+ const firstPage=await runtime.chats.historyPage(chat.id,{limit:1});
+ assert.ok(firstPage.historyPage.snapshot,'the pinned offline Claude profile has a seekable history page');
+ assert.deepEqual(firstPage.historyMessageIds,first.historyMessageIds);
+ assert.deepEqual(firstPage.history,first.history);
  await runtime.close();runtime=await open();const cold=await runtime.chats.open(chat.id);assert.equal(cold.history.length,1);assert.deepEqual(cold.profile,profile.ref);assert.ok(!JSON.stringify(cold.history).includes('HOST_HISTORY_MUST_NOT_LEAK'));
+ assert.deepEqual(await runtime.chats.historyPage(chat.id,{limit:1,snapshot:firstPage.historyPage.snapshot}),firstPage);
  index=(runtime.chats as unknown as {index:ChatIndex}).index;
  const unknownId=randomUUID();index.save({...index.get(chat.id),id:unknownId,profile:{id:'unknown-profile-fixture',revision:1}});
  const unknown=await runtime.chats.open(unknownId);assert.equal(unknown.readOnly,true);assert.equal(unknown.history.length,0);assert.match(unknown.historyWarning!,/PROFILE_NOT_FOUND/);assert.equal(process.env.CLAUDE_CONFIG_DIR,hostDir);
@@ -33,5 +44,10 @@ try{
  assert.match(profileSearch.incompleteHistory.find(hit=>hit.sessionId===unknownId)?.message??'',/PROFILE_NOT_FOUND/);
  assert.equal((await runtime.chats.search('HOST_HISTORY_MUST_NOT_LEAK',false,0,workspace.id)).total,0);
  assert.equal(process.env.CLAUDE_CONFIG_DIR,hostDir,'search does not mutate the host environment');
- console.log(JSON.stringify({pass:true,directory,officialReader:true,disabledProfileHistory:true,unknownRefNoHostFallback:true,coldIdentity:true,searchProfileIsolation:true,noVendorProcess:true,noInference:true}));
+ const profileCache=claudeHistoryCacheDirectory(join(directory,'state'),workspace.id);
+ assert.ok((await stat(profileCache)).isDirectory());
+ await runtime.removeWorkspace(workspace.id);
+ await assert.rejects(stat(profileCache),{code:'ENOENT'});
+ assert.equal((await readSessionMessages(nativeId,project,{...process.env,CLAUDE_CONFIG_DIR:profileDir})).length,1);
+ console.log(JSON.stringify({pass:true,directory,officialReader:true,disabledProfileHistory:true,unknownRefNoHostFallback:true,coldIdentity:true,coldIndexedPage:true,searchProfileIsolation:true,workspaceCacheRemoved:true,noVendorProcess:true,noInference:true}));
 }finally{await runtime?.close();for(const [key,value]of Object.entries(old)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}

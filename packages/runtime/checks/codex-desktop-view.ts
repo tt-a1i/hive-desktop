@@ -219,7 +219,9 @@ try {
   assert.equal(alive(executionPeer.pid), true, 'The idle Hive run still owns this process');
 
   await writeFile(join(directory, 'version'), '0.168.0');
-  await open(old, ++revision);
+  const legacyConnected = await rpc('chat.open', {sessionId: old, viewRevision: ++revision, historyLimit: 1, preferSavedHistory: false});
+  assert.equal(legacyConnected.savedHistoryPassive, undefined);
+  assert.ok((await rpc('chat.mode', {sessionId: old, viewRevision: revision})).options.length);
   const legacy = (await lastRequest('thread/resume', 'thread-legacy'))!;
   assert.equal(legacy.deferGoalContinuation, undefined);
   await clear(++revision);
@@ -232,7 +234,23 @@ try {
   await waitFor('reaping a supported peer', () => !alive(finalB.pid));
   assert.equal(alive(legacy.pid), true, 'A peer without deferred continuation must retain the existing lifecycle');
 
-  await open(b, ++revision);
+  const peersBeforeSavedBrowse = await peers();
+  const turnsBeforeSavedBrowse = (await requests()).filter(row => row.method === 'turn/start').length;
+  const cold = await rpc('chat.open', {sessionId: b, viewRevision: ++revision, historyLimit: 1});
+  assert.equal(cold.readOnly, false);
+  assert.equal(cold.savedHistoryPassive, true);
+  assert.equal(cold.passive, true);
+  assert.equal(typeof cold.historyPage.snapshot, 'string');
+  assert.equal(cold.history.length, 1);
+  assert.deepEqual((await rpc('chat.mode', {sessionId: b, viewRevision: revision})).options, []);
+  assert.deepEqual((await rpc('chat.permissionMode', {sessionId: b, viewRevision: revision})).options, []);
+  assert.deepEqual((await rpc('chat.reasoning', {sessionId: b, viewRevision: revision})).levels, []);
+  assert.deepEqual(await peers(), peersBeforeSavedBrowse, 'Cold browse and its metadata requests leave the Agent stopped');
+  const explicit = await rpc('chat.open', {sessionId: b, viewRevision: ++revision, historyLimit: 1, preferSavedHistory: false});
+  assert.equal(explicit.savedHistoryPassive, undefined);
+  assert.equal(explicit.historyPage.snapshot, undefined);
+  assert.ok((await rpc('chat.mode', {sessionId: b, viewRevision: revision})).options.length);
+  assert.equal((await requests()).filter(row => row.method === 'turn/start').length, turnsBeforeSavedBrowse);
   await hold('thread-b', 'settings');
   const setting = rpc('chat.setModel', { sessionId: b, provider: 'openai', modelId: 'fixture-alternate' });
   const settingPeer = await waitFor('pending native model change', () => lastRequest('thread/settings/update', 'thread-b'));

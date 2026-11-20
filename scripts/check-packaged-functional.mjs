@@ -18,7 +18,8 @@ const directory = await mkdtemp(join(tmpdir(), 'hive-packaged-functional-'));
 const checks = ['bundled-hive-version', 'delivery-queue', 'queued-input-mutations', 'queued-input-failed-rollback', 'queued-input-mutation', 'queued-input-wire', 'codex-legacy-steer',
   'conversation-search', 'conversation-search-codex', 'codex-metadata-recovery', 'codex-metadata-marker', 'session-body-search', 'project-files', 'project-file-references',
   'conversation-search-tools', 'git-index-wire', 'session-origin-index', 'historical-session-identity', 'html-artifacts',
-  'codex-desktop-view', 'history-cursor-and-idle-sleep', 'readiness-and-mcp', 'mcp-manager-and-probe', 'git-branches-and-stash', 'skills-and-usage',
+  'codex-desktop-view', 'history-cursor-and-idle-sleep', 'saved-history-pages', 'pi-history-pages', 'claude-saved-history-pages',
+  'readiness-and-mcp', 'mcp-manager-and-probe', 'git-branches-and-stash', 'skills-and-usage',
   'member-worktrees-wire', 'worktree-intent-concurrency', 'project-script-settings', 'codex-limits', 'pty-live-pid', 'interaction-attachments', 'interaction-attachments-wire',
   'codex-history-control', 'codex-fork-provenance', 'session-history-wire', 'session-history-rewind', 'checkpoint-restore',
   'agent-profiles', 'structured-launch', 'profile-runtime-binding', 'profile-runtime-wire',
@@ -33,7 +34,7 @@ const checks = ['bundled-hive-version', 'delivery-queue', 'queued-input-mutation
   ...(process.platform === 'win32' ? ['project-scripts-windows'] : []),
   // These fixtures use POSIX executable peers/hooks. The Windows PTY and
   // JSONL Git checks above run natively rather than passing via a skipped peer.
-  ...(process.platform === 'darwin' ? ['git-write-owner', 'git-gh-owner'] : []),
+  ...(process.platform === 'darwin' ? ['git-write-owner', 'git-gh-owner', 'desktop-import'] : []),
   ...(process.platform === 'win32' ? [] : ['codex-probe-owner', 'pi-vault-owner', 'queued-user-inputs-peers', 'chat-worktrees', 'git-remotes-wire', 'project-scripts-wire', 'profile-native-launch'])];
 const receipt = {pass: false, bundle, actualInference: false, checks: []};
 try {
@@ -49,6 +50,7 @@ try {
   }
   if (process.platform === 'darwin') {
     await copyFile(join(root, 'packages/runtime/checks/fixtures/git-gh-owner-peer.cjs'), join(directory, 'fixtures/git-gh-owner-peer.cjs'));
+    await copyFile(join(root, 'packages/runtime/checks/fixtures/pi-import-peer.cjs'), join(directory, 'fixtures/pi-import-peer.cjs'));
   }
   await copyFile(join(root, 'packages/runtime/checks/fixtures/git-remotes-wire-peer.cjs'), join(directory, 'fixtures/git-remotes-wire-peer.cjs'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/windows-conpty-resize-80x24.bin'), join(directory, 'fixtures/windows-conpty-resize-80x24.bin'));

@@ -21,6 +21,8 @@ pub(crate) struct HistoryNavigation {
     handoff_state_request: u64,
     pub(crate) loading: bool,
     pub(crate) loading_page: Option<HistoryDirection>,
+    pub(crate) snapshot_stale: bool,
+    pub(crate) opened_around: Option<String>,
     // Live messages can arrive while a focused page is still missing newer history.
     pub(crate) live_start: Option<usize>,
     pub(crate) access: HistoryAccess,
@@ -31,6 +33,8 @@ impl HistoryNavigation {
         self.generation += 1;
         self.loading = false;
         self.loading_page = None;
+        self.snapshot_stale = false;
+        self.opened_around = None;
         self.live_start = None;
         self.access = Default::default();
         self.initialization = None;
@@ -79,6 +83,7 @@ pub(crate) struct HistoryAccess {
     pub(crate) handoff_snapshot: Option<serde_json::Value>,
     pub(crate) handoff_delivery: Option<serde_json::Value>,
     pub(crate) passive: Option<bool>,
+    pub(crate) saved_history_passive: bool,
 }
 impl HistoryAccess {
     pub(crate) fn snapshot(open: &crate::protocol::OpenSession) -> Self {
@@ -92,6 +97,7 @@ impl HistoryAccess {
             handoff_snapshot: open.handoff_snapshot.clone(),
             handoff_delivery: open.handoff_delivery.clone(),
             passive: open.passive,
+            saved_history_passive: open.saved_history_passive,
             history_warning: open
                 .history_warning
                 .clone()

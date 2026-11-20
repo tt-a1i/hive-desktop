@@ -1,4 +1,4 @@
-import { open, stat } from 'node:fs/promises';
+import { open, stat, type FileHandle } from 'node:fs/promises';
 
 export interface HistoryPageMeta {
   totalCount: number;
@@ -9,6 +9,7 @@ export interface HistoryPageMeta {
   hasNewer: boolean;
   nextAfterIndex?: number;
   nextAfterMessageId?: string;
+  snapshot?: string;
 }
 
 export interface HistoryWindowOptions {
@@ -18,6 +19,12 @@ export interface HistoryWindowOptions {
   beforeMessageId?: string;
   afterIndex?: number;
   afterMessageId?: string;
+  snapshot?: string;
+}
+
+export class StaleHistorySnapshotError extends Error {
+  readonly code = 'HISTORY_SNAPSHOT_STALE';
+  constructor() { super('Saved history changed. Reopen the conversation to refresh its history.'); }
 }
 
 export interface HistorySliceResult<T> {
@@ -48,6 +55,40 @@ export const MAX_PAGED_TOOL_OUTPUT_CHARS = 32_768;
 export const DEFAULT_TOOL_OUTPUT_SLICE_BYTES = 32_768;
 export const MAX_TOOL_OUTPUT_SLICE_BYTES = 262_144;
 export const REVERSE_CHUNK_BYTES = 65_536;
+
+/** Visits one raw line at a time within a caller-verified file version. */
+export async function* readHistoryJsonlLines(
+  file: FileHandle, size: number, {onRead, signal}: {onRead?: (bytes: number) => void; signal?: AbortSignal} = {},
+) {
+  let fragments: Buffer[] = [];
+  let start = 0;
+  for (let pos = 0; pos < size;) {
+    signal?.throwIfAborted();
+    // Each chunk has its own buffer. The unfinished line may retain it until
+    // the next newline, but completed lines are released after indexing.
+    const buffer = Buffer.allocUnsafe(Math.min(REVERSE_CHUNK_BYTES, size - pos));
+    const {bytesRead} = await file.read(buffer, 0, buffer.length, pos);
+    onRead?.(bytesRead);
+    if (!bytesRead) throw new StaleHistorySnapshotError();
+    const actual = buffer.subarray(0, bytesRead);
+    let cursor = 0;
+    while (cursor < bytesRead) {
+      const newline = actual.indexOf(0x0a, cursor);
+      if (newline < 0) {
+        fragments.push(actual.subarray(cursor));
+        break;
+      }
+      const tail = buffer.subarray(cursor, newline);
+      const raw = fragments.length ? Buffer.concat([...fragments, tail]) : tail;
+      yield {start, raw};
+      fragments = [];
+      cursor = newline + 1;
+      start = pos + cursor;
+    }
+    pos += bytesRead;
+  }
+  if (fragments.length) yield {start, raw: Buffer.concat(fragments)};
+}
 
 /**
  * Reads up to `maxLines` non-empty lines from a JSONL file backwards starting at
@@ -237,16 +278,33 @@ export function sliceHistoryWindow<T>(
   historyMessageIds: readonly string[],
   options: HistoryWindowOptions,
 ): HistorySliceResult<T> {
-  const totalCount = history.length;
+  const {startIndex, endIndex} = resolveHistoryWindow(history.length, options,
+    id => historyMessageIds.indexOf(id), id => historyFocusIndex(history, historyMessageIds, id));
+  return historyWindowResult(history.slice(startIndex, endIndex), historyMessageIds.slice(startIndex, endIndex),
+    history.length, startIndex);
+}
+
+export function resolveHistoryWindow(
+  totalCount: number,
+  options: HistoryWindowOptions,
+  findId: (id: string) => number,
+  findFocus: (id: string) => number,
+  idAt?: (index: number) => string | undefined,
+): {startIndex: number; endIndex: number} {
   const limit = clampHistoryLimit(options.limit);
+  if (idAt && options.snapshot !== undefined) {
+    const cursor = options.beforeIndex ?? options.afterIndex;
+    const id = options.beforeMessageId ?? options.afterMessageId;
+    if (cursor !== undefined && id !== undefined && idAt(cursor) !== id) throw new StaleHistorySnapshotError();
+  }
 
   let startIndex = 0;
   let endIndex = totalCount;
 
   if (options.beforeIndex !== undefined) {
     let resolvedEnd = Math.min(Math.max(0, Math.floor(options.beforeIndex)), totalCount);
-    if (options.beforeMessageId) {
-      const exactIdx = historyMessageIds.indexOf(options.beforeMessageId);
+    if (options.beforeMessageId && options.snapshot === undefined) {
+      const exactIdx = findId(options.beforeMessageId);
       if (exactIdx >= 0) {
         resolvedEnd = exactIdx;
       }
@@ -254,14 +312,14 @@ export function sliceHistoryWindow<T>(
     endIndex = resolvedEnd;
     startIndex = Math.max(0, endIndex - limit);
   } else if (options.afterIndex !== undefined) {
-    const exactIdx = options.afterMessageId ? historyMessageIds.indexOf(options.afterMessageId) : -1;
+    const exactIdx = options.afterMessageId && options.snapshot === undefined ? findId(options.afterMessageId) : -1;
     const afterIndex = exactIdx >= 0 ? exactIdx : Math.floor(options.afterIndex);
     startIndex = Math.min(Math.max(0, afterIndex + 1), totalCount);
     endIndex = Math.min(totalCount, startIndex + limit);
   } else if (totalCount > limit) {
     startIndex = totalCount - limit;
     if (options.aroundMessageId) {
-      const targetIdx = historyFocusIndex(history, historyMessageIds, options.aroundMessageId);
+      const targetIdx = findFocus(options.aroundMessageId);
       if (targetIdx >= 0 && targetIdx < startIndex) {
         startIndex = Math.max(0, targetIdx - Math.min(20, Math.floor(limit / 2)));
         endIndex = startIndex + limit;
@@ -269,16 +327,21 @@ export function sliceHistoryWindow<T>(
     }
   }
 
-  const slicedHistory = history.slice(startIndex, endIndex);
-  const slicedIds = historyMessageIds.slice(startIndex, endIndex);
+  return {startIndex, endIndex};
+}
+
+export function historyWindowResult<T>(
+  history: T[], historyMessageIds: string[], totalCount: number, startIndex: number, snapshot?: string,
+): HistorySliceResult<T> {
+  const endIndex = startIndex + history.length;
   const hasOlder = startIndex > 0;
-  const nextBeforeMessageId = hasOlder ? slicedIds[0] : undefined;
-  const hasNewer = endIndex < totalCount && slicedHistory.length > 0;
-  const nextAfterMessageId = hasNewer ? slicedIds.at(-1) : undefined;
+  const nextBeforeMessageId = hasOlder ? historyMessageIds[0] : undefined;
+  const hasNewer = endIndex < totalCount && history.length > 0;
+  const nextAfterMessageId = hasNewer ? historyMessageIds.at(-1) : undefined;
 
   return {
-    history: slicedHistory,
-    historyMessageIds: slicedIds,
+    history,
+    historyMessageIds,
     historyPage: {
       totalCount,
       startIndex,
@@ -288,8 +351,26 @@ export function sliceHistoryWindow<T>(
       hasNewer,
       ...(hasNewer && { nextAfterIndex: endIndex - 1 }),
       ...(nextAfterMessageId && { nextAfterMessageId }),
+      ...(snapshot && {snapshot}),
     },
   };
+}
+
+export function historyRowFocusId(message: unknown): string | undefined {
+  if (!message || typeof message !== 'object') return;
+  const item = message as Record<string, unknown>;
+  const presentation = item.presentation as { deliveryId?: unknown } | undefined;
+  if (item.role === 'user' || (item.role === 'custom' && item.customType === 'hive-delivery')) {
+    if (typeof presentation?.deliveryId === 'string') return presentation.deliveryId;
+  } else if (item.role === 'toolResult' && typeof item.toolCallId === 'string') return item.toolCallId;
+  return;
+}
+
+export function historyToolCallFocusIds(message: unknown): string[] {
+  if (!message || typeof message !== 'object') return [];
+  const item = message as Record<string, unknown>;
+  return item.role === 'assistant' && Array.isArray(item.content)
+    ? item.content.flatMap(block => block?.type === 'toolCall' && typeof block.id === 'string' ? [block.id] : []) : [];
 }
 
 function historyFocusIndex(
@@ -302,20 +383,7 @@ function historyFocusIndex(
 
   // Search and reading positions use the desktop row identity. The native
   // history ID can differ for deliveries, tool results and unresolved calls.
-  const projected = history.findIndex(message => {
-    if (!message || typeof message !== 'object') return false;
-    const item = message as Record<string, unknown>;
-    const presentation = item.presentation as { deliveryId?: unknown } | undefined;
-    if (item.role === 'user' || (item.role === 'custom' && item.customType === 'hive-delivery')) {
-      return presentation?.deliveryId === target;
-    }
-    return item.role === 'toolResult' && item.toolCallId === target;
-  });
+  const projected = history.findIndex(message => historyRowFocusId(message) === target);
   if (projected >= 0) return projected;
-  return history.findIndex(message => {
-    if (!message || typeof message !== 'object') return false;
-    const item = message as Record<string, unknown>;
-    return item.role === 'assistant' && Array.isArray(item.content)
-      && item.content.some(block => block?.type === 'toolCall' && block.id === target);
-  });
+  return history.findIndex(message => historyToolCallFocusIds(message).includes(target));
 }

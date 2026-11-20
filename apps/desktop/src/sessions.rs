@@ -12,6 +12,19 @@ enum ConversationOpen {
     Resume,
     Focus(String),
     Latest,
+    Connect(NativeSessionPanel),
+}
+
+pub(crate) enum NativeSessionPanel {
+    Models,
+    Commands,
+}
+
+fn anchor_message(anchor: crate::conversation_list::ReadingAnchor) -> Option<String> {
+    match anchor.key {
+        crate::conversation_list::RowKey::Message(id) | crate::conversation_list::RowKey::Group(id) => Some(id),
+        _ => None,
+    }
 }
 
 impl HiveApp {
@@ -377,7 +390,18 @@ impl HiveApp {
         }
         self.expanded_projects.insert(id.clone());
         cx.notify();
+        if self.workspace.as_ref() != Some(&id) {
+            self.refresh_project_sessions(id, cx);
+        }
+    }
+
+    pub(crate) fn refresh_project_sessions(&mut self, id: String, cx: &mut Context<Self>) {
         if self.workspace.as_ref() == Some(&id) {
+            self.refresh_sessions(cx);
+            return;
+        }
+        if !self.expanded_projects.contains(&id) {
+            self.project_sessions.remove(&id);
             return;
         }
         let Some(runtime) = self.runtime.clone().filter(|_| self.connected) else {
@@ -514,6 +538,7 @@ impl HiveApp {
                                             && !this.collaboration.visible
                                             && !this.settings_panel
                                             && !this.roles.visible
+                                            && !this.showing_welcome_guide
                                         {
                                             let saved =
                                                 this.navigation.sessions.get(&workspace).and_then(
@@ -864,6 +889,17 @@ impl HiveApp {
         self.show_session_at(id, ConversationOpen::Latest, cx);
     }
 
+    pub(crate) fn connect_saved_session(&mut self, panel: NativeSessionPanel, cx: &mut Context<Self>) -> bool {
+        if self.loading || !self.connected || self.closing || self.conversation_is_read_only()
+            || !self.current_history_access().is_some_and(|access| access.saved_history_passive)
+        {
+            return false;
+        }
+        let Some(id) = self.session.as_ref().map(|session| session.id.clone()) else { return false };
+        self.show_session_at(id, ConversationOpen::Connect(panel), cx);
+        true
+    }
+
     fn show_session_at(&mut self, id: String, target: ConversationOpen, cx: &mut Context<Self>) {
         let Some(request_workspace) = self.workspace.clone() else {
             return;
@@ -883,6 +919,7 @@ impl HiveApp {
         self.switch_draft(Some(format!("session:{id}")), cx);
         self.close_settings();
         self.member_panel = false;
+        let opened_around = self.history_navigation.opened_around.clone();
         self.open_request += 1;
         self.reset_conversation_view(cx);
         self.unread.remove(&id);
@@ -903,13 +940,11 @@ impl HiveApp {
         let around_message_id = match &target {
             ConversationOpen::Focus(id) => Some(id.clone()),
             ConversationOpen::Latest => None,
-            ConversationOpen::Resume => self.reading_positions.anchor(&request_workspace, &id)
-                .and_then(|anchor| match anchor.key {
-                    crate::conversation_list::RowKey::Message(mid)
-                    | crate::conversation_list::RowKey::Group(mid) => Some(mid),
-                    _ => None,
-                }),
+            ConversationOpen::Resume | ConversationOpen::Connect(_) => self.reading_positions.anchor(&request_workspace, &id)
+                .and_then(anchor_message)
+                .or_else(|| matches!(&target, ConversationOpen::Connect(_)).then_some(opened_around).flatten()),
         };
+        self.history_navigation.opened_around.clone_from(&around_message_id);
         let mut open_params = json!({
             "sessionId": id,
             "deferHistoryImages": true,
@@ -918,6 +953,9 @@ impl HiveApp {
         });
         if let Some(around) = around_message_id {
             open_params["historyAroundMessageId"] = json!(around);
+        }
+        if matches!(&target, ConversationOpen::Connect(_)) {
+            open_params["preferSavedHistory"] = json!(false);
         }
         self.request(
             "chat.open",
@@ -992,7 +1030,7 @@ impl HiveApp {
                         for event in std::mem::take(&mut this.pending_events) {
                             this.agent_event(event, cx);
                         }
-                        this.restore_conversation_position(&id, matches!(&target, ConversationOpen::Resume), cx);
+                        this.restore_conversation_position(&id, matches!(&target, ConversationOpen::Resume | ConversationOpen::Connect(_)), cx);
                         match target {
                             ConversationOpen::Focus(message_id) => {
                                 if let Some(message) = this.message_mut(&message_id)
@@ -1015,6 +1053,17 @@ impl HiveApp {
                                 }
                             }
                             ConversationOpen::Latest => this.schedule_reading_position_save(cx),
+                            ConversationOpen::Connect(panel) if !this.conversation_is_read_only() => match panel {
+                                NativeSessionPanel::Models => {
+                                    this.choosing_model = true;
+                                    this.load_reasoning(None, cx);
+                                }
+                                NativeSessionPanel::Commands => {
+                                    this.command_picker.open = true;
+                                    this.load_commands(cx);
+                                }
+                            },
+                            ConversationOpen::Connect(_) => {}
                             ConversationOpen::Resume => {}
                         }
                     }
@@ -1028,12 +1077,22 @@ impl HiveApp {
     }
 
     pub(crate) fn load_history_page(&mut self, direction: HistoryDirection, cx: &mut Context<Self>) {
+        use crate::transport::HistoryPageRequestError;
         if self.history_navigation.loading_page.is_some() || !self.connected || self.closing {
             return;
         }
         let (Some(session), Some(page)) = (self.session.as_ref(), self.history_page.as_ref()) else {
             return;
         };
+        if self.history_navigation.snapshot_stale {
+            let (id, workspace) = (session.id.clone(), session.workspace_id.clone());
+            self.flush_reading_positions();
+            let anchor = self.reading_positions.anchor(&workspace, &id).and_then(anchor_message)
+                .or_else(|| self.history_navigation.opened_around.clone());
+            self.error = None;
+            self.show_session_at(id, anchor.map_or(ConversationOpen::Resume, ConversationOpen::Focus), cx);
+            return;
+        }
         let (index_key, id_key, index, anchor) = match direction {
             HistoryDirection::Newer => (
                 "afterIndex", "afterMessageId", page.next_after_index, &page.next_after_message_id,
@@ -1058,19 +1117,24 @@ impl HiveApp {
         if let Some(anchor) = anchor {
             params[id_key] = json!(anchor);
         }
+        let snapshot = page.snapshot.clone();
+        if let Some(snapshot) = &snapshot {
+            params["snapshot"] = json!(snapshot);
+        }
         self.history_navigation.loading_page = Some(direction);
         self.sync_conversation_list(cx);
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = runtime.request("chat.historyPage", params).await
-                .map_err(|error| error.to_string())
-                .and_then(|value| serde_json::from_value::<HistoryPageResponse>(value).map_err(|error| error.to_string()))
+            let result = runtime.history_page(params).await
+                .and_then(|value| serde_json::from_value::<HistoryPageResponse>(value).map_err(|error| HistoryPageRequestError::Other(error.to_string())))
                 .and_then(|page| {
-                    if page.history.len() == page.history_message_ids.len() {
-                        Ok(page)
-                    } else {
-                        Err(crate::language::tr("会话快照中的消息身份数量不匹配").to_owned())
+                    if !page.history_page.matches_snapshot(snapshot.as_deref()) {
+                        return Err(HistoryPageRequestError::StaleSnapshot);
                     }
+                    if page.history.len() != page.history_message_ids.len() {
+                        return Err(HistoryPageRequestError::Other(crate::language::tr("会话快照中的消息身份数量不匹配").to_owned()));
+                    }
+                    Ok(page)
                 });
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection || this.open_request != request
@@ -1098,7 +1162,11 @@ impl HiveApp {
                         }
                         this.schedule_reading_position_save(cx);
                     }
-                    Err(error) => {
+                    Err(HistoryPageRequestError::StaleSnapshot) => {
+                        this.history_navigation.snapshot_stale = true;
+                        this.error = Some("已保存的历史发生变化，请重新读取会话历史。".into());
+                    }
+                    Err(HistoryPageRequestError::Other(error)) => {
                         this.error = Some(crate::app::ErrorNotice::Detail(
                             if newer { "读取更新历史失败" } else { "读取更早历史失败" },
                             error,

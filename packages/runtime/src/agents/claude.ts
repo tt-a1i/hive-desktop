@@ -15,10 +15,12 @@ import { claudeCompletionAssistant } from './claude-completion.js';
 import type { projectClaudeMessage } from './claude-history.js';
 import { ClaudeProjection } from './claude-projection.js';
 import { readClaudeMetadata, writeClaudeMetadata, type ClaudeMetadata } from './claude-metadata.js';
+import { claudeTranscriptIdentity } from './claude-transcript-source.js';
 import { createClaudeTeamServer, type ClaudeTeamBinding } from './claude-team.js';
 import type { PiEvent, PiSessionHandle } from './types.js';
 export interface ClaudeSessionOptions {
   cwd: string; sessionDir: string; sessionId?: string; command?: string; signal?: AbortSignal;
+  expectedTranscriptPath?: string;
   mode?: string;
   args?: readonly string[];
   configDir?: string;
@@ -48,6 +50,10 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
   options.signal?.throwIfAborted();
   const executable = resolveClaudeExecutable(options.command ?? process.env.HIVE_CLAUDE_COMMAND ?? 'claude');
   const sessionId = options.sessionId ?? randomUUID();
+  if (options.expectedTranscriptPath) {
+    await claudeTranscriptIdentity(options.expectedTranscriptPath, sessionId, options.cwd, nativeEnv ?? process.env);
+    options.signal?.throwIfAborted();
+  }
   let metadata = readClaudeMetadata(options.sessionDir, sessionId);
   let closeTask: Promise<void> | undefined;
   let disposed = false; let ready = false; let failure: Error | undefined; let failureNotified = false;
@@ -89,7 +95,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     }
   };
   const refresh = async () => {
-    const messages = await readSessionMessages(sessionId, options.cwd, nativeEnv, controller.signal);
+    const messages = await readSessionMessages(sessionId, options.cwd, nativeEnv, controller.signal, options.expectedTranscriptPath);
     projection.clear(); for (const message of messages) present(message, false);
     return messages;
   };
@@ -309,11 +315,18 @@ function asError(value: unknown): Error { return value instanceof Error ? value 
 // The SDK history API has no per-call config directory. Run the same official
 // reader in a short-lived Node process with the native child environment, rather
 // than changing the shared host environment or reimplementing transcript parsing.
-export async function readSessionMessages(sessionId: string, cwd: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<SessionMessage[]> {
-  if (!env) return getSessionMessages(sessionId, { dir: cwd });
+export async function readSessionMessages(sessionId: string, cwd: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal, expectedTranscriptPath?: string): Promise<SessionMessage[]> {
+  if (!env && !expectedTranscriptPath) return getSessionMessages(sessionId, { dir: cwd });
+  const nativeEnv = env ?? process.env;
+  signal?.throwIfAborted();
+  const identity = expectedTranscriptPath && await claudeTranscriptIdentity(expectedTranscriptPath, sessionId, cwd, nativeEnv);
   const script = `import { getSessionMessages } from ${JSON.stringify(import.meta.resolve('@anthropic-ai/claude-agent-sdk'))};
     const [sessionId, dir] = process.argv.slice(1);
     process.stdout.write(JSON.stringify(await getSessionMessages(sessionId, { dir })));`;
-  const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script, sessionId, cwd], { env, ...(signal && { signal }), timeout: 10_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
-  return JSON.parse(stdout) as SessionMessage[];
+  const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script, sessionId, cwd], { env: nativeEnv, ...(signal && { signal }), timeout: 10_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  const messages = JSON.parse(stdout) as SessionMessage[];
+  if (expectedTranscriptPath && (identity !== await claudeTranscriptIdentity(expectedTranscriptPath, sessionId, cwd, nativeEnv)
+    || !messages.length || messages.some(message => message.session_id !== sessionId)))
+    throw new Error('The imported Claude conversation’s original transcript changed during history read');
+  return messages;
 }

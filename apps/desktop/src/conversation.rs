@@ -1,5 +1,5 @@
 use crate::{
-    app::{DeliveryCard, HiveApp, Message, ToolPresentation},
+    app::{DeliveryCard, HiveApp, Message, ToolOutputWindow, ToolPresentation},
     protocol::*,
 };
 use gpui_kit::*;
@@ -89,6 +89,7 @@ impl HiveApp {
         self.schedule_draft_save(cx);
         let window = window.window_handle();
         let connection = self.connection_generation;
+        let open_request = self.open_request;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request("chat.prompt", json!({"sessionId":id,"text":text,"attachmentIds":refs.iter().map(|item|&item.id).collect::<Vec<_>>(),"busyMode":busy_mode}))
@@ -148,8 +149,14 @@ impl HiveApp {
                         }
                     }
                     Ok(value) => {
-                        let refresh_handoff = this.session.as_ref().is_some_and(|s| s.id == id)
+                        let showing_source = this.session.as_ref().is_some_and(|s| s.id == id);
+                        let refresh_handoff = showing_source
                             && this.current_history_access().is_some_and(|a| a.handoff_unconsumed());
+                        let reopen_after_activation = showing_source && this.open_request == open_request
+                            && value["passive"].as_bool() == Some(false)
+                            && this.current_history_access().is_some_and(|access| {
+                                access.passive == Some(true) && access.handoff_snapshot.is_none()
+                            });
                         if refresh_handoff {
                             if value.get("passive").and_then(Value::as_bool) == Some(false) {
                                 this.history_navigation.access.passive = Some(false);
@@ -165,6 +172,9 @@ impl HiveApp {
                                 }
                                 if this.session.as_ref().is_some_and(|item| item.id == id) {
                                     this.session = Some(session);
+                                }
+                                if reopen_after_activation {
+                                    this.show_session(id.clone(), cx);
                                 }
                             }
                             Ok(_) => this.error = Some("发送响应中的会话身份不匹配".into()),
@@ -558,7 +568,11 @@ impl HiveApp {
             }
             self.sync_thinking(&id, message, false, cx);
         }
-        let text = message_text(message);
+        let (text, output_windows) = if role == "toolResult" {
+            history_tool_output(&id, message)
+        } else {
+            (message_text(message), Vec::new())
+        };
         let presentation = if matches!(role, "custom" | "user") {
             delivery_presentation(message)
         } else {
@@ -652,22 +666,6 @@ impl HiveApp {
             {
                 self.tool_inputs.insert(call.to_owned(), args.clone());
             }
-            let output_window = message["content"].as_array().and_then(|blocks| {
-                blocks.iter().find_map(|block| {
-                    let has_more = block.get("hasMoreBytes").and_then(|v| v.as_bool()) == Some(true);
-                    let total_bytes = block.get("totalBytes").and_then(|v| v.as_u64())?;
-                    let loaded_bytes = block.get("loadedBytes").and_then(|v| v.as_u64())?;
-                    (has_more && total_bytes > loaded_bytes).then(|| crate::app::ToolOutputWindow {
-                        history_message_id: id.clone(),
-                        window_start_bytes: 0,
-                        loaded_bytes,
-                        total_bytes,
-                        has_more: true,
-                        loading: false,
-                        error: None,
-                    })
-                })
-            });
             self.upsert_tool(
                 message["toolCallId"].as_str().unwrap_or(&id).into(),
                 message["toolName"].as_str().unwrap_or("工具").into(),
@@ -677,7 +675,7 @@ impl HiveApp {
             );
             if let Some(rendered) = self.message_mut(message["toolCallId"].as_str().unwrap_or(&id)) {
                 if let Some(tool) = &mut rendered.tool {
-                    tool.output_window = output_window;
+                    tool.output_windows = output_windows;
                 }
             }
             self.retain_tool_patch(message["toolCallId"].as_str().unwrap_or(&id), message, cx);
@@ -727,6 +725,7 @@ impl HiveApp {
             if let Some(tool) = &mut message.tool {
                 tool.name = name;
                 tool.status = status;
+                tool.output_windows.clear();
             } else {
                 message.tool = Some(ToolPresentation {
                     patch: None,
@@ -734,7 +733,7 @@ impl HiveApp {
                     status,
                     expanded: false,
                     details_scroll: ScrollHandle::new(),
-                    output_window: None,
+                    output_windows: Vec::new(),
                 });
             }
         }
@@ -979,6 +978,18 @@ fn release_conversation_images(
     }
 }
 
+fn text_part(block: &Value, include_tool_calls: bool) -> Option<Cow<'_, str>> {
+    match block["type"].as_str() {
+        Some("text") => block["text"].as_str().map(Cow::Borrowed),
+        Some("toolCall") if include_tool_calls => Some(Cow::Owned(format!(
+            "{}\n{}",
+            block["name"].as_str().unwrap_or("工具"),
+            block["arguments"],
+        ))),
+        _ => None,
+    }
+}
+
 pub(crate) fn message_text(message: &Value) -> String {
     let content = &message["content"];
     if let Some(text) = content.as_str() {
@@ -989,14 +1000,57 @@ pub(crate) fn message_text(message: &Value) -> String {
     };
     // Join borrowed text so a small trailing block does not double the
     // retained buffer of a long first block.
-    let parts: Vec<Cow<'_, str>> = blocks.iter().filter_map(|block| match block["type"].as_str() {
-        Some("text") => block["text"].as_str().map(Cow::Borrowed),
-        Some("toolCall") if message["role"] != "assistant" => Some(Cow::Owned(format!(
-            "{}\n{}", block["name"].as_str().unwrap_or("工具"), block["arguments"]
-        ))),
-        _ => None,
-    }).collect();
+    let include_tool_calls = message["role"] != "assistant";
+    let parts: Vec<_> = blocks
+        .iter()
+        .filter_map(|block| text_part(block, include_tool_calls))
+        .collect();
     parts.join("\n\n")
+}
+
+pub(crate) fn history_tool_output(id: &str, message: &Value) -> (String, Vec<ToolOutputWindow>) {
+    let Some(blocks) = message["content"].as_array() else {
+        return (message_text(message), Vec::new());
+    };
+    let mut parts = Vec::new();
+    let mut windows = Vec::new();
+    let mut byte_offset = 0;
+    let mut text_block_index = 0;
+    for block in blocks {
+        let Some(part) = text_part(block, true) else {
+            continue;
+        };
+        let start = byte_offset;
+        let end = start + part.len();
+        byte_offset = end + 2;
+        if block["type"] == "text" {
+            // The runtime indexes text blocks, including empty and complete ones.
+            let block_index = text_block_index;
+            text_block_index += 1;
+            if block["hasMoreBytes"] == true
+                && let (Some(loaded_bytes), Some(total_bytes)) =
+                    (block["loadedBytes"].as_u64(), block["totalBytes"].as_u64())
+                && loaded_bytes < total_bytes
+                && let Ok(initial_prefix_bytes) = usize::try_from(loaded_bytes)
+                && part.is_char_boundary(initial_prefix_bytes)
+            {
+                windows.push(ToolOutputWindow {
+                    history_message_id: id.to_owned(),
+                    block_index,
+                    display_range: start..end,
+                    generation: std::sync::Arc::new(()),
+                    window_start_bytes: 0,
+                    loaded_bytes,
+                    total_bytes,
+                    has_more: true,
+                    loading: false,
+                    error: None,
+                });
+            }
+        }
+        parts.push(part);
+    }
+    (parts.join("\n\n"), windows)
 }
 
 #[cfg(test)]

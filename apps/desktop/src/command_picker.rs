@@ -233,6 +233,9 @@ impl HiveApp {
         }
     }
     pub(crate) fn toggle_native_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.connect_saved_session(crate::sessions::NativeSessionPanel::Commands, cx) {
+            return;
+        }
         self.command_picker.open = !self.command_picker.open;
         if self.command_picker.open {
             self.load_commands(cx);

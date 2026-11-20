@@ -1,6 +1,7 @@
 use crate::{
     agent_profiles::{ProfileRef, supported_driver},
     app::{ErrorNotice, HiveApp, SettingsSection},
+    focus_scroll::Viewport,
     language::tr,
     palette::Color,
     protocol::{Session, Workspace},
@@ -10,6 +11,7 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         menu::{DropdownMenu, PopupMenuItem},
+        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
@@ -25,10 +27,9 @@ const COMPLETION_FILE: &str = "desktop-welcome.complete";
 #[derive(Default)]
 pub(crate) struct Setup {
     startup_checked: bool,
-    preferred_workspace: Option<String>,
+    pub(super) preferred_workspace: Option<String>,
     preferred_agent: Option<ProfileRef>,
-    suggestions: Option<Vec<PathBuf>>,
-    discovering: bool,
+    pub(super) project_import: super::projects::ProjectImport,
     pub(crate) adding: bool,
     pub(crate) starting: bool,
     notice: Option<ErrorNotice>,
@@ -63,6 +64,16 @@ fn save_completed(root: &Path) -> io::Result<()> {
 }
 
 impl HiveApp {
+    pub(super) fn welcome_busy(&self) -> bool {
+        self.welcome_setup.adding
+            || self.welcome_setup.starting
+            || self
+                .welcome_setup
+                .project_import
+                .busy(self.connection_generation)
+            || self.closing
+    }
+
     pub(crate) fn maybe_open_first_run_welcome(&mut self, cx: &mut Context<Self>) {
         if self.welcome_setup.startup_checked {
             return;
@@ -89,6 +100,13 @@ impl HiveApp {
         self.welcome_setup.preferred_workspace = None;
         self.welcome_setup.preferred_agent = None;
         self.welcome_setup.notice = None;
+        if !self
+            .welcome_setup
+            .project_import
+            .busy(self.connection_generation)
+        {
+            self.welcome_setup.project_import = Default::default();
+        }
         self.welcome_scroll.set_offset(point(px(0.), px(0.)));
         self.showing_welcome_guide = true;
         self.refresh_readiness(cx);
@@ -113,10 +131,7 @@ impl HiveApp {
     }
 
     fn finish_welcome_setup(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.welcome_setup.adding
-            || self.welcome_setup.starting
-            || !self.save_welcome_completion(cx)
-        {
+        if self.welcome_busy() || !self.save_welcome_completion(cx) {
             return;
         }
         self.showing_welcome_guide = false;
@@ -134,7 +149,7 @@ impl HiveApp {
         cx.notify();
     }
 
-    fn welcome_projects_target(&self) -> Option<&Workspace> {
+    pub(super) fn welcome_projects_target(&self) -> Option<&Workspace> {
         let selected = self
             .welcome_setup
             .preferred_workspace
@@ -197,10 +212,8 @@ impl HiveApp {
     }
 
     fn start_welcome_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.welcome_setup.adding
-            || self.welcome_setup.starting
+        if self.welcome_busy()
             || !self.connected
-            || self.closing
             || self.profiles.loading
             || !self.showing_welcome_guide
         {
@@ -283,29 +296,8 @@ impl HiveApp {
         .detach();
     }
 
-    fn discover_welcome_projects(&mut self, cx: &mut Context<Self>) {
-        if self.welcome_setup.discovering {
-            return;
-        }
-        self.welcome_setup.discovering = true;
-        cx.spawn(async move |this, cx| {
-            let projects = smol::unblock(super::projects::discover_recent_projects).await;
-            let _ = this.update(cx, |this, cx| {
-                this.welcome_setup.discovering = false;
-                this.welcome_setup.suggestions = Some(projects);
-                cx.notify();
-            });
-        })
-        .detach();
-        cx.notify();
-    }
-
     pub(crate) fn add_welcome_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.welcome_setup.adding
-            || self.welcome_setup.starting
-            || !self.connected
-            || self.closing
-        {
+        if self.welcome_busy() || !self.connected {
             return;
         }
         let (Some(path_text), Some(runtime)) = (path.to_str(), self.runtime.clone()) else {
@@ -360,7 +352,7 @@ impl HiveApp {
         let selected = self
             .selected_welcome_agent(&agents)
             .map(|choice| choice.reference.clone());
-        let busy = self.welcome_setup.adding || self.welcome_setup.starting || self.closing;
+        let busy = self.welcome_busy();
         let can_start = selected.is_some()
             && self.welcome_projects_target().is_some()
             && self.connected
@@ -378,11 +370,14 @@ impl HiveApp {
             .min_h_0()
             .w_full()
             .child(crate::chrome::drag_bar("setup-titlebar", window, cx))
-            .child(
+            .child(Viewport::new(
+                "welcome-setup-viewport",
+                &self.welcome_scroll,
                 v_flex()
                     .id("welcome-setup")
                     .track_scroll(&self.welcome_scroll)
                     .overflow_y_scroll()
+                    .vertical_scrollbar(&self.welcome_scroll)
                     .flex_1()
                     .min_h_0()
                     .px_5()
@@ -417,6 +412,7 @@ impl HiveApp {
                                                     )),
                                             ),
                                     )
+                                    .child(self.global_inbox_button("welcome-global-inbox", cx))
                                     .child(
                                         Button::new("welcome-settings")
                                             .ghost()
@@ -432,6 +428,7 @@ impl HiveApp {
                             .child(self.render_welcome_guide_panel(cx))
                             .child(agent_picker)
                             .child(self.render_welcome_projects(cx))
+                            .child(self.render_welcome_import(cx))
                             .when_some(notice, |panel, notice| {
                                 panel.child(
                                     div()
@@ -441,7 +438,7 @@ impl HiveApp {
                                 )
                             }),
                     ),
-            )
+            ))
             .child(
                 h_flex()
                     .flex_shrink_0()
@@ -546,9 +543,7 @@ impl HiveApp {
                                     .checked(selected.as_ref() == Some(&reference))
                                     .on_click(move |_, _, cx| {
                                         let _ = owner.update(cx, |app, cx| {
-                                            if app.showing_welcome_guide
-                                                && !app.welcome_setup.starting
-                                            {
+                                            if app.showing_welcome_guide && !app.welcome_busy() {
                                                 app.welcome_setup.preferred_agent =
                                                     Some(reference.clone());
                                                 cx.notify();
@@ -604,10 +599,7 @@ impl HiveApp {
                             .checked(selected_id.as_ref() == Some(&id))
                             .on_click(move |_, _, cx| {
                                 let _ = owner.update(cx, |app, cx| {
-                                    if app.showing_welcome_guide
-                                        && !app.welcome_setup.adding
-                                        && !app.welcome_setup.starting
-                                    {
+                                    if app.showing_welcome_guide && !app.welcome_busy() {
                                         app.welcome_setup.preferred_workspace = Some(id.clone());
                                         cx.notify();
                                     }
@@ -620,11 +612,7 @@ impl HiveApp {
     }
 
     fn render_welcome_projects(&self, cx: &Context<Self>) -> Div {
-        let can_add = self.connected
-            && !self.welcome_setup.adding
-            && !self.welcome_setup.starting
-            && !self.closing;
-        let suggestions = self.welcome_setup.suggestions.as_ref();
+        let can_add = self.connected && !self.welcome_busy();
         v_flex()
             .w_full()
             .rounded_xl()
@@ -672,68 +660,6 @@ impl HiveApp {
                         .child(format!("{} · {}", tr("将打开此项目"), item.name)),
                 )
             })
-            .when(
-                suggestions.is_none() || suggestions.is_some_and(Vec::is_empty),
-                |panel| {
-                    panel.child(div().text_xs().text_color(Color::Muted.get(cx)).child(
-                        if suggestions.is_some() {
-                            tr("没有找到最近使用的项目文件夹。")
-                        } else {
-                            tr("也可以查找在本机 Agent 中用过的文件夹。")
-                        },
-                    ))
-                },
-            )
-            .when_some(suggestions, |panel, paths| {
-                panel.children(paths.iter().filter_map(|path| {
-                    let display_path = path.to_str()?;
-                    if self
-                        .workspaces
-                        .iter()
-                        .any(|workspace| workspace.path == display_path)
-                    {
-                        return None;
-                    }
-                    let path = path.clone();
-                    Some(
-                        h_flex()
-                            .items_center()
-                            .gap_3()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_xs()
-                                    .child(display_path.to_owned()),
-                            )
-                            .child(
-                                Button::new(format!("welcome-recent-folder-{display_path}"))
-                                    .ghost()
-                                    .small()
-                                    .disabled(!can_add)
-                                    .label(tr("添加项目"))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.add_welcome_project(path.clone(), cx)
-                                    })),
-                            ),
-                    )
-                }))
-            })
-            .child(
-                h_flex().child(
-                    Button::new("welcome-find-recent-projects")
-                        .ghost()
-                        .small()
-                        .disabled(self.welcome_setup.discovering || self.welcome_setup.starting)
-                        .label(if self.welcome_setup.discovering {
-                            tr("正在查找…")
-                        } else {
-                            tr("查找最近项目")
-                        })
-                        .on_click(cx.listener(|this, _, _, cx| this.discover_welcome_projects(cx))),
-                ),
-            )
     }
 }
 

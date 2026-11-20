@@ -701,6 +701,7 @@ impl HiveApp {
             .gap_0p5()
             .child(self.render_navigation_bar(true, window, cx))
             .child(self.render_sidebar_brand_probe(window, cx))
+            .child(h_flex().px_0p5().child(self.global_inbox_button("sidebar-global-inbox", cx)))
             .children(self.render_sidebar_width_notice(cx))
             .child(
                 h_flex()
@@ -1160,7 +1161,7 @@ impl HiveApp {
                             })),
                     )
                     .when(self.workspace.is_some(), |row| {
-                        row.child(self.project_file_browser_button("sidebar-project-files", cx))
+                        row.child(self.project_file_browser_button("sidebar-project-files", window, cx))
                     })
                     .child(div().flex_1())
                     .when(!self.pending_reports.is_empty(), |row| {

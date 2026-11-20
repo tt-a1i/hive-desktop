@@ -17,6 +17,7 @@ import { PiModelConfig } from './pi-model-config.js';
 import { PiVault } from './pi-vault.js';
 import { isWorkerRole } from '@tt-a1i/hive/dist/src/shared/types.js';
 import { structuredCommand } from './structured-runtime.js';
+import { WorkspaceRemovalError } from './workspace-removal.js';
 
 export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEvent) => void,
   options: { executableEnvironment?: DesktopExecutableEnvironment; onTerminalEvent?: (event: TerminalEvent) => void; onScriptEvent?: (event: ScriptEvent) => void; onInitializationChange?: (event: InitializationChange) => void } = {}) {
@@ -102,7 +103,14 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
         ...(input.description !== undefined && { description: input.description as string }) }, launch);
     },
     removeWorkspace: async (workspaceId: string) => {
-      await projectScripts.list(workspaceId); // Refuse silently discarding unreadable settings.
+      try {
+        await projectScripts.list(workspaceId); // Refuse silently discarding unreadable settings.
+      } catch (error) {
+        if (error instanceof WorkspaceRemovalError) throw error;
+        throw new WorkspaceRemovalError('WORKSPACE_REMOVAL_FAILED',
+          error instanceof Error ? error.message : String(error),
+          { workspaceId, workspaceRemoved: false, removedSessionIds: [], stage: 'prepare', localIndexCleaned: false });
+      }
       return chats.removeWorkspace(workspaceId, async () => {await scriptRuns.stopWorkspace(workspaceId); await terminal.detachWorkspace(workspaceId);});
     },
     requestHive: (method: string, path: string, body?: unknown) => {

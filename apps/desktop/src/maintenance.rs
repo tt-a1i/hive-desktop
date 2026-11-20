@@ -188,6 +188,7 @@ mod tests {
         fs::create_dir_all(root.join("logs/nested")).unwrap();
         fs::create_dir_all(root.join("tmp")).unwrap();
         fs::create_dir_all(root.join("cache")).unwrap();
+        fs::create_dir_all(root.join("cache/claude-history-pages/workspace")).unwrap();
         fs::create_dir_all(root.join("chats/deliveries")).unwrap();
         fs::create_dir_all(root.join("drafts")).unwrap();
 
@@ -195,6 +196,11 @@ mod tests {
         fs::write(root.join("logs/nested/old.log"), b"67890").unwrap();
         fs::write(root.join("tmp/scratch.txt"), b"abc").unwrap();
         fs::write(root.join("cache/http.bin"), b"abcd").unwrap();
+        fs::write(
+            root.join("cache/claude-history-pages/workspace/saved.index"),
+            b"derived",
+        )
+        .unwrap();
         fs::write(root.join("runtime.log"), b"xy").unwrap();
         fs::write(root.join("runtime.tmp"), b"z").unwrap();
 
@@ -209,16 +215,21 @@ mod tests {
         fs::write(root.join("keybindings.json"), b"{}").unwrap();
 
         let scan = scan_disposable(root).unwrap();
-        assert_eq!(scan.disposable_files, 6);
-        assert_eq!(scan.disposable_bytes, 5 + 5 + 3 + 4 + 2 + 1);
+        assert_eq!(scan.disposable_files, 7);
+        assert_eq!(scan.disposable_bytes, 5 + 5 + 3 + 4 + 7 + 2 + 1);
 
         let outcome = clean_disposable(root).unwrap();
-        assert_eq!(outcome.removed_files, 6);
-        assert_eq!(outcome.freed_bytes, 20);
+        assert_eq!(outcome.removed_files, 7);
+        assert_eq!(outcome.freed_bytes, 27);
         assert_eq!(outcome.failed_files, 0);
 
         assert!(!root.join("logs/app.log").exists());
         assert!(!root.join("runtime.log").exists());
+        assert!(
+            !root
+                .join("cache/claude-history-pages/workspace/saved.index")
+                .exists()
+        );
         assert!(root.join("hive.sqlite").exists());
         assert!(root.join("hive.sqlite-wal").exists());
         assert!(root.join("logs/sneaky.sqlite").exists());
