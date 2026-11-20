@@ -100,18 +100,23 @@ async function regularCandidate(root: string, path: string) {
   return (await stat(current)).isFile();
 }
 
+function searchText(value: string, caseSensitive: boolean): string {
+  const normalized = value.normalize('NFC');
+  return caseSensitive ? normalized : normalized.toLowerCase();
+}
+
 /** Search is uncached; each request observes the current file list and ignore rules. */
-export async function searchProjectFiles(projectRoot: string, query: string, offset = 0, signal?: AbortSignal): Promise<{ paths: string[]; total: number }> {
+export async function searchProjectFiles(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false): Promise<{ paths: string[]; total: number }> {
   validateSearch(query, offset);
   const root = await rootDirectory(projectRoot);
   const candidates = await gitFiles(root, signal) ?? await walk(root, '', signal);
   const matches: string[] = [];
-  const needle = query.normalize('NFC').toLowerCase();
+  const needle = searchText(query, caseSensitive);
   for (const candidate of new Set(candidates)) {
     signal?.throwIfAborted();
     const path = candidate.split(sep).join('/');
     // Normalize only for matching. The listed path is also used to open the file.
-    if (!validRelative(path) || !path.normalize('NFC').toLowerCase().includes(needle)) continue;
+    if (!validRelative(path) || !searchText(path, caseSensitive).includes(needle)) continue;
     try {
       if (await regularCandidate(root, path)) matches.push(path);
     } catch (error) {
@@ -143,10 +148,10 @@ export async function listProjectDirectory(projectRoot: string, directory: strin
   return {entries: entries.slice(offset, offset + PAGE_SIZE), total: entries.length};
 }
 
-export async function searchProjectContents(projectRoot: string, query: string, offset = 0, signal?: AbortSignal) {
+export async function searchProjectContents(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false) {
   validateSearch(query, offset);
   const root = await rootDirectory(projectRoot);
-  const needle = query.normalize('NFC').toLowerCase();
+  const needle = searchText(query, caseSensitive);
   if (!needle) return {matches: [], total: 0, limited: false};
   const candidates = await gitFiles(root, signal) ?? await walk(root, '', signal);
   const paths = [...new Set(candidates.map(path => path.split(sep).join('/')))].sort();
@@ -180,7 +185,7 @@ export async function searchProjectContents(projectRoot: string, query: string, 
     for (let start = 0, line = 1; start < text.length; line++) {
       const newline = text.indexOf('\n', start);
       const end = newline === -1 ? text.length : newline;
-      if (end > start && text.slice(start, end).normalize('NFC').toLowerCase().includes(needle)) {
+      if (end > start && searchText(text.slice(start, end), caseSensitive).includes(needle)) {
         if (total >= offset && matches.length < PAGE_SIZE) matches.push({path, line});
         total += 1;
       }

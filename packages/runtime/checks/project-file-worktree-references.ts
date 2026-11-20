@@ -27,6 +27,9 @@ try {
     assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, query, 0, a.id)).paths, [visiblePath]);
     assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, query, 0, b.id)).paths, []);
   }
+  assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'Résumé', 0, a.id, undefined, true)).paths, [visiblePath]);
+  assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'RÉSUMÉ', 0, a.id, undefined, true)).paths, []);
+  await assert.rejects(runtime.chats.projectFilesSearch(ws.id, 'Résumé', 0, a.id, undefined, 'true'), /Invalid project file search/);
   const unicodeRef = await runtime.chats.projectFilesAttach(ws.id, visiblePath, a.id);
   assert.equal(unicodeRef.attachment.projectFile?.relativePath, visiblePath);
   assert.equal(unicodeRef.attachment.projectFile?.sourceSessionId, a.id);
@@ -63,14 +66,17 @@ try {
   const contentName = '同名 search.md';
   const token = 'MULTI_SCOPE_HIT';
   await writeFile(join(project, contentName), `${token} main\n`);
-  await writeFile(join(aDir, contentName), `\n${token} alpha 2\n\n${token} alpha 4`);
+  await writeFile(join(aDir, contentName), `\n${token} alpha 2\n\n${token.toLowerCase()} alpha 4`);
   await writeFile(join(bDir, contentName), `${token} beta 1\n\n${token} beta 3\n`);
   for (const [sessionId, lines] of [[undefined, [1]], [a.id, [2, 4]], [b.id, [1, 3]]] as const) {
     const result = await runtime.chats.projectFilesSearchContent(ws.id, token, 0, sessionId);
     assert.deepEqual(result, {matches: lines.map(line => ({path: contentName, line})), total: lines.length, limited: false});
     const preview = await runtime.chats.projectFilesPreview(ws.id, contentName, sessionId);
-    for (const line of lines) assert(preview.text.split('\n')[line - 1]?.startsWith(token));
+    for (const line of lines) assert(preview.text.split('\n')[line - 1]?.toUpperCase().startsWith(token));
   }
+  assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, token, 0, a.id, undefined, true)).matches, [{path: contentName, line: 2}]);
+  assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, token, 0, b.id, undefined, true)).matches, [{path: contentName, line: 1}, {path: contentName, line: 3}]);
+  await assert.rejects(runtime.chats.projectFilesSearchContent(ws.id, token, 0, a.id, undefined, 'true'), /Invalid project file search/);
   await assert.rejects(runtime.chats.projectFilesSearchContent(otherWs.id, token, 0, a.id));
   await assert.rejects(runtime.chats.projectFilesPreview(otherWs.id, name, a.id));
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, a.id)).paths, ['only-one.txt']);

@@ -1148,20 +1148,20 @@ export class Chats implements StructuredSessionPort {
       }
     });
   }
-  async projectFilesSearch(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal) {
-    if (typeof query !== 'string' || typeof offset !== 'number') throw new TypeError('Invalid project file search');
+  async projectFilesSearch(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal, caseSensitive: unknown = false) {
+    if (typeof query !== 'string' || typeof offset !== 'number' || typeof caseSensitive !== 'boolean') throw new TypeError('Invalid project file search');
     const directory = await this.executionDirectory(workspaceId, sessionId);
-    return searchProjectFiles(directory, query, offset, signal);
+    return searchProjectFiles(directory, query, offset, signal, caseSensitive);
   }
   async projectFilesList(workspaceId: string, directory: unknown, offset: unknown = 0, sessionId?: unknown) {
     if (typeof directory !== 'string' || typeof offset !== 'number') throw new TypeError('Invalid project file search');
     const root = await this.executionDirectory(workspaceId, sessionId);
     return listProjectDirectory(root, directory, offset);
   }
-  async projectFilesSearchContent(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal) {
-    if (typeof query !== 'string' || typeof offset !== 'number') throw new TypeError('Invalid project file search');
+  async projectFilesSearchContent(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal, caseSensitive: unknown = false) {
+    if (typeof query !== 'string' || typeof offset !== 'number' || typeof caseSensitive !== 'boolean') throw new TypeError('Invalid project file search');
     const directory = await this.executionDirectory(workspaceId, sessionId);
-    return searchProjectContents(directory, query, offset, signal);
+    return searchProjectContents(directory, query, offset, signal, caseSensitive);
   }
   async projectFilesPreview(workspaceId: string, relativePath: unknown, sessionId?: unknown) {
     if (typeof relativePath !== 'string') throw new TypeError('Invalid project file path');
@@ -1383,9 +1383,11 @@ export class Chats implements StructuredSessionPort {
   async setArchived(id: string, archived: unknown): Promise<ChatRecord> {
     return (await this.changeArchive(id, archived)).session;
   }
-  async changeArchive(id: string, archived: unknown, undo?: {workspaceId: string; version: number}) {
+  async changeArchive(id: string, archived: unknown, undo?: {workspaceId: string; version: number},
+    inbox?: {workspaceId: string; replyRevision: number}) {
     if (typeof archived !== 'boolean') throw new TypeError('Archived state must be a boolean');
     if (undo && archived) throw new TypeError('Only restoring an archived conversation can use an undo receipt');
+    if (inbox && (!archived || undo)) throw new TypeError('An inbox archive must archive a conversation');
     if (this.closing) throw new Error('Chat runtime is closing');
     const workspaceId = this.index.get(id).workspaceId;
     return this.withWorkspace(workspaceId, async () => {
@@ -1393,6 +1395,10 @@ export class Chats implements StructuredSessionPort {
       this.assertWorkspaceAvailable(workspaceId);
       const current = this.index.get(id);
       const currentVersion = this.index.snapshotVersion(id);
+      if (inbox && (current.workspaceId !== inbox.workspaceId || current.archived
+        || (current.inboxReply?.revision ?? 0) !== inbox.replyRevision)) {
+        throw new SessionIdentityError('ARCHIVE_INBOX_STALE', '收件箱中的会话已变化，请刷新后重试。');
+      }
       if (undo && (undo.workspaceId !== current.workspaceId || !current.archived || undo.version !== currentVersion)) {
         throw new SessionIdentityError('ARCHIVE_UNDO_STALE', 'The archive has changed. Review this conversation in Archived Sessions.');
       }
@@ -1402,9 +1408,15 @@ export class Chats implements StructuredSessionPort {
       }
       if (archived) {
         const assertIdle = () => {
-          const queue = this.live.get(id)?.queue;
+          const live = this.live.get(id);
+          const queue = live?.queue;
           if (queue?.busy || (queue?.pendingCount ?? DeliveryQueue.persistedCount(this.queueDir, id))) {
             throw new Error('会话仍有执行或待处理消息，请处理完成后再归档。');
+          }
+          if (inbox && (live?.handle.interactions?.().length || queue?.pendingReports.length
+            || current.lastDeliveryFailure
+            || (live && this.deliveryFailure(id, live.queue)))) {
+            throw new SessionIdentityError('ARCHIVE_INBOX_STALE', '收件箱中的会话已变化，请刷新后重试。');
           }
         };
         assertIdle();

@@ -13,8 +13,9 @@ use super::placement::{InboxSections, RowId, RowPlacement};
 use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
 use super::{
-    ActionCenter, Destination, Entry, InboxRowInteraction, MarkInboxRead, Reminders,
-    SNOOZE_CHANGED, inbox_row, inbox_status, is_snoozed, read_action_center, toggle_button,
+    ActionCenter, ArchiveInboxSession, Destination, Entry, InboxRowInteraction, MarkInboxRead,
+    Reminders, SNOOZE_CHANGED, inbox_row, inbox_status, is_snoozed, read_action_center,
+    toggle_button,
 };
 use crate::{
     app::HiveApp,
@@ -38,7 +39,8 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
-    time::Duration,
+    rc::Rc,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Default)]
@@ -68,6 +70,7 @@ struct NewItemsReview {
 struct GlobalInbox {
     app: WeakEntity<HiveApp>,
     connection: u64,
+    archive_revision: u64,
     projects: HashMap<String, ProjectInbox>,
     preferences: ViewPreferences,
     placement: RowPlacement,
@@ -78,6 +81,8 @@ struct GlobalInbox {
     reviewing_new: Option<NewItemsReview>,
     undo: UndoSlot,
     undo_review_item: Option<BadgeItem>,
+    archive_undo: Option<ArchiveUndoOffer>,
+    archive_undo_focus: FocusHandle,
     intro: Option<IntroMode>,
     intro_progress: IntroProgress,
     intro_save_failed: bool,
@@ -85,6 +90,14 @@ struct GlobalInbox {
     help_focus: FocusHandle,
     dismissed: bool,
     scroll: ScrollHandle,
+}
+
+type ArchiveUndoAction = Rc<dyn Fn(&mut Window, &mut App)>;
+
+struct ArchiveUndoOffer {
+    title: String,
+    expires: Instant,
+    apply: ArchiveUndoAction,
 }
 
 #[derive(Default)]
@@ -139,6 +152,91 @@ pub(super) async fn read_list<T: DeserializeOwned>(
 }
 
 impl HiveApp {
+    pub(crate) fn offer_inbox_archive_undo(
+        &self,
+        title: String,
+        expires: Instant,
+        apply: ArchiveUndoAction,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.collaboration
+            .inbox_badge
+            .dialog
+            .as_ref()
+            .is_some_and(|dialog| {
+                dialog
+                    .update(cx, |inbox, cx| {
+                        if inbox.dismissed || inbox.connection != self.connection_generation {
+                            return false;
+                        }
+                        inbox.archive_undo = Some(ArchiveUndoOffer {
+                            title,
+                            expires,
+                            apply,
+                        });
+                        cx.spawn(async move |this, cx| {
+                            smol::Timer::after(expires.saturating_duration_since(Instant::now()))
+                                .await;
+                            let _ = this.update(cx, |inbox, cx| {
+                                if inbox
+                                    .archive_undo
+                                    .as_ref()
+                                    .is_some_and(|offer| offer.expires == expires)
+                                {
+                                    inbox.archive_undo = None;
+                                    cx.notify();
+                                }
+                            });
+                        })
+                        .detach();
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false)
+            })
+    }
+
+    pub(crate) fn apply_inbox_archive_session(
+        &mut self,
+        session: &Session,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dialog) = self.collaboration.inbox_badge.dialog.clone() else {
+            return;
+        };
+        let _ = dialog.update(cx, |inbox, cx| {
+            if inbox.dismissed {
+                return;
+            }
+            inbox.archive_revision = inbox.archive_revision.wrapping_add(1);
+            let Some(current) = inbox
+                .projects
+                .get_mut(&session.workspace_id)
+                .and_then(|project| {
+                    project.sessions.iter_mut().find(|item| {
+                        item.workspace_id == session.workspace_id && item.id == session.id
+                    })
+                })
+            else {
+                return;
+            };
+            current.archived = session.archived;
+            current.updated_at = session.updated_at;
+            let item = BadgeItem::UnreadSession {
+                workspace: session.workspace_id.clone(),
+                session: session.id.clone(),
+            };
+            if session.archived {
+                inbox.new_items.remove(&item);
+            } else if self.unread.contains(&session.id)
+                && !self.collaboration.inbox_badge.sees(&item)
+            {
+                inbox.new_items.insert(item);
+            }
+            cx.notify();
+        });
+    }
+
     pub(crate) fn mark_global_inbox_workspaces_loaded(&mut self) {
         self.collaboration.inbox_view.workspaces_loaded = Some(self.connection_generation);
     }
@@ -227,6 +325,7 @@ impl HiveApp {
             GlobalInbox {
                 app: parent.downgrade(),
                 connection,
+                archive_revision: 0,
                 projects: HashMap::new(),
                 preferences: saved.preferences,
                 placement: RowPlacement::default(),
@@ -237,6 +336,8 @@ impl HiveApp {
                 reviewing_new: None,
                 undo: UndoSlot::default(),
                 undo_review_item: None,
+                archive_undo: None,
+                archive_undo_focus: cx.focus_handle(),
                 intro,
                 intro_progress: saved.intro_progress,
                 intro_save_failed,
@@ -324,6 +425,58 @@ impl HiveApp {
 }
 
 impl GlobalInbox {
+    fn request_archive(
+        &self,
+        archive: &ArchiveInboxSession,
+        row: &RowId,
+        connection: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dialog = cx.weak_entity();
+        let app = self.app.clone();
+        let target = archive.clone();
+        let row = row.clone();
+        // Read the inbox after this row's entity update has returned.
+        window.defer(cx, move |window, cx| {
+            let _ = app.update(cx, |app, cx| {
+                app.request_inbox_session_archive(
+                    target.session.clone(),
+                    target.revision,
+                    true,
+                    move |app, cx| {
+                        let Some(dialog) = dialog.upgrade() else {
+                            return false;
+                        };
+                        let dialog = dialog.read(cx);
+                        let workspace = target.session.workspace_id.as_str();
+                        !dialog.dismissed
+                            && app.connection_generation == connection
+                            && dialog.connection == connection
+                            && dialog.placement.shows(&row)
+                            && dialog.projects.get(workspace).is_some_and(|project| {
+                                project.entries(app).iter().any(|entry| {
+                                    RowId::for_entry(workspace, entry) == row
+                                        && ArchiveInboxSession::for_entry(
+                                            app,
+                                            workspace,
+                                            entry,
+                                            &project.members,
+                                            &project.reminders,
+                                            is_snoozed(entry, &project.reminders, now_ms())
+                                                || dialog.placement.held_reminder(&row).is_some(),
+                                        )
+                                        .is_some_and(|current| target.matches(&current))
+                                })
+                            })
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+    }
+
     fn review_new_items(&mut self, cx: &mut Context<Self>) {
         if self.reviewing_new.is_some() || self.new_items.is_empty() {
             return;
@@ -367,6 +520,15 @@ impl GlobalInbox {
             self.finish_intro(window, cx);
         } else if self.intro.is_none() && self.help_focus.is_focused(window) {
             self.replay_intro(window, cx);
+        } else if self.intro.is_none() && self.archive_undo_focus.is_focused(window) {
+            self.undo_archive(window, cx);
+        }
+    }
+
+    fn undo_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(offer) = self.archive_undo.take() {
+            (offer.apply)(window, cx);
+            cx.notify();
         }
     }
 
@@ -430,6 +592,7 @@ impl GlobalInbox {
         self.dismissed = true;
         self.undo.clear();
         self.undo_review_item = None;
+        self.archive_undo = None;
         if let Some(app) = self.app.upgrade() {
             app.update(cx, |app, cx| {
                 app.collaboration.inbox_view = GlobalInboxView {
@@ -537,6 +700,7 @@ impl GlobalInbox {
                         this.new_items.clear();
                         this.undo.clear();
                         this.undo_review_item = None;
+                        this.archive_undo = None;
                     }
                     this.projects
                         .retain(|id, _| app.workspaces.iter().any(|project| project.id == *id));
@@ -557,16 +721,16 @@ impl GlobalInbox {
                     // Keep a single sweep in flight and at most three requests
                     // running together. Update each workspace independently.
                     for workspace in workspaces {
-                        if !this
-                            .update(cx, |this, cx| this.is_current(connection, cx))
-                            .unwrap_or(false)
-                        {
+                        let Ok(Some(archive_revision)) = this.update(cx, |this, cx| {
+                            this.is_current(connection, cx)
+                                .then_some(this.archive_revision)
+                        }) else {
                             break;
-                        }
+                        };
                         let result = read_project(&runtime, &workspace).await;
                         if this
                             .update(cx, |this, cx| {
-                                this.apply(&workspace, connection, result, cx)
+                                this.apply(&workspace, connection, archive_revision, result, cx)
                             })
                             .is_err()
                         {
@@ -721,6 +885,7 @@ impl GlobalInbox {
         &mut self,
         workspace: &str,
         connection: u64,
+        archive_revision: u64,
         result: ProjectRead,
         cx: &mut Context<Self>,
     ) {
@@ -744,7 +909,10 @@ impl GlobalInbox {
             }
         };
         match result.sessions {
-            Ok(sessions) => project.sessions = sessions,
+            Ok(sessions) if self.archive_revision == archive_revision => {
+                project.sessions = sessions
+            }
+            Ok(_) => (), // A confirmed archive superseded this in-flight session list.
             Err(error) => errors.push(error),
         }
         let selected_member_removed = match result.members {
@@ -1394,6 +1562,22 @@ impl Render for GlobalInbox {
                     },
                 ))
             });
+            let archive = ArchiveInboxSession::for_entry(
+                app,
+                id,
+                &entry,
+                &data.members,
+                reminders,
+                reminder.is_some(),
+            )
+            .map(|archive| {
+                let row = row_id.clone();
+                Button::new("archive-inbox-session").on_click(cx.listener(
+                    move |this, _, window, cx| {
+                        this.request_archive(&archive, &row, connection, window, cx)
+                    },
+                ))
+            });
             let target = entry.target.clone();
             let id = id.to_owned();
             let button_workspace = id.clone();
@@ -1452,6 +1636,7 @@ impl Render for GlobalInbox {
                 reminders.saved.is_some(),
                 open,
                 mark_read,
+                archive,
                 &self.scroll,
                 cx,
                 Some(interaction),
@@ -1668,6 +1853,36 @@ impl Render for GlobalInbox {
             .children(elements)
             .on_scroll(cx.listener(|this, _, _, _| this.restore_position = None));
         body.child(list)
+            .when_some(self.archive_undo.as_ref(), |body, offer| {
+                let status = format!("{} · {}", tr("会话已归档"), offer.title);
+                body.child(
+                    h_flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(
+                            div()
+                                .id("inbox-archive-undo-status")
+                                .role(Role::Status)
+                                .aria_label(status.clone())
+                                .text_xs()
+                                .child(status),
+                        )
+                        .child(
+                            Button::new("inbox-undo-session-archive")
+                                .outline()
+                                .compact()
+                                .small()
+                                .label(tr("撤销归档"))
+                                .track_focus(&self.archive_undo_focus)
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.undo_archive(window, cx)
+                                    }),
+                                ),
+                        ),
+                )
+            })
             .when_some(self.undo.render(cx, Self::undo_snooze), |body, undo| {
                 body.child(undo)
             })

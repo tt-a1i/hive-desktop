@@ -121,6 +121,9 @@ try {
   const final = await sessions(wire);
   assert.deepEqual(final.find(chat => chat.id === id)?.inboxReply, second);
   assert.equal(final.find(chat => chat.id === other.id)?.inboxReply, undefined);
+  await assert.rejects(wire.request('chat.archive', {sessionId: id, archived: true,
+    inbox: {workspaceId: workspace.id, replyRevision: first.revision}}), /ARCHIVE_INBOX_STALE/);
+  assert.equal(Boolean((await sessions(wire)).find(chat => chat.id === id)?.archived), false);
   console.log('INBOX_REPLY_CURSOR_OK: exact finalized ACP replies, passive cold list, rename and later reply');
 } finally {
   await wire?.close();

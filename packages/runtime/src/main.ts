@@ -532,8 +532,8 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'git.pr.create': return chats.gitPrApply(text(params, 'workspaceId'), 'create', params);
     case 'git.pr.update': return chats.gitPrApply(text(params, 'workspaceId'), 'update', params);
     case 'project.files.list': return chats.projectFilesList(text(params, 'workspaceId'), params.directory, params.offset, params.sessionId);
-    case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal));
-    case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal));
+    case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive));
+    case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive));
     case 'project.files.preview': return chats.projectFilesPreview(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.resolveOpen': return chats.projectFilesResolveOpen(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath, params.sessionId, params.expectedSha256);
@@ -625,8 +625,15 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'chat.archive': {
       const undo = params.undo === undefined ? undefined : record(params.undo);
       if (undo) exact(undo, ['workspaceId', 'version']);
+      const inbox = params.inbox === undefined ? undefined : record(params.inbox);
+      if (inbox) {
+        exact(inbox, ['workspaceId', 'replyRevision']);
+        if (typeof inbox.replyRevision !== 'number' || !Number.isSafeInteger(inbox.replyRevision) || inbox.replyRevision < 0)
+          throw new TypeError('Invalid inbox reply revision');
+      }
       const result = await chats.changeArchive(text(params, 'sessionId'), params.archived,
-        undo && {workspaceId: text(undo, 'workspaceId'), version: viewRevision(undo.version)});
+        undo && {workspaceId: text(undo, 'workspaceId'), version: viewRevision(undo.version)},
+        inbox && {workspaceId: text(inbox, 'workspaceId'), replyRevision: inbox.replyRevision as number});
       return { ...result, sessions: chats.list(result.session.workspaceId) };
     }
     case 'chat.rename': return chats.rename(text(params, 'sessionId'), params.title);

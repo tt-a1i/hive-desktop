@@ -195,10 +195,17 @@ try {
   await rpc('chat.pin', {sessionId: selected.id, pinned: true});
   await rpc('chat.pin', {sessionId: matching.id, pinned: true});
   const previousOrder = (await rpc('chat.pinned')).result.map((hit: any) => hit.session.id);
-  const firstArchive = await rpc('chat.archive', {sessionId: selected.id, archived: true});
+  const inbox = {workspaceId: other.result.id, replyRevision: 0};
+  const beforeWrongArchive = await readFile(indexFile, 'utf8');
+  assert.match((await rpc('chat.archive', {sessionId: selected.id, archived: true,
+    inbox: {...inbox, workspaceId}})).error.message, /ARCHIVE_INBOX_STALE/);
+  assert.match((await rpc('chat.archive', {sessionId: matching.id, archived: true, inbox})).error.message, /ARCHIVE_INBOX_STALE/);
+  assert.equal(await readFile(indexFile, 'utf8'), beforeWrongArchive);
+  const firstArchive = await rpc('chat.archive', {sessionId: selected.id, archived: true, inbox});
   const receipt = {workspaceId: other.result.id, version: firstArchive.result.mutation.version};
   assert.equal(firstArchive.result.mutation.eventSequence, notifications.findLast(e => e.sessionId === selected.id).sequence);
   assert.equal((await rpc('chat.archive', {sessionId: selected.id, archived: true})).result.mutation, undefined);
+  assert.match((await rpc('chat.archive', {sessionId: selected.id, archived: true, inbox})).error.message, /ARCHIVE_INBOX_STALE/);
   assert.match((await rpc('chat.archive', {sessionId: selected.id, archived: false, undo: {...receipt, workspaceId}})).error.message, /ARCHIVE_UNDO_STALE/);
   assert.match((await rpc('chat.archive', {sessionId: matching.id, archived: false, undo: receipt})).error.message, /ARCHIVE_UNDO_STALE/);
   const undone = await rpc('chat.archive', {sessionId: selected.id, archived: false, undo: receipt});

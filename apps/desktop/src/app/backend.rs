@@ -153,6 +153,7 @@ impl HiveApp {
                                 this.status = "后台连接已断开".into();
                                 this.error = Some(error.into());
                                 this.busy.clear();
+                                this.sidebar_failed_turns.clear();
                             }
                             RuntimeEvent::Agent(event) => this.agent_event(event, cx),
                             RuntimeEvent::Terminal(event) => this.terminal_wire_event(event, cx),
@@ -206,6 +207,7 @@ impl HiveApp {
         self.open_request += 1;
         self.conversation_ready = false;
         self.busy.clear();
+        self.sidebar_failed_turns.clear();
         self.interactions.sessions.clear();
         self.terminal_disconnected(cx);
         self.list_refreshing = false;

@@ -667,6 +667,8 @@ struct TreeScope {
 #[derive(Default)]
 pub(crate) struct FileTreeExpansions {
     paths: HashMap<TreeScope, HashSet<String>>,
+    // The dock and the Files dialog share the search choice in this window.
+    case_sensitive: bool,
 }
 
 impl FileTreeExpansions {
@@ -820,6 +822,7 @@ pub(crate) struct FileBrowser {
     runtime: Option<Arc<Runtime>>,
     query: Entity<InputState>,
     contents: bool,
+    case_sensitive: bool,
     directories: HashMap<String, Directory>,
     expansions: Entity<FileTreeExpansions>,
     root_focus: FocusHandle,
@@ -836,6 +839,7 @@ pub(crate) struct FileBrowser {
     search_selected: usize,
     search_loading: bool,
     search_error: Option<FileError>,
+    search_generation: u64,
     search_task: Option<Task<()>>,
     preview: Option<Preview>,
     preview_generation: u64,
@@ -978,6 +982,7 @@ impl HiveApp {
         let revealing = reveal.is_some();
         let app = cx.weak_entity();
         let expansions = self.project_file_tree_expansions.clone();
+        let case_sensitive = expansions.read(cx).case_sensitive;
         let browser = cx.new(|cx| {
             let query = cx.new(|cx| InputState::new(window, cx).placeholder(tr("搜索项目文件…")));
             let tree_focus = cx.focus_handle();
@@ -1003,7 +1008,13 @@ impl HiveApp {
                 },
             )
             .detach();
-            cx.observe(&expansions, |this: &mut FileBrowser, _, cx| {
+            cx.observe(&expansions, |this: &mut FileBrowser, state, cx| {
+                let case_sensitive = state.read(cx).case_sensitive;
+                if this.case_sensitive != case_sensitive {
+                    this.case_sensitive = case_sensitive;
+                    this.search_offset = 0;
+                    this.load_search(false, cx);
+                }
                 this.restore_visible_expansions(cx);
                 cx.notify();
             })
@@ -1028,6 +1039,7 @@ impl HiveApp {
                 runtime: None,
                 query,
                 contents: false,
+                case_sensitive,
                 directories: HashMap::new(),
                 expansions,
                 root_focus: cx.focus_handle(),
@@ -1044,6 +1056,7 @@ impl HiveApp {
                 search_selected: 0,
                 search_loading: false,
                 search_error: None,
+                search_generation: 0,
                 search_task: None,
                 preview: None,
                 preview_generation: 0,
@@ -1557,6 +1570,7 @@ impl FileBrowser {
     fn load_search(&mut self, debounce: bool, cx: &mut Context<Self>) {
         self.cancel_tree_preview(cx);
         self.search_task = None;
+        self.search_generation += 1;
         self.search = SearchPage::default();
         self.search_selected = 0;
         self.search_error = None;
@@ -1571,8 +1585,11 @@ impl FileBrowser {
         let scope = self.scope.as_ref().expect("current file scope");
         let runtime = self.runtime.clone().expect("current file runtime");
         let contents = self.contents;
-        let params = scope.params(json!({"query":query,"offset":self.search_offset}));
-        let generation = self.scope_generation;
+        let offset = self.search_offset;
+        let params = scope
+            .params(json!({"query":query,"offset":offset,"caseSensitive":self.case_sensitive}));
+        let scope_generation = self.scope_generation;
+        let search_generation = self.search_generation;
         self.search_task = Some(cx.spawn(async move |this, cx| {
             if debounce {
                 smol::Timer::after(Duration::from_millis(180)).await;
@@ -1584,7 +1601,10 @@ impl FileBrowser {
                     serde_json::from_value::<SearchPage>(value).map_err(|error| error.to_string())
                 });
             let _ = this.update(cx, |this, cx| {
-                if this.scope_generation != generation || !this.current(cx) {
+                if this.scope_generation != scope_generation
+                    || this.search_generation != search_generation
+                    || !this.current(cx)
+                {
                     return;
                 }
                 this.search_loading = false;
@@ -1592,7 +1612,7 @@ impl FileBrowser {
                     Ok(mut page) => {
                         page.matches
                             .extend(page.paths.drain(..).map(|path| Match { path, line: None }));
-                        if this.search_offset >= page.total && this.search_offset > 0 {
+                        if offset >= page.total && offset > 0 {
                             this.search_offset =
                                 page.total.saturating_sub(1) / PAGE_SIZE * PAGE_SIZE;
                             this.load_search(false, cx);
@@ -1605,6 +1625,27 @@ impl FileBrowser {
                 cx.notify();
             });
         }));
+    }
+
+    fn toggle_search_case(
+        &mut self,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.current(cx) {
+            return;
+        }
+        self.case_sensitive = !self.case_sensitive;
+        self.expansions.update(cx, |state, cx| {
+            state.case_sensitive = self.case_sensitive;
+            cx.notify();
+        });
+        self.search_offset = 0;
+        self.load_search(false, cx);
+        if matches!(event, ClickEvent::Mouse(_) | ClickEvent::Touch(_)) {
+            self.query.read(cx).focus_handle(cx).focus(window, cx);
+        }
     }
 
     fn search_composing(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -2566,8 +2607,10 @@ impl FileBrowser {
         .accessibility_label(label.clone())
         .child(div().min_w_0().truncate().child(label))
         .on_click(cx.listener(move |this, _, _, cx| {
-            this.search_selected = active;
-            this.select(hit.clone(), cx);
+            if this.search.matches.get(active) == Some(&hit) {
+                this.search_selected = active;
+                this.select(hit.clone(), cx);
+            }
         }))
     }
 
@@ -3535,20 +3578,36 @@ impl Render for FileBrowser {
                                 .aria_label(tr("搜索项目文件")),
                         ),
                 )
-                .child(h_flex().gap_1().flex_shrink_0().children(
-                    [(false, "文件名"), (true, "文件内容")].map(|(contents, label)| {
-                        Button::new(("browser-search-mode", usize::from(contents)))
-                            .outline()
-                            .small()
-                            .label(tr(label))
-                            .selected(self.contents == contents)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.contents = contents;
-                                this.search_offset = 0;
-                                this.load_search(false, cx);
-                            }))
-                    }),
-                ))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .flex_shrink_0()
+                        .children([(false, "文件名"), (true, "文件内容")].map(
+                            |(contents, label)| {
+                                Button::new(("browser-search-mode", usize::from(contents)))
+                                    .outline()
+                                    .small()
+                                    .label(tr(label))
+                                    .selected(self.contents == contents)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.contents = contents;
+                                        this.search_offset = 0;
+                                        this.load_search(false, cx);
+                                    }))
+                            },
+                        ))
+                        .child(
+                            Button::new("browser-match-case")
+                                .outline()
+                                .small()
+                                .label("Aa")
+                                .tooltip(tr("区分大小写"))
+                                .accessibility_label(tr("区分大小写"))
+                                .selected(self.case_sensitive)
+                                .toggled(self.case_sensitive)
+                                .on_click(cx.listener(Self::toggle_search_case)),
+                        ),
+                )
                 .when(
                     !matches!(self.git_status, TreeGitStatus::NotRepository),
                     |view| {

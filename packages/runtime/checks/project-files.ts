@@ -58,9 +58,14 @@ try {
   const scatteredLines = [3, 350, 620, ...Array.from({length: 101}, (_, i) => 701 + i)];
   const many = 'nested/many matching lines.md';
   const matching = new Set(scatteredLines);
-  await writeFile(join(repo, many), Array.from({length: 801}, (_, i) => matching.has(i + 1)
-    ? 'Répété marker · réPÉTÉ MARKER'
-    : '').join('\r\n'));
+  const strictLastLine = 798;
+  await writeFile(join(repo, many), Array.from({length: 801}, (_, i) => {
+    const line = i + 1;
+    if (!matching.has(line)) return '';
+    return line <= strictLastLine
+      ? 'RE\u0301PE\u0301TE\u0301 MARKER · réPÉTÉ MARKER'
+      : 'Re\u0301pe\u0301te\u0301 marker · réPÉTÉ MARKER';
+  }).join('\r\n'));
   const laterPath = 'nested/more matching lines.txt';
   await writeFile(join(repo, laterPath), '\nRÉPÉTÉ MARKER\n');
   const expected = [...scatteredLines.map(line => ({path: many, line})), {path: laterPath, line: 2}];
@@ -69,6 +74,18 @@ try {
       matches: expected.slice(offset, offset + 100), total: expected.length, limited: true,
     });
   }
+  const strict = expected.filter(result => result.path !== many || result.line <= strictLastLine);
+  for (const offset of [0, 100, strict.length]) {
+    assert.deepEqual(await searchProjectContents(repo, 'RÉPÉTÉ MARKER', offset, undefined, true), {
+      matches: strict.slice(offset, offset + 100), total: strict.length, limited: true,
+    });
+  }
+  const namedPath = 'nested/Cafe\u0301-ReadMe.md';
+  await writeFile(join(repo, namedPath), 'case-sensitive path fixture');
+  const [returnedPath] = (await searchProjectFiles(repo, 'café-readme')).paths;
+  assert.equal(returnedPath?.normalize('NFC'), namedPath.normalize('NFC'));
+  assert.deepEqual((await searchProjectFiles(repo, 'café-readme', 0, undefined, true)).paths, []);
+  assert.deepEqual((await searchProjectFiles(repo, 'Café-ReadMe', 0, undefined, true)).paths, [returnedPath]);
   const preview = await previewProjectFile(repo, 'nested/unicode.txt');
   assert.equal(preview.text, 'first line\nCafe\u0301 MATCH\n');
   assert.equal(preview.sha256, createHash('sha256').update(preview.text).digest('hex'));

@@ -4,6 +4,7 @@ use crate::language::tr;
 mod search;
 mod session_row;
 mod width;
+mod working;
 pub(crate) use width::SidebarPreferences;
 mod settings;
 use crate::app::HiveApp;
@@ -698,6 +699,9 @@ impl HiveApp {
             self.workspace.is_some() && self.session.is_none() && self.viewing_conversation();
         let show_new_thread_row =
             new_thread_workspace.is_some() && (in_new_thread || flat_sessions.is_empty());
+        let session_count = flat_sessions.len();
+        let sessions = self.sidebar_session_sections(flat_sessions);
+        let show_working_project = self.workspaces.len() > 1 && selected_filter.is_none();
 
         v_flex()
             .relative()
@@ -954,18 +958,14 @@ impl HiveApp {
                                                     h_flex()
                                                         .items_center()
                                                         .gap_1()
-                                                        .when(!flat_sessions.is_empty(), |r| {
+                                                        .when(session_count > 0, |r| {
                                                             r.child(
                                                                 div()
                                                                     .text_size(px(11.5))
                                                                     .text_color(
                                                                         Color::Muted.get(cx),
                                                                     )
-                                                                    .child(
-                                                                        flat_sessions
-                                                                            .len()
-                                                                            .to_string(),
-                                                                    ),
+                                                                    .child(session_count.to_string()),
                                                             )
                                                         })
                                                         .child(
@@ -1103,11 +1103,15 @@ impl HiveApp {
                                             } else {
                                                 section
                                             };
-                                        section.children(
-                                            flat_sessions.into_iter().map(|session| {
+                                        section
+                                            .children(sessions.regular.into_iter().map(|session| {
                                                 self.render_session_link(session, cx)
-                                            }),
-                                        )
+                                            }))
+                                            .children(sessions.working.iter().map(|project| {
+                                                self.render_working_project(
+                                                    project, show_working_project, cx,
+                                                )
+                                            }))
                                     }
                                 }),
                         ),

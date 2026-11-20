@@ -1,25 +1,41 @@
 use super::*;
-use crate::language::{english, tr};
+use crate::language::{english, localize_owned_error, tr};
 use gpui_kit::component::{
     Sizable as _, WindowExt as _,
     button::Button,
     notification::{Notification, NotificationDelivery},
 };
-use std::time::{Duration, Instant};
+use std::{
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 const UNDO_TIME: Duration = Duration::from_secs(5);
 struct ArchiveUndoToast;
+const INBOX_ARCHIVE_STALE: &str = "收件箱中的会话已变化，请刷新后重试。";
+
+type InboxArchiveCheck = Rc<dyn Fn(&HiveApp, &App) -> bool>;
+
+#[derive(Clone)]
+struct InboxArchive {
+    reply_revision: u64,
+    nested: bool,
+    still_available: InboxArchiveCheck,
+}
 
 enum ArchiveAction {
     Ordinary,
     OfferUndo {
         window: AnyWindowHandle,
         viewed: Option<u64>,
+        inbox_reply: Option<u64>,
+        global_inbox: bool,
     },
     Undo {
         window: AnyWindowHandle,
         version: u64,
         return_to_session: Option<u64>,
+        restore_inbox_unread: bool,
     },
 }
 
@@ -48,8 +64,45 @@ impl HiveApp {
             self.set_session_archived(session, archived, cx);
             return;
         }
+        self.confirm_session_archive(session, None, window, cx);
+    }
+
+    pub(crate) fn request_inbox_session_archive(
+        &mut self,
+        session: Session,
+        reply_revision: u64,
+        nested: bool,
+        still_available: impl Fn(&HiveApp, &App) -> bool + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.confirm_session_archive(
+            session,
+            Some(InboxArchive {
+                reply_revision,
+                nested,
+                still_available: Rc::new(still_available),
+            }),
+            window,
+            cx,
+        );
+    }
+
+    fn confirm_session_archive(
+        &mut self,
+        session: Session,
+        inbox: Option<InboxArchive>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if inbox
+            .as_ref()
+            .is_some_and(|inbox| !(inbox.still_available)(self, cx))
+        {
+            return;
+        }
         if !crate::general::current(cx).confirm_archive_session {
-            self.archive_with_undo(session, window.window_handle(), cx);
+            self.archive_with_undo(session, window.window_handle(), inbox.as_ref(), cx);
             return;
         }
         if !self.connected
@@ -57,36 +110,75 @@ impl HiveApp {
             || self.session_pin_loading.contains(&session.id)
             || self.session_archive_loading.contains(&session.id)
             || self.workspace_removing.as_ref() == Some(&session.workspace_id)
-            || window.has_active_dialog(cx)
+            || (window.has_active_dialog(cx) && !inbox.as_ref().is_some_and(|inbox| inbox.nested))
         {
             return;
         }
         let connection = self.connection_generation;
         let parent = window.window_handle();
         let weak = cx.weak_entity();
-        let title = session.title.clone();
+        let title = &session.title;
+        let description = if inbox.is_some() {
+            let Some(project) = self
+                .workspaces
+                .iter()
+                .find(|item| item.id == session.workspace_id)
+            else {
+                return;
+            };
+            let name = if self
+                .workspaces
+                .iter()
+                .filter(|item| item.name == project.name)
+                .count()
+                > 1
+            {
+                &project.path
+            } else {
+                &project.name
+            };
+            let template =
+                tr("项目：{project}。确定归档会话“{title}”吗？归档后可在设置的“归档会话”中恢复。");
+            let (before_project, after_project) =
+                template.split_once("{project}").unwrap_or(("", template));
+            let (before_title, after_title) = after_project
+                .split_once("{title}")
+                .unwrap_or((after_project, ""));
+            format!("{before_project}{name}{before_title}{title}{after_title}")
+        } else if english() {
+            format!(
+                "Archive \"{title}\"? You can restore it anytime from Archived Sessions in Settings."
+            )
+        } else {
+            format!("确定归档会话“{title}”吗？归档后可随时在设置的“归档会话”中恢复。")
+        };
         window.open_alert_dialog(cx, move |dialog, _, _| {
             let weak = weak.clone();
             let confirm_session = session.clone();
+            let inbox = inbox.clone();
             dialog
                 .title(tr("归档会话？"))
-                .description(if english() {
-                    format!(
-                        "Archive \"{title}\"? You can restore it anytime from Archived Sessions in Settings."
-                    )
-                } else {
-                    format!(
-                        "确定归档会话“{title}”吗？归档后可随时在设置的“归档会话”中恢复。"
-                    )
-                })
+                .description(description.clone())
                 .show_cancel(true)
                 .ok_text(tr("归档会话"))
                 .cancel_text(tr("取消"))
-                .on_ok(move |_, _, cx| {
+                .on_ok(move |_, window, cx| {
                     weak.update(cx, |this, cx| {
-                        if this.connection_generation == connection {
-                            this.archive_with_undo(confirm_session.clone(), parent, cx);
+                        if this.connection_generation != connection {
+                            return;
                         }
+                        if inbox
+                            .as_ref()
+                            .is_some_and(|inbox| !(inbox.still_available)(this, cx))
+                        {
+                            window.push_notification(
+                                Notification::error(tr(INBOX_ARCHIVE_STALE))
+                                    .delivery(NotificationDelivery::InApp),
+                                cx,
+                            );
+                            return;
+                        }
+                        this.archive_with_undo(confirm_session.clone(), parent, inbox.as_ref(), cx);
                     })
                     .is_ok()
                 })
@@ -106,6 +198,7 @@ impl HiveApp {
         &mut self,
         session: Session,
         window: AnyWindowHandle,
+        inbox: Option<&InboxArchive>,
         cx: &mut Context<Self>,
     ) {
         let viewed = (self.viewing_conversation()
@@ -118,7 +211,12 @@ impl HiveApp {
         self.change_session_archive(
             session,
             true,
-            ArchiveAction::OfferUndo { window, viewed },
+            ArchiveAction::OfferUndo {
+                window,
+                viewed,
+                inbox_reply: inbox.map(|value| value.reply_revision),
+                global_inbox: inbox.is_some_and(|value| value.nested),
+            },
             cx,
         );
     }
@@ -148,6 +246,17 @@ impl HiveApp {
         if let ArchiveAction::Undo { version, .. } = &action {
             params["undo"] = json!({"workspaceId":workspace,"version":version});
         }
+        let inbox_window = match &action {
+            ArchiveAction::OfferUndo {
+                window,
+                inbox_reply: Some(reply_revision),
+                ..
+            } => {
+                params["inbox"] = json!({"workspaceId":workspace,"replyRevision":reply_revision});
+                Some(*window)
+            }
+            _ => None,
+        };
         self.session_archive_loading.insert(id.clone());
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -165,6 +274,20 @@ impl HiveApp {
                 this.session_archive_loading.remove(&id);
                 match result {
                     Err(error) => {
+                        if let Some(window) = inbox_window {
+                            let message = if error.contains("ARCHIVE_INBOX_STALE") {
+                                tr(INBOX_ARCHIVE_STALE).to_owned()
+                            } else {
+                                localize_owned_error(&error)
+                            };
+                            let _ = window.update(cx, |_, window, cx| {
+                                window.push_notification(
+                                    Notification::error(message)
+                                        .delivery(NotificationDelivery::InApp),
+                                    cx,
+                                );
+                            });
+                        }
                         this.error = Some(crate::app::ErrorNotice::Detail(
                             "更新会话归档失败",
                             error.to_string(),
@@ -198,7 +321,13 @@ impl HiveApp {
                             && this.workspace_removing.as_ref() != Some(&workspace)
                             && this.workspaces.iter().any(|entry| entry.id == workspace)
                         {
-                            this.finish_archive_action(action, saved.session, mutation.version, cx);
+                            this.finish_archive_action(
+                                action,
+                                saved.session.clone(),
+                                mutation.version,
+                                cx,
+                            );
+                            this.apply_inbox_archive_session(&saved.session, cx);
                         }
                     }
                 }
@@ -219,7 +348,12 @@ impl HiveApp {
     ) {
         match action {
             ArchiveAction::Ordinary => (),
-            ArchiveAction::OfferUndo { window, viewed } => {
+            ArchiveAction::OfferUndo {
+                window,
+                viewed,
+                inbox_reply,
+                global_inbox,
+            } => {
                 let return_to_session = if viewed == Some(self.open_request)
                     && self.workspace.as_ref() == Some(&session.workspace_id)
                     && self
@@ -241,13 +375,30 @@ impl HiveApp {
                 } else {
                     None
                 };
-                self.offer_archive_undo(window, session, version, return_to_session, cx);
+                self.offer_archive_undo(
+                    window,
+                    session,
+                    version,
+                    return_to_session,
+                    inbox_reply.is_some(),
+                    global_inbox,
+                    cx,
+                );
             }
             ArchiveAction::Undo {
                 window,
                 return_to_session,
+                restore_inbox_unread,
                 ..
             } => {
+                if restore_inbox_unread
+                    && !self
+                        .session
+                        .as_ref()
+                        .is_some_and(|current| current.id == session.id)
+                {
+                    self.unread.insert(session.id.clone());
+                }
                 if return_to_session == Some(self.open_request)
                     && self.workspace.as_ref() == Some(&session.workspace_id)
                     && self.session.is_none()
@@ -268,20 +419,46 @@ impl HiveApp {
         session: Session,
         version: u64,
         return_to_session: Option<u64>,
+        restore_inbox_unread: bool,
+        global_inbox: bool,
         cx: &mut Context<Self>,
     ) {
         let connection = self.connection_generation;
         let app = cx.weak_entity();
         let expires = Instant::now() + UNDO_TIME;
+        let title = session.title.clone();
+        let apply = Rc::new(move |window: &mut Window, cx: &mut App| {
+            if Instant::now() >= expires {
+                return;
+            }
+            let _ = app.update(cx, |this, cx| {
+                if this.connection_generation == connection {
+                    this.change_session_archive(
+                        session.clone(),
+                        false,
+                        ArchiveAction::Undo {
+                            window: window.window_handle(),
+                            version,
+                            return_to_session,
+                            restore_inbox_unread,
+                        },
+                        cx,
+                    );
+                }
+            });
+        });
+        if global_inbox && self.offer_inbox_archive_undo(title.clone(), expires, apply.clone(), cx)
+        {
+            return;
+        }
         let key = format!("{connection}:{version}");
         let action_key = key.clone();
         let toast = Notification::success(tr("会话已归档"))
             .id1::<ArchiveUndoToast>(key.clone())
-            .title(session.title.clone())
+            .title(title)
             .delivery(NotificationDelivery::InApp)
             .action(move |_, _, _| {
-                let app = app.clone();
-                let session = session.clone();
+                let apply = apply.clone();
                 let key = action_key.clone();
                 Button::new("undo-session-archive")
                     .compact()
@@ -289,23 +466,7 @@ impl HiveApp {
                     .label(tr("撤销归档"))
                     .on_click(move |_, window, cx| {
                         window.remove_notification1::<ArchiveUndoToast>(key.clone(), cx);
-                        if Instant::now() >= expires {
-                            return;
-                        }
-                        let _ = app.update(cx, |this, cx| {
-                            if this.connection_generation == connection {
-                                this.change_session_archive(
-                                    session.clone(),
-                                    false,
-                                    ArchiveAction::Undo {
-                                        window: window.window_handle(),
-                                        version,
-                                        return_to_session,
-                                    },
-                                    cx,
-                                );
-                            }
-                        });
+                        apply(window, cx);
                     })
             });
         if window

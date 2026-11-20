@@ -307,14 +307,26 @@ impl HiveApp {
                     }
                 }
                 if *busy {
+                    if delivery_failure.is_some() {
+                        self.sidebar_failed_turns.insert(id.clone());
+                    } else if !self.busy.contains(&id) {
+                        self.sidebar_failed_turns.remove(&id);
+                    }
                     self.busy.insert(id.clone());
                 } else {
                     self.busy.remove(&id);
+                    self.sidebar_failed_turns.remove(&id);
                 }
                 self.pending.insert(id, *pending);
             }
             PiEvent::Settled { .. } => {
                 self.busy.remove(&id);
+                self.sidebar_failed_turns.remove(&id);
+            }
+            // A backend can report failure before the queue finishes stopping.
+            // Return the row to the regular sidebar immediately.
+            PiEvent::Error { .. } if self.busy.contains(&id) => {
+                self.sidebar_failed_turns.insert(id);
             }
             PiEvent::AssistantDelta { .. } | PiEvent::ToolStart { .. } => {
                 self.busy.insert(id);

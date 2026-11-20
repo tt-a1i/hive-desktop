@@ -1546,7 +1546,11 @@ impl HiveApp {
             active.extend(inactive);
             list = active;
         }
-        pinned.extend(list);
+        let sections = self.sidebar_session_sections(&list);
+        pinned.extend(sections.regular.into_iter().cloned());
+        for project in &sections.working {
+            pinned.extend(self.visible_working_sessions(project).cloned());
+        }
         pinned
     }
 

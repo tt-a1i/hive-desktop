@@ -11,7 +11,7 @@ use crate::{
     focus_scroll::Reveal,
     language::{localize_owned_error, tr},
     palette::Color,
-    protocol::{Member, Session},
+    protocol::{Member, MemberDesktopActivity, Session},
     transport::Runtime,
 };
 use gpui_kit::{
@@ -405,6 +405,60 @@ struct Entry {
 }
 
 const UNREAD_CONVERSATION: &str = "未读会话";
+
+#[derive(Clone)]
+struct ArchiveInboxSession {
+    session: Session,
+    revision: u64,
+}
+
+impl ArchiveInboxSession {
+    fn for_entry(
+        app: &HiveApp,
+        workspace: &str,
+        entry: &Entry,
+        members: &[Member],
+        reminders: &Reminders,
+        snoozed: bool,
+    ) -> Option<Self> {
+        let session = entry.plain_unread_session(workspace)?;
+        let activity = session_activity(session, members);
+        let archivable = app.connected
+            && !app.closing
+            && !snoozed
+            && reminders.saved.is_some()
+            && !session.archived
+            && !app.removed_sessions.contains(&session.id)
+            && !app.busy.contains(&session.id)
+            && app.pending.get(&session.id).copied().unwrap_or(0) == 0
+            && !app.session_pin_loading.contains(&session.id)
+            && !app.session_archive_loading.contains(&session.id)
+            && app.workspace_removing.as_deref() != Some(workspace)
+            && app.workspaces.iter().any(|project| project.id == workspace)
+            && activity.is_none_or(Self::settled_activity);
+        if !archivable {
+            return None;
+        }
+        Some(Self {
+            session: session.clone(),
+            revision: entry.unread_reply_revision()?,
+        })
+    }
+
+    fn settled_activity(activity: &MemberDesktopActivity) -> bool {
+        matches!(activity.runtime_state.as_str(), "" | "idle" | "stopped")
+            && activity.queued_input_count == 0
+            && activity.pending_report_count == 0
+            && activity.pending_interaction_count == 0
+            && activity.delivery_failure_message.is_none()
+    }
+
+    fn matches(&self, current: &Self) -> bool {
+        current.session.id == self.session.id
+            && current.session.workspace_id == self.session.workspace_id
+            && current.revision == self.revision
+    }
+}
 
 impl Entry {
     fn unread_reply_revision(&self) -> Option<u64> {
@@ -988,6 +1042,47 @@ impl HiveApp {
                 let workspace = workspace.to_owned();
                 let snooze_workspace = workspace.clone();
                 let connection = self.connection_generation;
+                let archive = ArchiveInboxSession::for_entry(
+                    self,
+                    &workspace,
+                    &entry,
+                    &self.members,
+                    &inbox.reminders,
+                    reminder.is_some(),
+                )
+                .map(|archive| {
+                    Button::new("archive-inbox-session").on_click(cx.listener(
+                        move |this, _, window, cx| {
+                            let target = archive.clone();
+                            this.request_inbox_session_archive(
+                                archive.session.clone(),
+                                archive.revision,
+                                false,
+                                move |app, _| {
+                                    let workspace = target.session.workspace_id.as_str();
+                                    let inbox = &app.collaboration.inbox;
+                                    app.connection_generation == connection
+                                        && app.collaboration.visible
+                                        && app.workspace.as_deref() == Some(workspace)
+                                        && inbox.workspace.as_deref() == Some(workspace)
+                                        && app.scoped_entries(workspace).iter().any(|entry| {
+                                            ArchiveInboxSession::for_entry(
+                                                app,
+                                                workspace,
+                                                entry,
+                                                &app.members,
+                                                &inbox.reminders,
+                                                is_snoozed(entry, &inbox.reminders, now_ms()),
+                                            )
+                                            .is_some_and(|current| target.matches(&current))
+                                        })
+                                },
+                                window,
+                                cx,
+                            );
+                        },
+                    ))
+                });
                 let mark_read =
                     MarkInboxRead::for_entry(self, &workspace, &entry, &inbox.reminders).map(
                         |mark| {
@@ -1039,6 +1134,7 @@ impl HiveApp {
                     current && inbox.reminders.saved.is_some() && !self.closing,
                     action.disabled(!self.connected || self.closing),
                     mark_read,
+                    archive,
                     scroll,
                     cx,
                     None,
@@ -1214,6 +1310,7 @@ fn inbox_row<T: 'static>(
     can_snooze: bool,
     open: Button,
     mark_read: Option<Button>,
+    archive: Option<Button>,
     scroll: &ScrollHandle,
     cx: &Context<T>,
     interaction: Option<InboxRowInteraction>,
@@ -1405,6 +1502,19 @@ fn inbox_row<T: 'static>(
                                 .accessibility_label(format!("{mark} · {label} · {subject}")),
                         )
                     })
+                    .when_some(archive, |buttons, archive| {
+                        let archive_label = tr("归档会话");
+                        buttons.child(
+                            archive
+                                .ghost()
+                                .compact()
+                                .xsmall()
+                                .label(archive_label)
+                                .accessibility_label(format!(
+                                    "{archive_label} · {label} · {subject}"
+                                )),
+                        )
+                    })
                     .child(
                         open.ghost()
                             .compact()
@@ -1421,11 +1531,45 @@ fn inbox_row<T: 'static>(
 #[cfg(test)]
 mod tests {
     use super::{
-        Attention, Delay, Destination, Entry, MarkInboxRead, Priority, Reminders, SnoozeEdit,
-        Snoozes, UNREAD_CONVERSATION, Wake, now_ms, sort_entries,
+        ArchiveInboxSession, Attention, Delay, Destination, Entry, MarkInboxRead, Priority,
+        Reminders, SnoozeEdit, Snoozes, UNREAD_CONVERSATION, Wake, now_ms, sort_entries,
     };
+    use crate::protocol::MemberDesktopActivity;
     use serde_json::json;
     use std::collections::HashSet;
+
+    #[test]
+    fn archive_allows_stopped_member_history_without_pending_work() {
+        let mut activity = MemberDesktopActivity {
+            runtime_state: "stopped".into(),
+            ..Default::default()
+        };
+        assert!(ArchiveInboxSession::settled_activity(&activity));
+        activity.queued_input_count = 1;
+        assert!(!ArchiveInboxSession::settled_activity(&activity));
+        activity.queued_input_count = 0;
+        activity.pending_report_count = 1;
+        assert!(!ArchiveInboxSession::settled_activity(&activity));
+        activity.pending_report_count = 0;
+        activity.runtime_state = "working".into();
+        assert!(!ArchiveInboxSession::settled_activity(&activity));
+    }
+
+    #[test]
+    fn inbox_archive_confirmation_is_bound_to_workspace_session_and_displayed_reply() {
+        let at = |workspace: &str, id: &str, revision| ArchiveInboxSession {
+            session: serde_json::from_value(json!({
+                "id": id, "workspaceId": workspace, "title": "Same conversation",
+            }))
+            .unwrap(),
+            revision,
+        };
+        let clicked = at("beacon", "id", 4);
+        assert!(clicked.matches(&at("beacon", "id", 4)));
+        assert!(!clicked.matches(&at("beacon", "id", 5)));
+        assert!(!clicked.matches(&at("atlas", "id", 4)));
+        assert!(!clicked.matches(&at("beacon", "other", 4)));
+    }
 
     #[test]
     fn inbox_mark_read_rejects_stale_or_actionable_rows_and_clears_only_the_exact_unread() {

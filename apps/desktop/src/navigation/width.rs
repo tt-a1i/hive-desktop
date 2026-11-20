@@ -5,6 +5,7 @@ use gpui_kit::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
     fs, io,
     path::{Path, PathBuf},
 };
@@ -15,8 +16,10 @@ const MAIN_MIN_WIDTH: f32 = 640.;
 const FILE: &str = "desktop-sidebar.json";
 
 #[derive(Deserialize, Serialize)]
-struct StoredWidth {
+struct StoredSidebar {
     width: f32,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    expanded_working_projects: BTreeSet<String>,
 }
 struct ResizeOrigin {
     mouse_x: f32,
@@ -29,6 +32,7 @@ enum WidthNotice {
 }
 pub(crate) struct SidebarPreferences {
     width: f32,
+    expanded_working_projects: BTreeSet<String>,
     brand_width: f32,
     root: Option<PathBuf>,
     drag: Option<ResizeOrigin>,
@@ -39,6 +43,7 @@ impl Default for SidebarPreferences {
     fn default() -> Self {
         Self {
             width: DEFAULT_WIDTH,
+            expanded_working_projects: BTreeSet::new(),
             brand_width: 0.,
             root: None,
             drag: None,
@@ -59,25 +64,31 @@ fn clamped(width: f32, viewport: f32, brand: f32) -> f32 {
     let min = minimum(brand);
     width.clamp(min, maximum(viewport, min))
 }
-fn load(root: &Path) -> io::Result<f32> {
+fn load(root: &Path) -> io::Result<StoredSidebar> {
     let file = match fs::File::open(root.join(FILE)) {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(DEFAULT_WIDTH),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(StoredSidebar {
+                width: DEFAULT_WIDTH,
+                expanded_working_projects: BTreeSet::new(),
+            });
+        }
         Err(error) => return Err(error),
     };
-    let stored: StoredWidth = serde_json::from_reader(file)?;
+    let mut stored: StoredSidebar = serde_json::from_reader(file)?;
     if !stored.width.is_finite() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "Invalid sidebar width",
         ));
     }
-    Ok(stored.width.max(MIN_WIDTH))
+    stored.width = stored.width.max(MIN_WIDTH);
+    Ok(stored)
 }
-fn save(root: &Path, width: f32) -> io::Result<()> {
+fn save(root: &Path, stored: &StoredSidebar) -> io::Result<()> {
     fs::create_dir_all(root)?;
     let mut file = tempfile::NamedTempFile::new_in(root)?;
-    serde_json::to_writer(file.as_file_mut(), &StoredWidth { width })?;
+    serde_json::to_writer(file.as_file_mut(), stored)?;
     file.as_file().sync_all()?;
     file.persist(root.join(FILE))?;
     Ok(())
@@ -97,8 +108,9 @@ impl SidebarPreferences {
             return;
         };
         match load(root) {
-            Ok(width) => {
-                self.width = width;
+            Ok(stored) => {
+                self.width = stored.width;
+                self.expanded_working_projects = stored.expanded_working_projects;
                 self.notice = None;
             }
             Err(error) => self.notice = Some(WidthNotice::Read(error.to_string())),
@@ -111,11 +123,7 @@ impl SidebarPreferences {
             self.notice = None;
             return;
         }
-        let result = self
-            .root
-            .as_ref()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, tr("后台尚未连接")))
-            .and_then(|root| save(root, width));
+        let result = self.save_preferences(width, &self.expanded_working_projects);
         match result {
             Ok(()) => {
                 self.width = width;
@@ -128,6 +136,40 @@ impl SidebarPreferences {
                 })
             }
         }
+    }
+    fn save_preferences(
+        &self,
+        width: f32,
+        expanded_working_projects: &BTreeSet<String>,
+    ) -> io::Result<()> {
+        if self.preview_only {
+            return Ok(());
+        }
+        let root = self
+            .root
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, tr("后台尚未连接")))?;
+        save(
+            root,
+            &StoredSidebar {
+                width,
+                expanded_working_projects: expanded_working_projects.clone(),
+            },
+        )
+    }
+
+    pub(super) fn working_project_expanded(&self, workspace: &str) -> bool {
+        self.expanded_working_projects.contains(workspace)
+    }
+
+    pub(super) fn toggle_working_project(&mut self, workspace: &str) -> io::Result<()> {
+        let mut next = self.expanded_working_projects.clone();
+        if !next.remove(workspace) {
+            next.insert(workspace.to_owned());
+        }
+        self.save_preferences(self.width, &next)?;
+        self.expanded_working_projects = next;
+        Ok(())
     }
     fn retry(&mut self) {
         match self.notice.as_ref() {
@@ -306,7 +348,9 @@ impl HiveApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_WIDTH, FILE, SidebarPreferences, WidthNotice, clamped, load, save};
+    use super::{
+        DEFAULT_WIDTH, FILE, SidebarPreferences, StoredSidebar, WidthNotice, clamped, load, save,
+    };
     use gpui_kit::px;
     use std::fs;
     #[test]
@@ -330,7 +374,7 @@ mod tests {
         preferences.preview_only = false;
         preferences.restore(root.path());
         preferences.commit(320.);
-        assert_eq!(load(root.path()).unwrap(), 320.);
+        assert_eq!(load(root.path()).unwrap().width, 320.);
         fs::remove_file(root.path().join(FILE)).unwrap();
         fs::create_dir(root.path().join(FILE)).unwrap();
         preferences.commit(380.);
@@ -345,7 +389,14 @@ mod tests {
     #[test]
     fn preview_and_reconnect_do_not_write_or_replace_active_drag() {
         let root = tempfile::tempdir().unwrap();
-        save(root.path(), 300.).unwrap();
+        save(
+            root.path(),
+            &StoredSidebar {
+                width: 300.,
+                expanded_working_projects: Default::default(),
+            },
+        )
+        .unwrap();
         let original = fs::read(root.path().join(FILE)).unwrap();
         let mut preferences = SidebarPreferences {
             preview_only: true,
@@ -358,5 +409,32 @@ mod tests {
         preferences.move_drag(px(380.), px(1200.));
         preferences.restore(root.path());
         assert_eq!(preferences.resolved(px(1200.)), px(380.));
+    }
+
+    #[test]
+    fn working_project_expansion_preserves_legacy_width_and_other_projects() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join(FILE), r#"{"width":310}"#).unwrap();
+        let mut sidebar = SidebarPreferences::default();
+        sidebar.restore(root.path());
+        assert!(!sidebar.working_project_expanded("alpha"));
+        sidebar.toggle_working_project("alpha").unwrap();
+        assert!(sidebar.working_project_expanded("alpha"));
+        assert!(!sidebar.working_project_expanded("beta"));
+        assert_eq!(load(root.path()).unwrap().width, 310.);
+        sidebar.commit(330.);
+        sidebar.toggle_working_project("beta").unwrap();
+        sidebar.toggle_working_project("alpha").unwrap();
+
+        let mut reopened = SidebarPreferences::default();
+        reopened.restore(root.path());
+        assert_eq!(reopened.width, 330.);
+        assert!(!reopened.working_project_expanded("alpha"));
+        assert!(reopened.working_project_expanded("beta"));
+
+        fs::remove_file(root.path().join(FILE)).unwrap();
+        fs::create_dir(root.path().join(FILE)).unwrap();
+        assert!(reopened.toggle_working_project("beta").is_err());
+        assert!(reopened.working_project_expanded("beta"));
     }
 }

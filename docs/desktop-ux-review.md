@@ -214,8 +214,21 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 从同一文件的正文结果打开第 3、350、620 行。切到独立工作树后，用方向键和回车打开该工作树的第 350 行。只在项目目录出现的词组在工作树中没有命中，切回项目后恢复三条结果。另在同一文件的 130 条命中中翻到第 2 页，打开第 103 行。证据在 `.artifacts/file-search-jump-qa`。
 - 250 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 MSVC 交叉类型检查、TypeScript 检查、置顶顺序与归档协议，以及项目和工作树文件正文专项通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第十七批
+
+本轮从 Hive Desktop `94aa2c9` 开始，继续对照 T3 Code `f0a2aa1`、Cindy `9602463`、Beluga `45a484b`。
+
+- **折叠正在工作的会话。** 侧栏按项目显示后台执行数，默认折叠。当前会话、置顶、待回应、失败和有未发送草稿的会话保持可见。回复结束后会话回到常规列表。项目的展开状态跨重启保留，普通搜索可以找到折叠区里的会话。 [T3 Code 工作区段](https://github.com/pingdotgg/t3code/blob/f0a2aa10f5165413e863db9f1502dc4bb6fa42e8/docs/user/thread-sidebar.md#L134-L149)
+- **从收件箱归档已完成的会话。** 项目和跨项目收件箱的可归档未读会话提供行尾操作。启用归档确认时显示目标项目和会话名。提交会核对会话、项目及回复版本。成功归档后可立即撤销。 [Cindy 收件箱归档](https://github.com/makecindy/cindy/blob/96024635d21ad07772501610c933f4d34536d09f/docs/product-rules/task-inbox.md#L48-L72)
+- **文件搜索支持区分大小写。** 文件名和正文共用 `Aa` 开关，默认关闭，在当前窗口保留选择。切换时保留查询并回到第一页。匹配仍认可等价的 Unicode 写法，结果打开原路径和原行号。 [Beluga 大小写开关](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L114-L125)
+
+- macOS 用本地模拟 Codex 对端让一条未置顶会话保持执行，验证折叠、展开、搜索以及结束后回到普通列表。当前会话和置顶入口保留；实际展开选择写入侧栏偏好文件。证据在 `.artifacts/working-sidebar-qa`。
+- macOS 在跨项目收件箱从两条同名未读中选中 Beacon。取消确认时保留两条。确认后只移走 Beacon，在收件箱底部点撤销即恢复。Atlas 的同名会话和当前草稿一直保留。项目收件箱也验证了停止成员的已完成历史会话可归档并撤销。证据在 `.artifacts/archive-unread-qa`。
+- macOS 验证文件名大小写，以及正文 `Café`、`café` 和采用分解字符的 `Café`。在第二页切换开关会回到第一页。打开命中后预览定位到项目或工作树的原始行。证据在 `.artifacts/case-search-qa`。
+- 254 项桌面 Rust 测试通过，1 项原有忽略。TypeScript、Windows x64 MSVC 交叉检查、归档和回复版本协议、置顶、项目及工作树文件搜索专项均通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **折叠正在工作的会话。** 侧栏可以单独收起后台还在执行的会话。用准备回复、等待授权和已经置顶的三个会话验收：收起后仍能看到待回应会话，回复完成时相应会话回到列表，当前选中的草稿保持。 [T3 Code 工作区段](https://github.com/pingdotgg/t3code/blob/f0a2aa10f5165413e863db9f1502dc4bb6fa42e8/docs/user/thread-sidebar.md#L134-L149)
-- **从收件箱归档已完成的会话。** 沿用已有确认和撤销。用跨项目同名会话验收：归档和撤销只作用于选中会话，另一个未读会话和当前草稿保持，仍待回应的事项保有原入口。 [Cindy 收件箱归档](https://github.com/makecindy/cindy/blob/96024635d21ad07772501610c933f4d34536d09f/docs/product-rules/task-inbox.md#L48-L59)
-- **文件搜索支持区分大小写。** 用同一文件的 `TOKEN` 与 `token` 及混合大小写文件名验证：切换开关更新命中和分页，选择后打开正确工作树中的准确行。 [Beluga 大小写开关](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L114-L125)
+- **在通用设置中关闭工作会话折叠。** 两个项目同时执行时关闭折叠，验证全量会话立即可见。重启保持选择，再打开时恢复两项目原有的展开状态和当前草稿。 [T3 Code 的设备选择](https://github.com/pingdotgg/t3code/blob/f0a2aa10f5165413e863db9f1502dc4bb6fa42e8/docs/user/thread-sidebar.md#L134-L149)
+- **在收件箱查看和恢复已处理会话。** 展开已处理后用两个项目的同名归档会话验证项目筛选及分页。恢复明确选中的一项，当前草稿和另一项目的归档会话保留。 [Cindy 已处理区段](https://github.com/makecindy/cindy/blob/96024635d21ad07772501610c933f4d34536d09f/docs/product-rules/task-inbox.md#L52-L59)
+- **在正文搜索结果里显示原文片段。** 用同一文件的多个命中和不同工作树的同名文件验证。无需打开预览就能区分命中，点击仍到准确的行。验收重音字母、表情及超长行。 [Beluga 正文结果](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L192-L225)
