@@ -40,52 +40,63 @@ try {
         if ($buttons.Count -lt 2) { throw 'Question attachment button unavailable' }
         Invoke-Control $buttons[0]
         # The owned common dialog is included under the application's UIA
-        # tree on Windows; locate the Open dialog's ComboBoxEx32/ComboBox/Edit
-        # filename field via UIA or its Win32 child HWND, then click the OK button.
+        # tree on Windows; wait for the modal dialog to take foreground, find
+        # its ComboBox->Edit child HWND recursively via Win32, set the path, and submit.
         Add-Type @'
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class OpenDialogHelper {
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, string lParam);
+    public delegate bool EnumChildProc(IntPtr hwnd, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumChildProc cb, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hwnd, StringBuilder sb, int max);
+    [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, string lParam);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr hWnd);
+    public static IntPtr FindComboEdit(IntPtr dialog) {
+        IntPtr found = IntPtr.Zero;
+        EnumChildWindows(dialog, (hwnd, _) => {
+            var cls = new StringBuilder(64);
+            GetClassName(hwnd, cls, cls.Capacity);
+            if (cls.ToString() == "Edit") {
+                var parent = GetParent(hwnd);
+                var pcls = new StringBuilder(64);
+                if (parent != IntPtr.Zero) GetClassName(parent, pcls, pcls.Capacity);
+                if (pcls.ToString() == "ComboBox") { found = hwnd; return false; }
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
 }
 '@
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
-        $openDialog = $null
-        $okButton = $null
+        $dialogHwnd = [IntPtr]::Zero
+        $editHwnd = [IntPtr]::Zero
         do {
-            $openDialog = @(All-Controls | Where-Object {
-                $_.Current.ProcessId -eq $AppProcessId -and
-                $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and
-                $_.Current.Name -ceq 'Open'
-            }) | Select-Object -First 1
-            $okButton = @(All-Controls | Where-Object {
-                $_.Current.ProcessId -eq $AppProcessId -and
-                $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
-                $_.Current.Name -ceq 'Select images, documents or other files'
-            }) | Select-Object -First 1
-            if ($null -ne $openDialog -and $null -ne $okButton) { break }
+            $fg = [NativeFixtureWindow]::GetForegroundWindow()
+            [uint32]$fgPid = 0
+            if ($fg -ne [IntPtr]::Zero -and $fg -ne $window) {
+                [void][OpenDialogHelper]::GetWindowThreadProcessId($fg, [ref]$fgPid)
+                if ($fgPid -eq $AppProcessId) {
+                    $candidateEdit = [OpenDialogHelper]::FindComboEdit($fg)
+                    if ($candidateEdit -ne [IntPtr]::Zero) {
+                        $dialogHwnd = $fg
+                        $editHwnd = $candidateEdit
+                        break
+                    }
+                }
+            }
             Start-Sleep -Milliseconds 150
         } while ([DateTime]::UtcNow -lt $deadline)
-        if ($null -eq $openDialog -or $null -eq $okButton) { throw 'Native file chooser Open dialog unavailable' }
-        $dialogHwnd = [IntPtr]$openDialog.Current.NativeWindowHandle
-        $comboEx = [OpenDialogHelper]::FindWindowEx($dialogHwnd, [IntPtr]::Zero, 'ComboBoxEx32', $null)
-        $combo = if ($comboEx -ne [IntPtr]::Zero) { [OpenDialogHelper]::FindWindowEx($comboEx, [IntPtr]::Zero, 'ComboBox', $null) } else { [IntPtr]::Zero }
-        $editHwnd = if ($combo -ne [IntPtr]::Zero) { [OpenDialogHelper]::FindWindowEx($combo, [IntPtr]::Zero, 'Edit', $null) } else { [IntPtr]::Zero }
-        if ($editHwnd -ne [IntPtr]::Zero) {
-            [void][OpenDialogHelper]::SendMessage($editHwnd, 0x000C, [IntPtr]::Zero, $Source)
-        } else {
-            $field = @($openDialog.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
-                $vp = $null
-                ($_.Current.AutomationId -eq '1148' -or $_.Current.Name -ceq 'File name:') -and
-                $_.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)
-            }) | Select-Object -First 1
-            if ($null -eq $field) { throw 'Native file chooser filename Edit HWND and ValuePattern unavailable' }
-            $field.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Source)
-        }
-        $okButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        if ($editHwnd -eq [IntPtr]::Zero) { throw 'Native file chooser ComboBox Edit HWND unavailable' }
+        [void][OpenDialogHelper]::SendMessage($editHwnd, 0x000C, [IntPtr]::Zero, $Source)
+        Start-Sleep -Milliseconds 150
+        [void][OpenDialogHelper]::PostMessage($editHwnd, 0x0100, [IntPtr]0x0D, [IntPtr]::Zero)
+        [void][OpenDialogHelper]::PostMessage($editHwnd, 0x0101, [IntPtr]0x0D, [IntPtr]::Zero)
         [void](Wait-Name 'Remove question-proof.txt')
         # Wait for the original question's saved draft and compare the exact
         # private bytes before moving the source and submitting the answer.
