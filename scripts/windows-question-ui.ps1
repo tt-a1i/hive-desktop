@@ -93,13 +93,24 @@ public static class OpenDialogHelper {
             Start-Sleep -Milliseconds 150
         } while ([DateTime]::UtcNow -lt $deadline)
         if ($editHwnd -eq [IntPtr]::Zero) { throw 'Native file chooser ComboBox Edit HWND unavailable' }
-        [void][OpenDialogHelper]::SendMessage($editHwnd, 0x000C, [IntPtr]::Zero, $Source)
-        Start-Sleep -Milliseconds 150
-        # Trigger IDOK (1) on the IFileOpenDialog, and fall back to SendKeys Enter if still open.
-        [void][OpenDialogHelper]::PostMessage($dialogHwnd, 0x0111, [IntPtr]1, [IntPtr]::Zero)
-        Start-Sleep -Milliseconds 300
-        if ([NativeFixtureWindow]::GetForegroundWindow() -eq $dialogHwnd) {
-            [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+        $editElem = [System.Windows.Automation.AutomationElement]::FromHandle($editHwnd)
+        $vp = $null
+        if ($editElem.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) {
+            $vp.SetValue($Source)
+        } else {
+            [void][OpenDialogHelper]::SendMessage($editHwnd, 0x000C, [IntPtr]::Zero, $Source)
+        }
+        Start-Sleep -Milliseconds 200
+        $dialogElem = [System.Windows.Automation.AutomationElement]::FromHandle($dialogHwnd)
+        $okCond = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::NameProperty,
+            'Select images, documents or other files'
+        )
+        $okElem = $dialogElem.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $okCond)
+        if ($null -ne $okElem) {
+            $okElem.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        } else {
+            [void][OpenDialogHelper]::PostMessage($dialogHwnd, 0x0111, [IntPtr]1, [IntPtr]::Zero)
         }
         [void](Wait-Name 'Remove question-proof.txt')
         # Wait for the original question's saved draft and compare the exact
