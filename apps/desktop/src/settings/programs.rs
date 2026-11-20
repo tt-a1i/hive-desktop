@@ -139,6 +139,8 @@ impl HiveApp {
                 .pr_1()
                 .gap_4()
                 .child(self.render_readiness_and_mcp_card(cx))
+                .child(self.render_skills_and_rules_card(cx))
+                .child(self.render_local_usage_summary_card(cx))
                 .child(
                     v_flex()
                         .gap_1()
@@ -1489,6 +1491,385 @@ impl HiveApp {
                                 })
                         })),
                 )
+            })
+    }
+
+    fn insert_reference_to_composer(
+        &mut self,
+        snippet: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_settings();
+        let existing = self.input.read(cx).value().to_string();
+        let next = if existing.trim().is_empty() {
+            snippet
+        } else if existing.ends_with('\n') {
+            format!("{existing}{snippet}")
+        } else {
+            format!("{existing}\n{snippet}")
+        };
+        let input = self.input.clone();
+        input.update(cx, |state, cx| {
+            state.set_value(next, window, cx);
+        });
+        let focus = self.input.read(cx).focus_handle(cx);
+        window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        cx.notify();
+    }
+
+    fn render_skills_and_rules_card(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let report = self.skills_rules.as_ref();
+        let rule_count = report.map(|r| r.rules.len()).unwrap_or(0);
+        let skill_count = report.map(|r| r.skills.len()).unwrap_or(0);
+        v_flex()
+            .w_full()
+            .gap_3()
+            .p_4()
+            .rounded_xl()
+            .bg(Color::Card.get(cx))
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .shadow(crate::palette::card_shadow(cx))
+            .child(
+                h_flex()
+                    .w_full()
+                    .flex_wrap()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(Color::Text.get(cx))
+                                    .child(tr("Skills 与项目规则（AGENTS.md / SKILL.md）")),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(Color::Muted.get(cx))
+                                    .child(if english() {
+                                        format!("Discovered {rule_count} rules · {skill_count} skills (read-only scan; click to open or cite in chat)")
+                                    } else {
+                                        format!("已发现 {rule_count} 份规则文件 · {skill_count} 个 Skill（只读扫描，支持定位文件或一键引用到对话）")
+                                    }),
+                            ),
+                    ),
+            )
+            .when_some(report, |view, report| {
+                let mut combined: Vec<(&str, &crate::protocol::SkillOrRuleEntry)> = Vec::new();
+                for r in &report.rules {
+                    combined.push(("规则", r));
+                }
+                for s in report.skills.iter().take(24) {
+                    combined.push(("Skill", s));
+                }
+                if combined.is_empty() {
+                    return view.child(
+                        div()
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .child(tr("暂未在当前项目或常见全局目录发现 AGENTS.md / CLAUDE.md / SKILL.md。")),
+                    );
+                }
+                view.child(
+                    v_flex()
+                        .w_full()
+                        .gap_1p5()
+                        .children(combined.into_iter().enumerate().map(|(i, (kind_label, item))| {
+                            let is_project = item.scope == "project";
+                            let reveal_path = item.path.clone();
+                            let cite_snippet = if english() {
+                                format!("Please follow {} `{}` ({}).", kind_label, item.name, item.path)
+                            } else {
+                                format!("请参考并遵循{} `{}`（{}）。", kind_label, item.name, item.path)
+                            };
+                            let desc = item
+                                .description
+                                .as_deref()
+                                .filter(|d| !d.trim().is_empty())
+                                .unwrap_or(&item.excerpt)
+                                .to_owned();
+                            h_flex()
+                                .id(("skills-rules-item", i))
+                                .w_full()
+                                .min_w_0()
+                                .flex_wrap()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .px_2p5()
+                                .py_1p5()
+                                .rounded_lg()
+                                .bg(Color::Inset.get(cx))
+                                .border_1()
+                                .border_color(Color::Divider.get(cx))
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_0p5()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .flex_wrap()
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(Color::Text.get(cx))
+                                                        .child(item.name.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .px_1()
+                                                        .py(px(0.5))
+                                                        .rounded_sm()
+                                                        .bg(if is_project {
+                                                            Color::AccentSoft.get(cx)
+                                                        } else {
+                                                            Color::Card.get(cx)
+                                                        })
+                                                        .text_size(px(10.))
+                                                        .text_color(if is_project {
+                                                            Color::Accent.get(cx)
+                                                        } else {
+                                                            Color::Muted.get(cx)
+                                                        })
+                                                        .child(format!(
+                                                            "{} · {}",
+                                                            tr(kind_label),
+                                                            if is_project { tr("项目级") } else { tr("全局") }
+                                                        )),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(10.5))
+                                                        .text_color(Color::Muted.get(cx))
+                                                        .child(item.source.clone()),
+                                                ),
+                                        )
+                                        .when(!desc.is_empty(), |col| {
+                                            col.child(
+                                                div()
+                                                    .text_size(px(11.))
+                                                    .text_color(Color::Secondary.get(cx))
+                                                    .truncate()
+                                                    .child(desc),
+                                            )
+                                        }),
+                                )
+                                .child(
+                                    h_flex()
+                                        .flex_shrink_0()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(
+                                            Button::new(("skill-cite", i))
+                                                .custom(crate::palette::subtle_icon_variant(cx))
+                                                .compact()
+                                                .xsmall()
+                                                .h(px(22.))
+                                                .px_2()
+                                                .rounded_sm()
+                                                .label(tr("引用到对话"))
+                                                .accessibility_label(tr("引用到对话"))
+                                                .on_click(cx.listener(move |this, _, window, cx| {
+                                                    this.insert_reference_to_composer(
+                                                        cite_snippet.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new(("skill-reveal", i))
+                                                .custom(crate::palette::subtle_icon_variant(cx))
+                                                .compact()
+                                                .xsmall()
+                                                .h(px(22.))
+                                                .px_2()
+                                                .rounded_sm()
+                                                .label(tr("打开文件"))
+                                                .tooltip(reveal_path.clone())
+                                                .accessibility_label(tr("打开文件"))
+                                                .on_click(move |_, _, cx| {
+                                                    cx.reveal_path(std::path::Path::new(&reveal_path));
+                                                }),
+                                        ),
+                                )
+                        })),
+                )
+            })
+    }
+
+    fn render_local_usage_summary_card(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let fmt_tok = |n: u64| -> String {
+            if n >= 1_000_000 {
+                format!("{:.2}M", n as f64 / 1_000_000.0)
+            } else if n >= 1_000 {
+                format!("{:.1}K", n as f64 / 1_000.0)
+            } else {
+                n.to_string()
+            }
+        };
+        v_flex()
+            .w_full()
+            .gap_3()
+            .p_4()
+            .rounded_xl()
+            .bg(Color::Card.get(cx))
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .shadow(crate::palette::card_shadow(cx))
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(Color::Text.get(cx))
+                            .child(tr("多后端本地活跃与 Token 统计")),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .child(tr("纯本地只读汇总全部项目的跨后端会话分布与已落盘 Token 统计，不发起任何模型或网络请求。")),
+                    ),
+            )
+            .when_some(self.local_usage_summary.as_ref(), |view, summary| {
+                let metrics = [
+                    (tr("总会话数"), summary.total_sessions.to_string()),
+                    (tr("近 7 天活跃"), summary.active_last7_days.to_string()),
+                    (tr("近 30 天活跃"), summary.active_last30_days.to_string()),
+                    (tr("Worktree 会话"), summary.worktree_sessions.to_string()),
+                    (tr("已归档"), summary.archived_sessions.to_string()),
+                    (
+                        tr("采样 Token（入/出/缓存）"),
+                        format!(
+                            "{} / {} / {}",
+                            fmt_tok(summary.total_input_tokens),
+                            fmt_tok(summary.total_output_tokens),
+                            fmt_tok(summary.total_cache_read_tokens),
+                        ),
+                    ),
+                ];
+                view.child(
+                    h_flex()
+                        .w_full()
+                        .flex_wrap()
+                        .gap_2()
+                        .children(metrics.into_iter().enumerate().map(|(i, (label, val))| {
+                            v_flex()
+                                .id(("usage-metric", i))
+                                .px_2p5()
+                                .py_1p5()
+                                .rounded_lg()
+                                .bg(Color::Inset.get(cx))
+                                .border_1()
+                                .border_color(Color::Divider.get(cx))
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .text_size(px(10.5))
+                                        .text_color(Color::Muted.get(cx))
+                                        .child(label.to_owned()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(Color::Text.get(cx))
+                                        .child(val),
+                                )
+                        })),
+                )
+                .child(
+                    v_flex()
+                        .w_full()
+                        .gap_1()
+                        .children(summary.backends.iter().enumerate().map(|(i, b)| {
+                            let name = match b.backend.as_str() {
+                                "pi" => tr("内置 Pi"),
+                                "codex" => "Codex",
+                                "claude" => "Claude Code",
+                                "pi-rpc" => tr("外部 Pi"),
+                                "acp" => "ACP",
+                                other => other,
+                            };
+                            let token_text = if b.input_tokens > 0 || b.output_tokens > 0 {
+                                format!(
+                                    " · Token {}↓/{}↑/{}⚡",
+                                    fmt_tok(b.input_tokens),
+                                    fmt_tok(b.output_tokens),
+                                    fmt_tok(b.cache_read_tokens)
+                                )
+                            } else {
+                                String::new()
+                            };
+                            h_flex()
+                                .id(("usage-backend-row", i))
+                                .w_full()
+                                .flex_wrap()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .px_2p5()
+                                .py_1()
+                                .rounded_md()
+                                .bg(Color::Inset.get(cx))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(Color::Text.get(cx))
+                                        .child(name.to_owned()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(Color::Secondary.get(cx))
+                                        .child(if english() {
+                                            format!(
+                                                "{} total · {} (7d) · {} worktree · {} archived{}",
+                                                b.total_sessions,
+                                                b.active_last7_days,
+                                                b.worktree_sessions,
+                                                b.archived_sessions,
+                                                token_text
+                                            )
+                                        } else {
+                                            format!(
+                                                "共 {} 个 · 近7天 {} · 工作树 {} · 归档 {}{}",
+                                                b.total_sessions,
+                                                b.active_last7_days,
+                                                b.worktree_sessions,
+                                                b.archived_sessions,
+                                                token_text
+                                            )
+                                        }),
+                                )
+                        })),
+                )
+                .when(summary.sampled_transcripts > 0, |col| {
+                    col.child(
+                        div()
+                            .text_size(px(10.5))
+                            .text_color(Color::Muted.get(cx))
+                            .child(if english() {
+                                format!("Token totals sampled from {} recent local transcripts.", summary.sampled_transcripts)
+                            } else {
+                                format!("Token 数值采样自最近 {} 份本地持久化会话记录。", summary.sampled_transcripts)
+                            }),
+                    )
+                })
             })
     }
 }

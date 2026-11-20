@@ -5,9 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   checkoutGitBranch,
+  discardGitFile,
   dropGitStash,
   fetchGitRemote,
+  getGitCommitDiff,
   listGitBranches,
+  listGitCommits,
   listGitStashes,
   popGitStash,
   pullGitBranch,
@@ -111,7 +114,22 @@ try {
   assert.equal(pulled.ok, true);
   assert.equal(readLf(join(repoDir, 'README.md')), 'hello from peer\n');
 
-  console.log('GIT_BRANCHES_STASH_OK: branch list/create/switch, stash push/list/pop/drop, and fetch/pull --ff-only verified.');
+  // 7. Discard unstaged tracked file edit + reject unsafe traversal path
+  writeFileSync(join(repoDir, 'README.md'), 'accidental edit\n', 'utf8');
+  const discarded = await discardGitFile(repoDir, { path: 'README.md' });
+  assert.equal(discarded.ok, true);
+  assert.equal(readLf(join(repoDir, 'README.md')), 'hello from peer\n');
+  await assert.rejects(() => discardGitFile(repoDir, { path: '../escape.txt' }));
+
+  // 8. Commit log & single-commit diff preview
+  const { commits } = await listGitCommits(repoDir, { limit: 10 });
+  assert.ok(commits.length >= 2);
+  assert.equal(commits[0]!.subject, 'peer update');
+  const commitDiff = await getGitCommitDiff(repoDir, { oid: commits[0]!.oid });
+  assert.ok(commitDiff.patch.includes('hello from peer'));
+  await assert.rejects(() => getGitCommitDiff(repoDir, { oid: 'not-a-sha!' }));
+
+  console.log('GIT_BRANCHES_STASH_OK: branch list/create/switch, stash push/list/pop/drop, discardFile, commit log/diff, and fetch/pull --ff-only verified.');
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

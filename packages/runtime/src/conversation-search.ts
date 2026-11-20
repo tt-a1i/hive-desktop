@@ -236,16 +236,31 @@ function find(rows: readonly { id: string; text: string }[], first: string, rest
   return matches;
 }
 
+function stripHeavySearchFields(message: Record<string, unknown>): Record<string, unknown> {
+  const { rawBackendItem: _raw, ...rest } = message;
+  if (Array.isArray(rest.content)) {
+    rest.content = rest.content.map(block => {
+      if (block && typeof block === 'object' && (block as { type?: unknown }).type === 'image') {
+        return { type: 'image' };
+      }
+      return block;
+    });
+  }
+  return rest;
+}
+
 async function piRows(file: string, backend: 'pi' | 'pi-rpc', expectedId: string | undefined, signal?: AbortSignal): Promise<Row[]> {
   const entries = await readPiTranscript(file, expectedId, signal);
   const branch = externalPiBranch(entries, entries.at(-1)?.id ?? null);
   const sources = piUserInputSources(branch);
   const rows: Row[] = [];
-  for (const entry of branch) {
+  for (let i = 0; i < branch.length; i++) {
+    if (i > 0 && i % 1024 === 0) await setImmediate(undefined, { signal });
+    const entry = branch[i]!;
     const note = sources.notes.get(entry.id);
-    if (note) rows.push({ id: note.deliveryId, message: piUserInputNote(entry, note, backend) });
+    if (note) rows.push({ id: note.deliveryId, message: stripHeavySearchFields(piUserInputNote(entry, note, backend)) });
     const message = externalPiMessage(entry, sources.users.get(entry.id), backend);
-    if (message) rows.push({ id: entry.type === 'message' && entry.message.role === 'toolResult' && typeof entry.message.toolCallId === 'string' ? entry.message.toolCallId : entry.id, message });
+    if (message) rows.push({ id: entry.type === 'message' && entry.message.role === 'toolResult' && typeof entry.message.toolCallId === 'string' ? entry.message.toolCallId : entry.id, message: stripHeavySearchFields(message) });
   }
   return rows;
 }

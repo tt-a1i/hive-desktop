@@ -39,7 +39,7 @@ import { CodexTransport } from './agents/codex-transport.js';
 import { type ExternalPiSessionHandle } from './agents/external-pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
 import { ChatIndex, SessionIdentityError, type ChatRecord, type ChatBackend } from './chat-index.js';
-import { externalPiBranch, externalPiMessage, readPiTranscript, verifyPiTranscriptIdentity } from './agents/external-pi-history.js';
+import { externalPiBranch, externalPiMessage, externalPiTailBranch, readPiTranscript, readPiTranscriptTailWindow, verifyPiTranscriptIdentity } from './agents/external-pi-history.js';
 import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
 import { ClaudeProjection } from './agents/claude-projection.js';
 import { readClaudeMetadata } from './agents/claude-metadata.js';
@@ -64,14 +64,18 @@ import { createTeamTool, createTeamCommand } from './team-tool.js';
 import { readToolOutputByteWindow, sliceHistoryWindow, type HistoryPageMeta, type ToolOutputByteWindow } from './history-cursor.js';
 import {
   checkoutGitBranch,
+  discardGitFile,
   dropGitStash,
   fetchGitRemote,
+  getGitCommitDiff,
   listGitBranches,
+  listGitCommits,
   listGitStashes,
   popGitStash,
   pullGitBranch,
   pushGitStash,
 } from './git-branches-stash.js';
+import { collectLocalUsageSummary } from './usage-summary.js';
 
 export interface MemberDesktopActivity {
   sessionId?: string;
@@ -740,6 +744,46 @@ export class Chats implements StructuredSessionPort {
       throw error;
     }
   }
+  async gitDiscardFile(workspaceId: string, path: string, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const result = await discardGitFile(directory, { path });
+      this.assertWorkspaceAvailable(workspaceId);
+      return result;
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+      throw error;
+    }
+  }
+  async gitLog(workspaceId: string, limit?: number, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const { commits } = await listGitCommits(directory, { ...(limit !== undefined ? { limit } : {}) });
+      this.assertWorkspaceAvailable(workspaceId);
+      return { ok: true as const, commits };
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+      throw error;
+    }
+  }
+  async gitCommitDiff(workspaceId: string, oid: string, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const diff = await getGitCommitDiff(directory, { oid });
+      this.assertWorkspaceAvailable(workspaceId);
+      return { ok: true as const, diff };
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+      throw error;
+    }
+  }
+  async localUsageSummary(workspaceId?: string) {
+    const all = workspaceId ? this.index.list(workspaceId) : this.index.all();
+    return collectLocalUsageSummary(all);
+  }
   async gitDiff(workspaceId: string, path: string, comparison: unknown = 'unstaged', sessionId?: unknown) {
     this.assertWorkspaceAvailable(workspaceId);
     const directory = await this.executionDirectory(workspaceId, sessionId);
@@ -1396,11 +1440,12 @@ export class Chats implements StructuredSessionPort {
     return readClaudeSessionMessages(record.nativeclaudeSessionId, directory, nativeProfileLaunch(profile).env, this.closeAbort.signal);
   }
   /** Project saved messages without opening an Agent or touching its delivery queue. */
-  private async readSavedHistory(record: ChatRecord, workspace: WorkspaceSummary, imageMessageId?: string) {
+  private async readSavedHistory(record: ChatRecord, workspace: WorkspaceSummary, imageMessageId?: string, tailLimit?: number) {
     let history: unknown[] = [], historyMessageIds: string[] = [];
     const piUserImageMatches: number[] = [];
     let historyWarning: string | undefined;
     let acpTranscript: AcpHistory | undefined;
+    let hasEarlierOnDisk = false;
     const hasDurableSource = record.backend === 'pi' || record.backend === 'pi-rpc' || record.backend === 'acp' ? !!record.sessionFile
       : record.backend === 'codex' ? !!record.codexThreadId : !!record.nativeclaudeSessionId;
     if (!hasDurableSource) historyWarning = 'No durable native history source is recorded for this older conversation; history completeness cannot be verified';
@@ -1419,18 +1464,57 @@ export class Chats implements StructuredSessionPort {
       } else if (record.backend === 'pi' || record.backend === 'pi-rpc') {
         if (record.sessionFile) {
           const nativeId = record.backend === 'pi' ? record.piSessionId : record.externalPiSessionId;
-          const entries = await readPiTranscript(record.sessionFile, nativeId, this.closeAbort.signal);
-          const branch = externalPiBranch(entries, entries.at(-1)?.id ?? null), sources = piUserInputSources(branch);
-          for (const entry of branch) {
-            const note = sources.notes.get(entry.id);
-            if (note) { history.push(piUserInputNote(entry, note, record.backend)); historyMessageIds.push(note.deliveryId); }
-            const input = sources.users.get(entry.id);
-            const message = externalPiMessage(entry, input, record.backend);
-            if (message) {
-              // Built-in Pi uses a delivery ID for explicit user input while live.
-              if (record.backend === 'pi' && input && input.deliveryId === imageMessageId) piUserImageMatches.push(history.length);
-              history.push(message);
-              historyMessageIds.push(message.role === 'toolResult' && typeof message.toolCallId === 'string' ? message.toolCallId : entry.id);
+          let usedTailFast = false;
+          if (tailLimit && tailLimit > 0 && !imageMessageId) {
+            try {
+              const info = statSync(record.sessionFile);
+              if (info.size >= 262_144) {
+                const tail = await readPiTranscriptTailWindow(record.sessionFile, {
+                  maxEntries: tailLimit * 3 + 32,
+                  ...(nativeId ? { expectedId: nativeId } : {}),
+                  signal: this.closeAbort.signal,
+                });
+                const resolved = externalPiTailBranch(tail.entries);
+                if (resolved) {
+                  const sources = piUserInputSources(resolved.branch);
+                  const tailHistory: unknown[] = [];
+                  const tailIds: string[] = [];
+                  for (const entry of resolved.branch) {
+                    const note = sources.notes.get(entry.id);
+                    if (note) { tailHistory.push(piUserInputNote(entry, note, record.backend)); tailIds.push(note.deliveryId); }
+                    const input = sources.users.get(entry.id);
+                    const message = externalPiMessage(entry, input, record.backend);
+                    if (message) {
+                      tailHistory.push(message);
+                      tailIds.push(message.role === 'toolResult' && typeof message.toolCallId === 'string' ? message.toolCallId : entry.id);
+                    }
+                  }
+                  if (resolved.reachedRoot || tailHistory.length >= tailLimit) {
+                    history = tailHistory;
+                    historyMessageIds = tailIds;
+                    hasEarlierOnDisk = !resolved.reachedRoot;
+                    usedTailFast = true;
+                  }
+                }
+              }
+            } catch {
+              // Fall back cleanly to authoritative full transcript read on any anomaly.
+            }
+          }
+          if (!usedTailFast) {
+            const entries = await readPiTranscript(record.sessionFile, nativeId, this.closeAbort.signal);
+            const branch = externalPiBranch(entries, entries.at(-1)?.id ?? null), sources = piUserInputSources(branch);
+            for (const entry of branch) {
+              const note = sources.notes.get(entry.id);
+              if (note) { history.push(piUserInputNote(entry, note, record.backend)); historyMessageIds.push(note.deliveryId); }
+              const input = sources.users.get(entry.id);
+              const message = externalPiMessage(entry, input, record.backend);
+              if (message) {
+                // Built-in Pi uses a delivery ID for explicit user input while live.
+                if (record.backend === 'pi' && input && input.deliveryId === imageMessageId) piUserImageMatches.push(history.length);
+                history.push(message);
+                historyMessageIds.push(message.role === 'toolResult' && typeof message.toolCallId === 'string' ? message.toolCallId : entry.id);
+              }
             }
           }
         } else if (record.piSessionId || record.externalPiSessionId) throw new Error('Saved Pi transcript path is unavailable');
@@ -1454,19 +1538,19 @@ export class Chats implements StructuredSessionPort {
         historyWarning = 'Claude SDK history completeness cannot be verified; no native process was opened';
       }
     } catch (error) { historyWarning = `Saved history could not be fully read: ${error instanceof Error ? error.message : String(error)}`; }
-    return {history, historyMessageIds, historyWarning, acpTranscript, piUserImageMatches};
+    return {history, historyMessageIds, historyWarning, acpTranscript, piUserImageMatches, hasEarlierOnDisk};
   }
 
   /** Disk projection only: neither an SDK agent session nor a vendor process is opened. */
   private async readOnlySnapshot(record: ChatRecord, identityError: SessionSnapshotError,
-      {allowOfflineQueueEdits = false, includeHistory = true} = {}) {
+      {allowOfflineQueueEdits = false, includeHistory = true, tailLimit}: { allowOfflineQueueEdits?: boolean; includeHistory?: boolean; tailLimit?: number } = {}) {
     const codexVersion = record.backend==='codex' && isDeepStrictEqual(this.index.peek(record.id),record)
       ? this.index.snapshotVersion(record.id) : undefined;
     const acpVersion = allowOfflineQueueEdits && this.canEditOfflineAcp(record) ? this.index.snapshotVersion(record.id) : undefined;
     const workspace = await this.workspace(record.workspaceId);
     const executionPath = record.execution?.path ?? workspace.path;
-    const saved = includeHistory ? await this.readSavedHistory(record, workspace) : undefined;
-    const {history = [], historyMessageIds = [], historyWarning} = saved ?? {};
+    const saved = includeHistory ? await this.readSavedHistory(record, workspace, undefined, tailLimit) : undefined;
+    const {history = [], historyMessageIds = [], historyWarning, hasEarlierOnDisk = false} = saved ?? {};
     // A state-only handoff refresh needs native receipt data only while it
     // has a queue to display. Do not read the transcript for idle refreshes.
     const acpTranscript = saved?.acpTranscript ?? (!includeHistory && acpVersion !== undefined
@@ -1502,7 +1586,7 @@ export class Chats implements StructuredSessionPort {
     const queue = codexOwner?.queue??acpQueue ?? (allowOfflineQueueEdits && this.offlineHandoffEditable(record) ? this.offlineHandoffQueue(record)
       : new DeliveryQueue({directory: this.queueDir, sessionId: record.id, startPaused: true,
       holdLegacyCodexSteers:!!ownsColdCodex,completedIds: () => completed, userInputMutationReason: () => 'read-only', onError: () => {}, execute: async () => { throw identityError; }}));
-    return {...record, ...(record.backend==='acp'&&{capabilities:{...acpCapabilities(undefined,!!record.sessionFile),...(record.capabilities&&{lastObserved:record.capabilities})}}), executionPath, history:restoredHistory.map((message,index)=>handoffMessage(record.backend,message,historyMessageIds[index])), historyMessageIds,
+    return {...record, ...(record.backend==='acp'&&{capabilities:{...acpCapabilities(undefined,!!record.sessionFile),...(record.capabilities&&{lastObserved:record.capabilities})}}), executionPath, history:restoredHistory.map((message,index)=>handoffMessage(record.backend,message,historyMessageIds[index])), historyMessageIds, ...(hasEarlierOnDisk ? { hasEarlierOnDisk: true } : {}),
       readOnly: true, identityError: {code: identityError.code, message: identityError.message},
       ...(historyWarning && {historyIncomplete: true, historyWarning}),
       interactions: [], models: [], model: record.model, busy: false, pending: queue.pendingCount,
@@ -1763,10 +1847,10 @@ export class Chats implements StructuredSessionPort {
     }
   }
 
-  openDesktopView(id: string, revision: number, includeLiveHistory = true) {
+  openDesktopView(id: string, revision: number, includeLiveHistory = true, tailLimit?: number) {
     this.index.get(id);
     this.setDesktopView(revision, id);
-    return this.readDesktopView(id, revision, () => this.open(id, includeLiveHistory, true));
+    return this.readDesktopView(id, revision, () => this.open(id, includeLiveHistory, true, tailLimit));
   }
   /** Recover only from this target's private durable receipt; never opens a vendor session. */
   private async reconcileHandoffOffline(record:ChatRecord){
@@ -1954,7 +2038,7 @@ export class Chats implements StructuredSessionPort {
     const record = await this.createRecord(workspaceId, backend, options);
     return this.open(record.id);
   }
-  async open(id: string, includeLiveHistory = true, browse = false) {
+  async open(id: string, includeLiveHistory = true, browse = false, tailLimit?: number) {
     try {
     const cleanup=this.live.get(id)?.cleanup;
     if(cleanup)await cleanup;
@@ -1967,7 +2051,7 @@ export class Chats implements StructuredSessionPort {
       await this.assertHistoryReady(record);await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
       await this.reconcileHandoffOffline(record);
       const handoffSnapshot=await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId);
-      const snapshot=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_HANDOFF','Handoff opened without starting an Agent'),{allowOfflineQueueEdits:true});
+      const snapshot=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_HANDOFF','Handoff opened without starting an Agent'),{allowOfflineQueueEdits:true,...(tailLimit!==undefined&&{tailLimit})});
       return {...snapshot,readOnly:false,passive:true,handoffSnapshot,handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'},
         canCheckSavedCodexModes: record.backend === 'codex' && !!record.nativeMode};
     }
@@ -1982,7 +2066,7 @@ export class Chats implements StructuredSessionPort {
     if(record.lineage&&!this.live.has(id)){
       await this.assertHistoryReady(record);await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
       await this.initialization?.created(record.workspaceId,id,{deferLaunch:true});
-      const {readOnly,identityError,...snapshot}=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_FORK','Fork opened without activating an Agent'));
+      const {readOnly,identityError,...snapshot}=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_FORK','Fork opened without activating an Agent'),{...(tailLimit!==undefined&&{tailLimit})});
       return {...snapshot,readOnly:false,initialization:await this.initialization?.get(record.workspaceId,id),
         canCheckSavedCodexModes: record.backend === 'codex' && !!record.nativeMode};
     }
@@ -1993,7 +2077,7 @@ export class Chats implements StructuredSessionPort {
       const live = this.live.get(id);
       if (live) await this.stopLive(id, live);
       const current=this.index.get(id);
-      return {...await this.readOnlySnapshot(current, error),
+      return {...await this.readOnlySnapshot(current, error, {...(tailLimit!==undefined&&{tailLimit})}),
         ...(current.handoff&&{handoffSnapshot:await this.handoffs!.getSnapshot(current.workspaceId,current.handoff.snapshotId),handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}}),
         ...(error instanceof WorktreeInitializationError && {initialization: await this.initialization?.get(this.index.get(id).workspaceId, id)})};
     }

@@ -354,6 +354,99 @@ pub struct ToolOutputSliceResponse {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitCommitSummary {
+    pub oid: String,
+    #[serde(default)]
+    pub short_oid: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub relative_time: String,
+    #[serde(default)]
+    pub subject: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitDiffResult {
+    #[serde(default)]
+    pub patch: String,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillOrRuleEntry {
+    pub name: String,
+    #[serde(default)]
+    pub scope: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub excerpt: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsAndRulesReport {
+    #[serde(default)]
+    pub rules: Vec<SkillOrRuleEntry>,
+    #[serde(default)]
+    pub skills: Vec<SkillOrRuleEntry>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendUsageBreakdown {
+    pub backend: String,
+    #[serde(default)]
+    pub total_sessions: usize,
+    #[serde(default)]
+    pub active_last7_days: usize,
+    #[serde(default)]
+    pub worktree_sessions: usize,
+    #[serde(default)]
+    pub archived_sessions: usize,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalUsageSummary {
+    #[serde(default)]
+    pub total_sessions: usize,
+    #[serde(default)]
+    pub active_last7_days: usize,
+    #[serde(default)]
+    pub active_last30_days: usize,
+    #[serde(default)]
+    pub worktree_sessions: usize,
+    #[serde(default)]
+    pub archived_sessions: usize,
+    #[serde(default)]
+    pub sampled_transcripts: usize,
+    #[serde(default)]
+    pub total_input_tokens: u64,
+    #[serde(default)]
+    pub total_output_tokens: u64,
+    #[serde(default)]
+    pub total_cache_read_tokens: u64,
+    #[serde(default)]
+    pub backends: Vec<BackendUsageBreakdown>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadinessReport {
     #[serde(default)]
     pub backends: Vec<BackendReadiness>,

@@ -35,6 +35,24 @@ pub enum SettingsSection {
     About,
 }
 
+#[derive(Clone, Debug)]
+pub struct SplitPeekMessage {
+    pub role: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct SplitPeekState {
+    pub session_id: String,
+    pub title: String,
+    pub backend_label: String,
+    pub branch: Option<String>,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub messages: Vec<SplitPeekMessage>,
+    pub scroll: ScrollHandle,
+}
+
 pub struct ProjectMcpForm {
     pub editing_name: Option<String>,
     pub transport: &'static str,
@@ -297,6 +315,9 @@ pub struct HiveApp {
     pub readiness: Option<crate::protocol::ReadinessReport>,
     pub readiness_loading: bool,
     pub readiness_error: Option<String>,
+    pub skills_rules: Option<crate::protocol::SkillsAndRulesReport>,
+    pub local_usage_summary: Option<crate::protocol::LocalUsageSummary>,
+    pub split_peek: Option<SplitPeekState>,
     pub mcp_probing: HashSet<String>,
     pub mcp_probe_results: HashMap<String, crate::protocol::McpProbeResult>,
     pub mcp_action_error: Option<String>,
@@ -824,6 +845,9 @@ impl HiveApp {
             readiness: None,
             readiness_loading: false,
             readiness_error: None,
+            skills_rules: None,
+            local_usage_summary: None,
+            split_peek: None,
             mcp_probing: HashSet::new(),
             mcp_probe_results: HashMap::new(),
             mcp_action_error: None,

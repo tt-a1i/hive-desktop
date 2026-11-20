@@ -57,6 +57,29 @@ export interface GitStashActionResult {
   summary: string;
 }
 
+export interface GitCommitSummary {
+  oid: string;
+  shortOid: string;
+  author: string;
+  relativeTime: string;
+  subject: string;
+}
+
+export interface GitCommitDiffResult {
+  oid: string;
+  patch: string;
+  truncated: boolean;
+}
+
+export interface GitDiscardResult {
+  ok: true;
+  path: string;
+  summary: string;
+}
+
+const VALID_COMMIT_OID = /^[0-9a-fA-F]{7,40}$/;
+const MAX_COMMIT_DIFF_CHARS = 256 * 1024;
+
 function gitEnv(allowNetwork: boolean): NodeJS.ProcessEnv {
   const env = { ...process.env };
   const config = {
@@ -429,4 +452,88 @@ export async function dropGitStash(
     operation: 'drop',
     summary,
   };
+}
+
+function assertSafeRelativePath(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/').trim();
+  if (
+    !normalized ||
+    normalized.startsWith('/') ||
+    normalized.startsWith('-') ||
+    /^[A-Za-z]:/.test(normalized) ||
+    normalized.includes('\0') ||
+    normalized.split('/').some(part => !part || part === '.' || part === '..' || part.toLowerCase() === '.git')
+  ) {
+    throw new GitWorkspaceError('INVALID_ARGUMENT', '文件路径不合法或超出项目范围');
+  }
+  return normalized;
+}
+
+export async function discardGitFile(
+  projectRoot: string,
+  request: { path: string },
+  options: GitReadOptions = {},
+): Promise<GitDiscardResult> {
+  const relPath = assertSafeRelativePath(request.path);
+  const workspace = await getGitWorkspaceVersion(projectRoot, options);
+  const repoRelPath = workspace.projectPrefix + relPath;
+  await runGit(workspace, ['checkout', '--', repoRelPath], options);
+  return {
+    ok: true,
+    path: relPath,
+    summary: `已放弃 ${relPath} 的未暂存修改`,
+  };
+}
+
+export async function listGitCommits(
+  projectRoot: string,
+  request: { limit?: number } = {},
+  options: GitReadOptions = {},
+): Promise<{ commits: GitCommitSummary[] }> {
+  const limit = Math.min(Math.max(1, Math.floor(request.limit ?? 30)), 100);
+  const workspace = await getGitWorkspaceVersion(projectRoot, options);
+  if (!workspace.headOid) {
+    return { commits: [] };
+  }
+  const out = await runGit(
+    workspace,
+    ['log', `-n`, String(limit), '--format=%H%x00%h%x00%an%x00%cr%x00%s'],
+    options,
+  );
+  const commits: GitCommitSummary[] = [];
+  for (const line of out.stdout.split('\n')) {
+    if (!line.trim()) continue;
+    const [oid, shortOid, author, relativeTime, subject] = line.split('\0');
+    if (!oid) continue;
+    commits.push({
+      oid,
+      shortOid: shortOid ?? oid.slice(0, 7),
+      author: author ?? '',
+      relativeTime: relativeTime ?? '',
+      subject: subject ?? '',
+    });
+  }
+  return { commits };
+}
+
+export async function getGitCommitDiff(
+  projectRoot: string,
+  request: { oid: string },
+  options: GitReadOptions = {},
+): Promise<GitCommitDiffResult> {
+  const oid = request.oid.trim();
+  if (!VALID_COMMIT_OID.test(oid)) {
+    throw new GitWorkspaceError('INVALID_ARGUMENT', '无效的提交哈希');
+  }
+  const workspace = await getGitWorkspaceVersion(projectRoot, options);
+  const out = await runGit(
+    workspace,
+    ['show', '--stat', '--patch', '--unified=3', '--no-ext-diff', '--no-textconv', oid],
+    options,
+  );
+  const truncated = out.stdout.length > MAX_COMMIT_DIFF_CHARS;
+  const patch = truncated
+    ? `${out.stdout.slice(0, MAX_COMMIT_DIFF_CHARS)}\n… [提交补丁已截断至 256 KB 以保持流畅]`
+    : out.stdout;
+  return { oid, patch, truncated };
 }

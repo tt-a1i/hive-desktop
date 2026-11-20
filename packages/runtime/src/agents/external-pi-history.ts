@@ -140,6 +140,33 @@ export async function readPiTranscriptTailWindow(
   };
 }
 
+/**
+ * Walks backwards from the leaf entry strictly within a tail window.
+ * Returns `complete: true` when the parent chain reaches `null` (file start),
+ * or `complete: false` when an earlier parent lies before the loaded byte window.
+ * Returns `undefined` if a cycle is detected so callers fall back to full read.
+ */
+export function externalPiTailBranch(
+  entries: readonly SessionEntry[],
+): { branch: SessionEntry[]; reachedRoot: boolean } | undefined {
+  if (entries.length === 0) return { branch: [], reachedRoot: true };
+  const byId = new Map(entries.map(entry => [entry.id, entry]));
+  const branch: SessionEntry[] = [];
+  const visited = new Set<string>();
+  let id: string | null = entries[entries.length - 1]!.id;
+  while (id !== null) {
+    if (visited.has(id)) return undefined;
+    visited.add(id);
+    const entry = byId.get(id);
+    if (!entry) {
+      return { branch: branch.reverse(), reachedRoot: false };
+    }
+    branch.push(entry);
+    id = entry.parentId;
+  }
+  return { branch: branch.reverse(), reachedRoot: true };
+}
+
 export function externalPiBranch(entries: readonly SessionEntry[], leafId: string | null): SessionEntry[] {
   const byId = new Map(entries.map(entry => [entry.id, entry]));
   const branch: SessionEntry[] = [];

@@ -1131,6 +1131,13 @@ impl Render for HiveApp {
         } else {
             None
         };
+        let split_peek_panel = if git_drawer.is_none()
+            && window.viewport_size().width >= px(960.)
+        {
+            self.render_split_peek_panel(cx)
+        } else {
+            None
+        };
         let terminal_view = cx.entity().downgrade();
         let git_view = cx.entity().downgrade();
         let has_session_failure =
@@ -2279,6 +2286,9 @@ impl Render for HiveApp {
                                                         ),
                                                     ),
                                             )
+                                        })
+                                        .when_some(split_peek_panel, |row, peek| {
+                                            row.child(peek)
                                         }),
                                 )
                                 .into_any_element()

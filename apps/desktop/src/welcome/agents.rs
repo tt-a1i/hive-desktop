@@ -40,16 +40,32 @@ impl HiveApp {
         self.readiness_error = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let params = match workspace_id {
+            let params = match workspace_id.clone() {
                 Some(ws) => serde_json::json!({ "workspaceId": ws }),
                 None => serde_json::json!({}),
             };
-            let result = runtime.request("desktop.readiness", params).await;
+            let result = runtime.request("desktop.readiness", params.clone()).await;
+            let skills_res = runtime
+                .request("desktop.skillsAndRules", params)
+                .await
+                .ok()
+                .and_then(|v| serde_json::from_value::<crate::protocol::SkillsAndRulesReport>(v).ok());
+            let usage_res = runtime
+                .request("desktop.usageSummary", serde_json::json!({}))
+                .await
+                .ok()
+                .and_then(|v| serde_json::from_value::<crate::protocol::LocalUsageSummary>(v).ok());
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != generation {
                     return;
                 }
                 this.readiness_loading = false;
+                if let Some(sr) = skills_res {
+                    this.skills_rules = Some(sr);
+                }
+                if let Some(us) = usage_res {
+                    this.local_usage_summary = Some(us);
+                }
                 match result.and_then(|v| {
                     serde_json::from_value::<crate::protocol::ReadinessReport>(v)
                         .map_err(|e| e.to_string())

@@ -477,8 +477,18 @@ pub(crate) struct GitWorkspace {
     reload_commit_patch_on_open: bool,
     remotes: Option<Entity<remotes::RemotePanel>>,
     show_remotes: bool,
+    show_history: bool,
     branches: Option<crate::protocol::GitBranchesSnapshot>,
     stashes: Vec<crate::protocol::GitStashEntry>,
+    commits: Vec<crate::protocol::GitCommitSummary>,
+    commits_loading: bool,
+    selected_commit_oid: Option<String>,
+    selected_commit_diff: Option<crate::protocol::GitCommitDiffResult>,
+    selected_commit_loading: bool,
+    discard_confirm_path: Option<String>,
+    review_open: bool,
+    review_lines_input: Entity<gpui_kit::component::input::InputState>,
+    review_comment_input: Entity<gpui_kit::component::input::InputState>,
     branch_panel_open: bool,
     stash_panel_open: bool,
     new_branch_input: Entity<gpui_kit::component::input::InputState>,
@@ -605,8 +615,24 @@ impl HiveApp {
                 reload_commit_patch_on_open: false,
                 remotes,
                 show_remotes: false,
+                show_history: false,
                 branches: None,
                 stashes: vec![],
+                commits: vec![],
+                commits_loading: false,
+                selected_commit_oid: None,
+                selected_commit_diff: None,
+                selected_commit_loading: false,
+                discard_confirm_path: None,
+                review_open: false,
+                review_lines_input: cx.new(|cx| {
+                    gpui_kit::component::input::InputState::new(window, cx)
+                        .placeholder(tr("可选行号范围，如 L42-L58"))
+                }),
+                review_comment_input: cx.new(|cx| {
+                    gpui_kit::component::input::InputState::new(window, cx)
+                        .placeholder(tr("输入评审意见，一键发给当前 Agent 修改…"))
+                }),
                 branch_panel_open: false,
                 stash_panel_open: false,
                 new_branch_input: cx.new(|cx| {
@@ -1874,6 +1900,429 @@ impl GitWorkspace {
             })
             .into_any_element()
     }
+    fn load_commit_log(&mut self, cx: &mut Context<Self>) {
+        if self.preview_mock || !self.current(cx) {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        self.commits_loading = true;
+        cx.notify();
+        let workspace = self.workspace.clone();
+        let session = self.session.clone();
+        cx.spawn(async move |this, cx| {
+            let res = runtime
+                .request(
+                    "git.log",
+                    git_params(json!({ "workspaceId": workspace, "limit": 30 }), &session),
+                )
+                .await
+                .ok()
+                .and_then(|v| decode::<Vec<crate::protocol::GitCommitSummary>>(v, "commits").ok());
+            let _ = this.update(cx, |this, cx| {
+                this.commits_loading = false;
+                if let Some(commits) = res {
+                    this.commits = commits;
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn load_commit_diff(&mut self, oid: String, cx: &mut Context<Self>) {
+        if self.preview_mock || !self.current(cx) {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        if self.selected_commit_oid.as_deref() == Some(oid.as_str()) && self.selected_commit_diff.is_some() {
+            self.selected_commit_oid = None;
+            self.selected_commit_diff = None;
+            cx.notify();
+            return;
+        }
+        self.selected_commit_oid = Some(oid.clone());
+        self.selected_commit_diff = None;
+        self.selected_commit_loading = true;
+        cx.notify();
+        let workspace = self.workspace.clone();
+        let session = self.session.clone();
+        cx.spawn(async move |this, cx| {
+            let res = runtime
+                .request(
+                    "git.commitDiff",
+                    git_params(json!({ "workspaceId": workspace, "oid": oid }), &session),
+                )
+                .await
+                .ok()
+                .and_then(|v| decode::<crate::protocol::GitCommitDiffResult>(v, "diff").ok());
+            let _ = this.update(cx, |this, cx| {
+                if this.selected_commit_oid.as_deref() != Some(oid.as_str()) {
+                    return;
+                }
+                this.selected_commit_loading = false;
+                this.selected_commit_diff = res;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn send_diff_review_to_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(change) = self.selected_change().cloned() else {
+            return;
+        };
+        let lines = self.review_lines_input.read(cx).value().trim().to_owned();
+        let comment = self.review_comment_input.read(cx).value().trim().to_owned();
+        if comment.is_empty() {
+            self.ops_notice = Some((true, tr("请先输入评审意见").to_owned()));
+            cx.notify();
+            return;
+        }
+        let loc = if lines.is_empty() {
+            change.path.clone()
+        } else {
+            format!("{} ({})", change.path, lines)
+        };
+        let excerpt: String = self
+            .diff
+            .as_ref()
+            .and_then(|d| d.patch.as_deref())
+            .map(|p| {
+                p.lines()
+                    .take(24)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+        let prompt = if excerpt.is_empty() {
+            format!("[Diff 评审] {loc}\n{comment}")
+        } else {
+            format!("[Diff 评审] {loc}\n{comment}\n\n```diff\n{excerpt}\n```")
+        };
+        self.review_lines_input.update(cx, |s, cx| s.set_value("", window, cx));
+        self.review_comment_input.update(cx, |s, cx| s.set_value("", window, cx));
+        self.review_open = false;
+        self.ops_notice = Some((false, tr("已将 Diff 评审意见插入对话输入框").to_owned()));
+        let app = self.app.clone();
+        let _ = app.update(cx, |this, cx| {
+            let existing = this.input.read(cx).value().to_string();
+            let next = if existing.trim().is_empty() {
+                prompt
+            } else {
+                format!("{existing}\n\n{prompt}")
+            };
+            let input = this.input.clone();
+            input.update(cx, |state, cx| state.set_value(next, window, cx));
+            let focus = this.input.read(cx).focus_handle(cx);
+            window.on_next_frame(move |window, cx| focus.focus(window, cx));
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    fn render_diff_review_and_discard_bar(&self, current: bool, cx: &Context<Self>) -> AnyElement {
+        if self.preview_mock || !current {
+            return div().into_any_element();
+        }
+        let Some(change) = self.selected_change().cloned() else {
+            return div().into_any_element();
+        };
+        let path_for_confirm = change.path.clone();
+        let path_for_discard = change.path.clone();
+        let ws_discard = self.workspace.clone();
+        let can_discard = change.kind != "untracked"
+            && !change.worktree_status.is_empty()
+            && change.worktree_status != "."
+            && change.worktree_status != " "
+            && !self.ops_busy;
+        let confirming = self.discard_confirm_path.as_deref() == Some(change.path.as_str());
+        let review_lines = self.review_lines_input.clone();
+        let review_comment = self.review_comment_input.clone();
+
+        v_flex()
+            .w_full()
+            .gap_1p5()
+            .child(
+                h_flex()
+                    .w_full()
+                    .flex_wrap()
+                    .items_center()
+                    .justify_between()
+                    .gap_1p5()
+                    .px_2p5()
+                    .py_1()
+                    .rounded_lg()
+                    .bg(Color::Inset.get(cx))
+                    .border_1()
+                    .border_color(Color::Divider.get(cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(Color::Secondary.get(cx))
+                            .truncate()
+                            .child(change.path.clone()),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_shrink_0()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                Button::new("git-diff-review-toggle")
+                                    .outline()
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(22.))
+                                    .px_2()
+                                    .rounded_sm()
+                                    .label(tr("评审批注 → Agent"))
+                                    .accessibility_label(tr("评审批注 → Agent"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.review_open = !this.review_open;
+                                        cx.notify();
+                                    })),
+                            )
+                            .when(can_discard && !confirming, |row| {
+                                row.child(
+                                    Button::new("git-discard-file-trigger")
+                                        .custom(crate::palette::subtle_icon_variant(cx))
+                                        .compact()
+                                        .xsmall()
+                                        .h(px(22.))
+                                        .px_2()
+                                        .rounded_sm()
+                                        .label(tr("放弃改动"))
+                                        .accessibility_label(tr("放弃改动"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.discard_confirm_path = Some(path_for_confirm.clone());
+                                            cx.notify();
+                                        })),
+                                )
+                            })
+                            .when(confirming, |row| {
+                                row.child(
+                                    Button::new("git-discard-file-confirm")
+                                        .danger()
+                                        .compact()
+                                        .xsmall()
+                                        .h(px(22.))
+                                        .px_2()
+                                        .rounded_sm()
+                                        .label(tr("确认放弃"))
+                                        .accessibility_label(tr("确认放弃"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.discard_confirm_path = None;
+                                            this.run_git_branch_op(
+                                                "git.discardFile",
+                                                json!({ "workspaceId": ws_discard, "path": path_for_discard }),
+                                                "已放弃该文件未暂存修改",
+                                                false,
+                                                cx,
+                                            );
+                                        })),
+                                )
+                                .child(
+                                    Button::new("git-discard-file-cancel")
+                                        .custom(crate::palette::subtle_icon_variant(cx))
+                                        .compact()
+                                        .xsmall()
+                                        .h(px(22.))
+                                        .px_1p5()
+                                        .rounded_sm()
+                                        .label(tr("取消"))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.discard_confirm_path = None;
+                                            cx.notify();
+                                        })),
+                                )
+                            }),
+                    ),
+            )
+            .when(self.review_open, |col| {
+                col.child(
+                    v_flex()
+                        .w_full()
+                        .gap_1p5()
+                        .p_2p5()
+                        .rounded_lg()
+                        .bg(Color::Card.get(cx))
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
+                        .shadow(crate::palette::card_shadow(cx))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .gap_1p5()
+                                .child(
+                                    div()
+                                        .w(px(140.))
+                                        .child(gpui_kit::component::input::Input::new(&review_lines).small()),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(gpui_kit::component::input::Input::new(&review_comment).small()),
+                                )
+                                .child(
+                                    Button::new("git-diff-review-send")
+                                        .primary()
+                                        .compact()
+                                        .xsmall()
+                                        .h(px(26.))
+                                        .px_2p5()
+                                        .rounded_md()
+                                        .label(tr("插入到输入框"))
+                                        .accessibility_label(tr("插入到输入框"))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.send_diff_review_to_agent(window, cx);
+                                        })),
+                                ),
+                        ),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn render_commit_history_panel(&self, cx: &Context<Self>) -> AnyElement {
+        v_flex()
+            .w_full()
+            .gap_2()
+            .when(self.commits_loading, |col| {
+                col.child(
+                    div()
+                        .p_2()
+                        .rounded_lg()
+                        .bg(Color::Inset.get(cx))
+                        .text_xs()
+                        .text_color(Color::Secondary.get(cx))
+                        .child(tr("正在读取提交历史…")),
+                )
+            })
+            .when(!self.commits_loading && self.commits.is_empty(), |col| {
+                col.child(
+                    div()
+                        .p_3()
+                        .rounded_lg()
+                        .bg(Color::Inset.get(cx))
+                        .text_xs()
+                        .text_color(Color::Muted.get(cx))
+                        .child(tr("当前仓库尚无提交记录。")),
+                )
+            })
+            .children(self.commits.iter().enumerate().map(|(i, commit)| {
+                let oid = commit.oid.clone();
+                let is_selected = self.selected_commit_oid.as_deref() == Some(commit.oid.as_str());
+                v_flex()
+                    .id(("git-commit-row", i))
+                    .w_full()
+                    .gap_1p5()
+                    .p_2p5()
+                    .rounded_lg()
+                    .bg(if is_selected { Color::AccentSoft.get(cx) } else { Color::Card.get(cx) })
+                    .border_1()
+                    .border_color(Color::Divider.get(cx))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .gap_0p5()
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(
+                                                div()
+                                                    .px_1p5()
+                                                    .py(px(0.5))
+                                                    .rounded_sm()
+                                                    .bg(Color::Inset.get(cx))
+                                                    .font_family(Theme::global(cx).mono_font_family.clone())
+                                                    .text_size(px(10.5))
+                                                    .text_color(Color::Accent.get(cx))
+                                                    .child(commit.short_oid.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .text_xs()
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(Color::Text.get(cx))
+                                                    .truncate()
+                                                    .child(commit.subject.clone()),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.5))
+                                            .text_color(Color::Muted.get(cx))
+                                            .child(format!("{} · {}", commit.author, commit.relative_time)),
+                                    ),
+                            )
+                            .child(
+                                Button::new(("git-commit-inspect", i))
+                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(22.))
+                                    .px_2()
+                                    .rounded_sm()
+                                    .label(if is_selected { tr("收起") } else { tr("查看补丁") })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.load_commit_diff(oid.clone(), cx);
+                                    })),
+                            ),
+                    )
+                    .when(is_selected && self.selected_commit_loading, |card| {
+                        card.child(
+                            div()
+                                .text_xs()
+                                .text_color(Color::Muted.get(cx))
+                                .child(tr("正在读取提交差异…")),
+                        )
+                    })
+                    .when(is_selected, |card| {
+                        card.when_some(self.selected_commit_diff.as_ref(), |c, diff| {
+                            let preview: String = diff.patch.chars().take(12_000).collect();
+                            c.child(
+                                div()
+                                    .id(("git-commit-diff-scroll", i))
+                                    .w_full()
+                                    .max_h(px(260.))
+                                    .overflow_y_scroll()
+                                    .p_2()
+                                    .rounded_md()
+                                    .bg(Color::Inset.get(cx))
+                                    .font_family(Theme::global(cx).mono_font_family.clone())
+                                    .text_size(px(11.))
+                                    .line_height(px(16.))
+                                    .text_color(Color::Secondary.get(cx))
+                                    .child(if diff.truncated {
+                                        format!("{preview}\n…")
+                                    } else {
+                                        preview
+                                    }),
+                            )
+                        })
+                    })
+            }))
+            .into_any_element()
+    }
+
 }
 impl Render for GitWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1983,7 +2432,7 @@ impl Render for GitWorkspace {
                             .border_color(Color::Divider.get(cx))
                             .child(
                                 Button::new("git-local-panel")
-                                    .custom(segment_variant(!self.show_remotes, cx))
+                                    .custom(segment_variant(!self.show_remotes && !self.show_history, cx))
                                     .compact()
                                     .xsmall()
                                     .h(px(22.))
@@ -1994,14 +2443,36 @@ impl Render for GitWorkspace {
                                     } else {
                                         tr("变更").to_owned()
                                     })
-                                    .selected(!self.show_remotes)
+                                    .selected(!self.show_remotes && !self.show_history)
                                     .disabled(busy)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         if this.busy(cx) {
                                             return;
                                         }
                                         this.show_remotes = false;
+                                        this.show_history = false;
                                         this.refresh(cx);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("git-history-panel")
+                                    .custom(segment_variant(self.show_history, cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(22.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .label(tr("提交历史"))
+                                    .selected(self.show_history)
+                                    .disabled(busy || self.preview_mock)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if this.busy(cx) {
+                                            return;
+                                        }
+                                        this.show_remotes = false;
+                                        this.show_history = true;
+                                        this.load_commit_log(cx);
                                         cx.notify();
                                     })),
                             )
@@ -2021,6 +2492,7 @@ impl Render for GitWorkspace {
                                             return;
                                         }
                                         this.show_remotes = true;
+                                        this.show_history = false;
                                         this.reload_diff_on_open = false;
                                         this.clear_file_diff(cx);
                                         this.hide_commit_patch();
@@ -2091,6 +2563,8 @@ impl Render for GitWorkspace {
             } else {
                 div().text_xs().text_color(Color::Muted.get(cx)).child(tr("预览模式下不连接远端仓库。")).into_any_element()
             }
+        } else if self.show_history {
+            self.render_commit_history_panel(cx)
         } else {
             let keys = cx.entity();
             let list_height = if self.in_drawer {
@@ -2109,6 +2583,7 @@ impl Render for GitWorkspace {
                 .min_w_0()
                 .gap_3()
                 .child(self.render_branch_stash_toolbar(current, cx))
+                .child(self.render_diff_review_and_discard_bar(current, cx))
                 .when(!current, |view| {
                     view.child(
                         div()

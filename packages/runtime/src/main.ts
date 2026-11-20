@@ -27,6 +27,7 @@ import { DesktopUpdates } from './desktop-updates.js';
 import { desktopHistoryMessage } from './desktop-history.js';
 import { boundOversizedToolOutput, sliceHistoryWindow } from './history-cursor.js';
 import { collectReadinessReport } from './readiness.js';
+import { collectSkillsAndRules } from './skills-rules.js';
 import {
   probeMcpServer,
   removeProjectMcpServer,
@@ -262,6 +263,21 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       }
       return collectReadinessReport({ settings, profiles, ...(workspacePath ? { workspacePath } : {}) });
     }
+    case 'desktop.skillsAndRules': {
+      let workspacePath: string | undefined;
+      if (typeof params.workspaceId === 'string' && params.workspaceId.trim()) {
+        try {
+          const workspaces = await runtime.requestHive('GET', '/api/workspaces') as Array<{ id: string; directory?: string; path?: string }>;
+          const ws = workspaces.find(w => w.id === params.workspaceId);
+          workspacePath = ws?.directory ?? ws?.path;
+        } catch {}
+      }
+      return collectSkillsAndRules({ ...(workspacePath ? { workspacePath } : {}) });
+    }
+    case 'desktop.usageSummary': {
+      const wsId = typeof params.workspaceId === 'string' && params.workspaceId.trim() ? params.workspaceId.trim() : undefined;
+      return chats.localUsageSummary(wsId);
+    }
     case 'mcp.probe': {
       exact(params, ['workspaceId', 'name', 'scope', 'configPath', 'timeoutMs']);
       const name = text(params, 'name');
@@ -445,6 +461,13 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     );
     case 'git.stashPop': return chats.gitStashPop(text(params, 'workspaceId'), text(params, 'ref'), params.sessionId);
     case 'git.stashDrop': return chats.gitStashDrop(text(params, 'workspaceId'), text(params, 'ref'), params.sessionId);
+    case 'git.discardFile': return chats.gitDiscardFile(text(params, 'workspaceId'), text(params, 'path'), params.sessionId);
+    case 'git.log': return chats.gitLog(
+      text(params, 'workspaceId'),
+      typeof params.limit === 'number' && Number.isFinite(params.limit) ? params.limit : undefined,
+      params.sessionId,
+    );
+    case 'git.commitDiff': return chats.gitCommitDiff(text(params, 'workspaceId'), text(params, 'oid'), params.sessionId);
     case 'git.diff': return chats.gitDiff(text(params, 'workspaceId'), text(params, 'path'), params.comparison, params.sessionId);
     case 'git.index.preview': return chats.gitIndexPreview(text(params, 'workspaceId'), params.operation, params.paths, params.sessionId);
     case 'git.index.apply': return chats.gitIndexApply(text(params, 'workspaceId'), params.operation, params.paths, params.expectedVersion, params.sessionId);
@@ -533,20 +556,36 @@ async function dispatch(requestId: number | string, method: string, params: Reco
         throw new TypeError('historyAroundMessageId must be a string');
       }
       const id = text(params, 'sessionId');
+      const tailLimit = params.historyLimit !== undefined && !params.historyAroundMessageId && params.includeLiveHistory !== false
+        ? params.historyLimit
+        : undefined;
       const snapshot = await (params.viewRevision === undefined
-        ? chats.open(id, params.includeLiveHistory)
-        : chats.openDesktopView(id, viewRevision(params.viewRevision), params.includeLiveHistory));
+        ? chats.open(id, params.includeLiveHistory, false, tailLimit)
+        : chats.openDesktopView(id, viewRevision(params.viewRevision), params.includeLiveHistory, tailLimit));
       const paged = params.historyLimit !== undefined && params.includeLiveHistory !== false
         ? (() => {
             const sliced = sliceHistoryWindow(snapshot.history, snapshot.historyMessageIds, {
               limit: params.historyLimit,
               ...(params.historyAroundMessageId ? { aroundMessageId: params.historyAroundMessageId } : {}),
             });
+            const diskHasMore = (snapshot as { hasEarlierOnDisk?: boolean }).hasEarlierOnDisk === true;
+            const hasOlder = sliced.historyPage.hasOlder || diskHasMore;
+            const nextBeforeMessageId = hasOlder
+              ? (sliced.historyPage.nextBeforeMessageId ?? sliced.historyMessageIds[0])
+              : undefined;
+            const nextBeforeIndex = hasOlder
+              ? Math.max(1, sliced.historyPage.nextBeforeIndex ?? sliced.historyPage.startIndex)
+              : undefined;
             return {
               ...snapshot,
               history: sliced.history.map(m => boundOversizedToolOutput(m)),
               historyMessageIds: sliced.historyMessageIds,
-              historyPage: sliced.historyPage,
+              historyPage: {
+                ...sliced.historyPage,
+                hasOlder,
+                ...(nextBeforeIndex !== undefined && { nextBeforeIndex }),
+                ...(nextBeforeMessageId && { nextBeforeMessageId }),
+              },
             };
           })()
         : snapshot;
