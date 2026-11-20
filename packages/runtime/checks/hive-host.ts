@@ -52,28 +52,41 @@ const truncated = {
 	attention: [olderQuestion, older, remote], workers: [{id: 'reviewer', name: 'Reviewer'}],
 };
 const oldDispatch = {id: older.dispatch_id, status: 'submitted' as const, workspaceId: 'workspace-a',
-	submittedAt: boundary - 10_000, toAgentId: 'reviewer'};
+	submittedAt: boundary - 10_000, toAgentId: 'reviewer', label: '  Review\t billing  \n hidden', text: 'Body'};
 const ledger = {listOpenDispatches(workspaceId: string) {
 	assert.equal(workspaceId, 'workspace-a');
-	return [oldDispatch, {...oldDispatch, id: 'cutoff', submittedAt: boundary},
+	return [oldDispatch, {...oldDispatch, id: 'cutoff', submittedAt: boundary, label: ' ', text: ' \n Audit migration\nPrivate body'},
 		{...oldDispatch, id: 'fresh', submittedAt: boundary + 1},
 		{...oldDispatch, id: 'reported', status: 'reported' as const},
 		{...oldDispatch, id: 'cancelled', status: 'cancelled' as const},
 		{...oldDispatch, id: 'queued', status: 'queued' as const},
 		{...oldDispatch, id: 'foreign', workspaceId: 'workspace-b'}];
-}};
-const waitingRow = (id: string, submitted: number) => ({
+}, getDispatch() {throw new Error('Supplemental rows already have their exact dispatch record');}};
+const waitingRow = (id: string, submitted: number, task_title: string) => ({
 	kind: 'dispatch_waiting_report', dispatch_id: id, severity: 'info', minutes_ago: 10,
-	submitted_at: submitted, worker_id: 'reviewer', worker_name: 'Reviewer',
+	submitted_at: submitted, worker_id: 'reviewer', worker_name: 'Reviewer', task_title,
 });
 assert.deepEqual(withInboxWaitingReports(truncated, 'workspace-a', ledger), {
 	...truncated,
-	attention: [olderQuestion, waitingRow(oldDispatch.id, boundary - 10_000), waitingRow('cutoff', boundary), remote],
+	attention: [olderQuestion, waitingRow(oldDispatch.id, boundary - 10_000, 'Review billing'), waitingRow('cutoff', boundary, 'Audit migration'), remote],
 });
 assert.equal(withInboxWaitingReports(truncated, 'workspace-b', ledger), truncated);
-const complete = {...truncated, summary: {waiting_reports: 1}};
-assert.equal(withInboxWaitingReports(complete, 'workspace-a', {listOpenDispatches() {
+const {task_title, ...rawRow} = waitingRow(oldDispatch.id, boundary - 10_000, 'Review billing');
+const complete = {...truncated, summary: {waiting_reports: 1}, attention: [rawRow]};
+const exactLedger = {listOpenDispatches() {
 	assert.fail('a complete attention summary needs no supplemental ledger query');
+}, getDispatch(workspaceId: string, id: string) {
+	assert.equal(workspaceId, oldDispatch.workspaceId);
+	assert.equal(id, oldDispatch.id);
+	return oldDispatch;
+}};
+assert.deepEqual(withInboxWaitingReports(complete, 'workspace-a', exactLedger),
+	{...complete, attention: [{...rawRow, task_title}]});
+assert.deepEqual(withInboxWaitingReports(complete, 'workspace-a', {...exactLedger, getDispatch() {
+	return {...oldDispatch, workspaceId: 'workspace-b'};
+}}), complete);
+assert.deepEqual(withInboxWaitingReports(complete, 'workspace-a', {...exactLedger, getDispatch() {
+	return {...oldDispatch, status: 'reported' as const};
 }}), complete);
 
 const root = await mkdtemp(join(tmpdir(), "hive-desktop-host-check-"));

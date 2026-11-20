@@ -14,8 +14,19 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+use std::ops::Range;
 
 gpui_kit::actions!(hive_desktop, [SteerPendingInput]);
+
+fn latest_queued_input(inputs: &[PendingUserInput]) -> Option<&PendingUserInput> {
+    inputs
+        .last()
+        .filter(|input| input.editable && !input.processing)
+}
+
+fn can_edit_queue_at_caret(selection: Range<usize>, composing: bool) -> bool {
+    selection == (0..0) && !composing
+}
 
 impl HiveApp {
     pub(crate) fn render_pending_user_inputs(&self, cx: &Context<Self>) -> Option<AnyElement> {
@@ -37,6 +48,9 @@ impl HiveApp {
             return None;
         }
         let count = undisplayed.len();
+        let latest_editable_id = self
+            .latest_queue_edit_target()
+            .map(|input| input.delivery_id.as_str());
         Some(
             v_flex()
                 .w_full()
@@ -190,6 +204,16 @@ impl HiveApp {
                                     )
                                 })
                                 .when(input.editable && !input.processing, |row| {
+                                    let edit_tooltip = if latest_editable_id == Some(input.delivery_id.as_str()) {
+                                        let shortcut = if cfg!(target_os = "macos") {
+                                            "⌥↑"
+                                        } else {
+                                            "Alt+↑"
+                                        };
+                                        format!("{} ({shortcut})", tr("编辑待发消息"))
+                                    } else {
+                                        tr("编辑待发消息").to_owned()
+                                    };
                                     row.child(
                                         Button::new(SharedString::from(format!(
                                             "edit-queued-{}",
@@ -201,7 +225,7 @@ impl HiveApp {
                                         .w(px(24.))
                                         .rounded_md()
                                         .icon(Glyph::Pencil)
-                                        .tooltip(tr("编辑待发消息"))
+                                        .tooltip(edit_tooltip)
                                         .accessibility_label(tr("编辑待发消息"))
                                         .disabled(!self.connected || self.closing || steering)
                                         .on_click(
@@ -277,6 +301,60 @@ impl HiveApp {
                 ))
                 .into_any_element(),
         )
+    }
+
+    pub(crate) fn edit_latest_queued_input(
+        &mut self,
+        _: &crate::EditLatestQueuedInput,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active_session = self.session.as_ref().is_some_and(|session| {
+            self.workspace.as_ref() == Some(&session.workspace_id)
+                && self
+                    .draft_target
+                    .as_deref()
+                    .and_then(|target| target.strip_prefix("session:"))
+                    == Some(session.id.as_str())
+                && self.draft_owner == self.draft_target
+        });
+        if !active_session
+            || !self.connected
+            || self.closing
+            || self.loading
+            || !self.conversation_ready
+            || !self.viewing_conversation()
+            || !self.workspace_writes_allowed()
+            || self.conversation_is_read_only()
+            || self.command_picker.open
+            || window.has_active_dialog(cx)
+            || !self.input.read(cx).focus_handle(cx).is_focused(window)
+        {
+            cx.propagate();
+            return;
+        }
+        let Some(input) = self.latest_queue_edit_target().cloned() else {
+            cx.propagate();
+            return;
+        };
+        if self.input.update(cx, |state, cx| {
+            can_edit_queue_at_caret(
+                state.selected_range(),
+                state.marked_text_range(window, cx).is_some(),
+            )
+        }) {
+            cx.stop_propagation();
+            self.open_queue_editor(input, false, window, cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
+    fn latest_queue_edit_target(&self) -> Option<&PendingUserInput> {
+        latest_queued_input(&self.pending_user_inputs).filter(|input| {
+            !self.steering_queued_input(&input.delivery_id)
+                && !self.message_indices.contains_key(&input.delivery_id)
+        })
     }
 
     fn steering_queued_input(&self, delivery: &str) -> bool {
@@ -435,5 +513,45 @@ impl HiveApp {
             });
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{can_edit_queue_at_caret, latest_queued_input};
+    use crate::protocol::PendingUserInput;
+
+    fn input(id: &str, editable: bool, processing: bool) -> PendingUserInput {
+        PendingUserInput {
+            delivery_id: id.into(),
+            text: format!("Queued {id}"),
+            attachments: Vec::new(),
+            processing,
+            editable,
+            steerable: false,
+            reason: None,
+        }
+    }
+
+    #[test]
+    fn queue_edit_requires_a_collapsed_selection_at_document_start() {
+        assert!(can_edit_queue_at_caret(0..0, false));
+        assert!(!can_edit_queue_at_caret(0..0, true));
+        assert!(!can_edit_queue_at_caret(0..4, false));
+        assert!(!can_edit_queue_at_caret(4..4, false));
+    }
+
+    #[test]
+    fn queue_edit_targets_the_latest_row_and_does_not_fall_back() {
+        assert!(latest_queued_input(&[]).is_none());
+        let first = input("first", true, false);
+        let mut tail = input("latest", true, false);
+        let queue = [first.clone(), tail.clone()];
+        assert_eq!(latest_queued_input(&queue).unwrap().delivery_id, "latest");
+        tail.processing = true;
+        assert!(latest_queued_input(&[first.clone(), tail.clone()]).is_none());
+        tail.processing = false;
+        tail.editable = false;
+        assert!(latest_queued_input(&[first, tail]).is_none());
     }
 }

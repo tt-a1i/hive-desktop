@@ -99,6 +99,7 @@ actions!(
         OpenGitWorkspaceShortcut,
         OpenProjectFilePicker,
         OpenProjectFileSelection,
+        EditLatestQueuedInput,
         OpenModelPicker,
         ToggleSessionMode,
         SelectPreviousSession,
@@ -175,6 +176,7 @@ fn main() {
                 KeyBinding::new("down", NextSessionResult, Some("HiveProjectFileTree")),
                 KeyBinding::new("up", PreviousSessionResult, Some("HiveProjectFileTree")),
                 KeyBinding::new("enter", OpenProjectFileSelection, Some("HiveProjectFileTree")),
+                KeyBinding::new("alt-up", EditLatestQueuedInput, Some("HiveComposer")),
                 KeyBinding::new(
                     if cfg!(target_os = "macos") { "cmd-shift-enter" } else { "ctrl-shift-enter" },
                     queued_inputs::SteerPendingInput,

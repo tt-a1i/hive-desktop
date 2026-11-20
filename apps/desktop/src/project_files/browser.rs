@@ -31,7 +31,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
-use image_preview::PreviewImage;
+use image_preview::ImageViewport;
 use search_snippet::SearchSnippet;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -242,7 +242,7 @@ struct Preview {
     selection: Match,
     loading: bool,
     text: Option<TextPages>,
-    image: Option<Entity<PreviewImage>>,
+    image: Option<ImageViewport>,
     sha256: Option<String>,
     markdown: Option<MarkdownPreview>,
     error: Option<FileError>,
@@ -343,7 +343,7 @@ struct ExpandedFilePreview {
     preview_generation: u64,
     selection: Match,
     text: Option<TextPages>,
-    image: Option<Entity<PreviewImage>>,
+    image: Option<ImageViewport>,
     markdown: Option<MarkdownPreview>,
     markdown_start_offset: Option<Point<Pixels>>,
     scroll: ScrollHandle,
@@ -2429,7 +2429,7 @@ impl FileBrowser {
                         preview.sha256 = sha256;
                     }
                     Ok((PreparedPreview::Image(image), _)) => {
-                        preview.image = Some(PreviewImage::retain(image, cx));
+                        preview.image = Some(ImageViewport::new(image, cx));
                     }
                     Err(error) => preview.error = Some(error),
                 }
@@ -2964,7 +2964,7 @@ impl FileBrowser {
         let app = self.app.clone();
         let selection = preview.selection.clone();
         let text = preview.text.clone();
-        let image = preview.image.clone();
+        let image = preview.image.as_ref().map(ImageViewport::expanded);
         let scroll = ScrollHandle::new();
         scroll.set_offset(preview.scroll.offset());
         let scope_generation = self.scope_generation;
@@ -3607,7 +3607,26 @@ impl FileBrowser {
             .on_double_click(cx.listener(|this, _, _, cx| this.set_file_split(None, cx)))
     }
 
-    fn preview_view(&self, height: Pixels, stretch: bool, cx: &Context<Self>) -> impl IntoElement {
+    fn toggle_image_size(&mut self, generation: u64, cx: &mut Context<Self>) {
+        if self.preview_generation == generation
+            && self.current(cx)
+            && let Some(image) = self
+                .preview
+                .as_mut()
+                .and_then(|preview| preview.image.as_mut())
+        {
+            image.toggle_size();
+            cx.notify();
+        }
+    }
+
+    fn preview_view(
+        &self,
+        height: Pixels,
+        stretch: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let mut panel = v_flex()
             .id("browser-compact-preview")
             .when(self.has_compact_preview(), |panel| {
@@ -3665,6 +3684,13 @@ impl FileBrowser {
                                     })),
                             )
                         })
+                        .when_some(preview.image.as_ref(), |actions, image| {
+                            actions.child(image.size_button("browser-image-size", cx).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.toggle_image_size(preview_generation, cx)
+                                }),
+                            ))
+                        })
                         .children(self.preview_diff_button(cx.weak_entity(), None, cx))
                         .children(self.attach_button(cx))
                         .children(self.reveal_in_file_manager_button(cx.weak_entity(), None, cx))
@@ -3716,8 +3742,12 @@ impl FileBrowser {
         }
         if let Some(image) = &preview.image {
             return panel.child(
-                image_preview::region("browser-preview-image", image, &path, height, cx)
-                    .when(stretch, |region| region.flex_1()),
+                image
+                    .region("browser-preview-image", &path, height, window, cx)
+                    .when(stretch, |region| region.flex_1())
+                    .on_double_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_image_size(preview_generation, cx)
+                    })),
             );
         }
         let Some(text) = &preview.text else {
@@ -3920,6 +3950,15 @@ impl ExpandedFilePreview {
         }
     }
 
+    fn toggle_image_size(&mut self, cx: &mut Context<Self>) {
+        if self.current(cx)
+            && let Some(image) = &mut self.image
+        {
+            image.toggle_size();
+            cx.notify();
+        }
+    }
+
     fn set_mode(&mut self, mode: FilePreviewMode, cx: &mut Context<Self>) {
         if self.current(cx)
             && let Some(markdown) = &mut self.markdown
@@ -4020,6 +4059,13 @@ impl Render for ExpandedFilePreview {
                         h_flex()
                             .items_center()
                             .gap_2()
+                            .when_some(self.image.as_ref(), |actions, image| {
+                                actions.child(
+                                    image.size_button("file-reader-image-size", cx).on_click(
+                                        cx.listener(|this, _, _, cx| this.toggle_image_size(cx)),
+                                    ),
+                                )
+                            })
                             .children(diff)
                             .children(attach)
                             .children(reveal)
@@ -4036,9 +4082,10 @@ impl Render for ExpandedFilePreview {
             });
         if let Some(image) = &self.image {
             return view.child(
-                image_preview::region("file-reader-image", image, &path, height, cx)
+                image
+                    .region("file-reader-image", &path, height, window, cx)
                     .track_focus(&self.focus)
-                    .tab_stop(true),
+                    .on_double_click(cx.listener(|this, _, _, cx| this.toggle_image_size(cx))),
             );
         }
         let Some(text) = &self.text else {
@@ -4320,7 +4367,7 @@ impl Render for FileBrowser {
                         .flex_grow(1. - share)
                         .min_h_0()
                         .overflow_hidden()
-                        .child(self.preview_view(window.viewport_size().height, true, cx)),
+                        .child(self.preview_view(window.viewport_size().height, true, window, cx)),
                 )
                 .on_prepaint(move |bounds, _, cx| {
                     let _ = browser.update(cx, |browser, cx| {
@@ -4338,7 +4385,7 @@ impl Render for FileBrowser {
                 .items_start()
                 .gap_3()
                 .child(list)
-                .child(self.preview_view(body - px(64.), false, cx))
+                .child(self.preview_view(body - px(64.), false, window, cx))
                 .into_any_element()
         };
         let source = self

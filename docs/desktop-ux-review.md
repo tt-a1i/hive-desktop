@@ -373,8 +373,22 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 的两个工作树按各自会话读取同一路径的 PNG，源文件哈希不同，停靠面板和窄窗展开均显示图片的无障碍控件。JPEG 同样可预览。损坏 PNG 的错误原先没有无障碍名称，修正后复验可读取「项目文件图片无法显示」。屏幕红蓝像素的区别由解码测试核对，实窗核对了图片控件及准确的文件请求。证据在 `.artifacts/batch27-images-qa`。
 - 281 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、桌面视图、队列与 Codex、项目文件与工作树引用，以及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第二十八批
+
+本轮从 Hive Desktop `52b0821` 开始。参考 T3 Code `ccabed0`、Cindy `90e373d`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **等待汇报的派单显示任务标题和成员。** 两个桌面收件箱按工作区和派单读取简短标题，优先使用标签，否则使用正文首行。重名或空标题带派单编号。打开、暂缓和唤回继续使用准确的派单标识。 [Cindy 任务行显示标题](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/apps/desktop/src/renderer/features/cc-agent/sidebar/SessionItem.tsx#L1062-L1067)
+- **从输入框开头编辑队尾待发消息。** macOS 按 `Option+↑`，Windows 按 `Alt+↑`。输入框有焦点、没有选区和输入法组合时，打开队尾消息原有的编辑框。保存沿用原消息标识、附件和队列位置，聊天草稿保留。 [T3 Code 编辑队尾快捷键](https://github.com/pingdotgg/t3code/blob/ccabed086ad47294173769c77d2d44e55bb8bd0d/docs/user/composer.md#L81-L84)
+- **文件图片预览支持原尺寸和适应窗口。** 停靠面板、窄窗和展开阅读器都有按钮，也可双击图片切换。原尺寸按屏幕缩放显示，可以横向和纵向滚动。展开时带入当前模式和位置，选择另一张图片时从适应窗口开始。 [Beluga 图片缩放](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/reader/FileReader.tsx#L73-L107)
+
+- 生产通信验证同成员同一提交时间、不同标题、重名、空标题和超过 96 个码点的标题。原 HTTP 摘要保持原格式。macOS 跨项目收件箱按标题打开展示 `Audit migration` 的派单、暂缓 `Review billing` 的派单，两个操作命中各自的派单标识。证据在 `.artifacts/batch28-inbox-qa`。
+- macOS 用受控 Codex 排入 A、B，输入框保留草稿 C。光标在末尾按 `Option+↑` 时未打开编辑框，移到开头后打开 B。保存并释放前一回合后，对端依次收到 A 与修改后的 B，C 保留且未发送。证据在 `.artifacts/batch28-steer-qa`。
+- macOS 打开 3200×1800 PNG，从适应窗口切到原尺寸，并在展开阅读器中保留模式。这段操作只发出一次文件预览请求。代码检查发现停靠面板的图片区域需要显式接收焦点，已补上焦点入口。证据在 `.artifacts/batch28-image-qa`。
+- Rust 专项覆盖输入框位置、选区、输入法状态和队尾不可编辑，以及图片的 1×、2×、1.25× 显示缩放和两个方向的滚动边界。实窗无障碍接口只提供图片控件和缩放操作，不能直接读取滚动偏移。
+- 285 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、Hive HTTP/SQLite、桌面视图和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **给同一成员的等待汇报派单显示各自标题。** 现有列表只显示成员名和相同状态。用相同项目、成员和提交时间的两条不同任务复现，并验收能按标题打开第一条、暂缓第二条，各自命中准确派单。相同标题也要能区分。 [Cindy 任务行显示标题](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/apps/desktop/src/renderer/features/cc-agent/sidebar/SessionItem.tsx#L1062-L1067)
-- **从输入框开头用 `Option+↑` 或 `Alt+↑` 编辑最近的待发消息。** Hive 目前需要点队列中的铅笔。验收排入 A、B 并保留单独的草稿 C，焦点在草稿开头时快捷键打开 B 的原编辑框，保存后只改动 B 的正文。覆盖光标在中间、输入法候选和焦点在输入框外的情况。 [T3 Code 编辑队尾快捷键](https://github.com/pingdotgg/t3code/blob/ccabed086ad47294173769c77d2d44e55bb8bd0d/docs/user/composer.md#L81-L84)
-- **文件图片预览可切换原尺寸和适合窗口。** 用右下角带小字的 3200×1800 截图复现，当前紧凑和展开预览始终缩放整图。验收原尺寸能横向和纵向查看细节，切回后显示全图，切换不重新读取文件。 [Beluga 图片缩放](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/reader/FileReader.tsx#L73-L107)
+- **从收件箱直接打开对应的协作问题。** 实际消息存储复现了同一派单在 100 条历史之后收到两个未回答问题。两个收件箱按钮都只打开历史第一页。验收从两个收件箱分别打开两个问题，立即看到对应消息及可用的回复入口，并验证其他工作区或派单的消息无法混入。 [Cindy 待答直达对话](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/docs/product-rules/task-inbox.md#L89-L98) · [Hive 上游消息定位](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/routes-dispatches.ts#L105-L136)
+- **将较长的粘贴文本保存为普通文件附件。** Hive 当前会将纯文本全部放进草稿。用 40 KiB 的多语言日志验证普通粘贴创建文本附件、原指令保留、重启后字节一致，以及选择按文本粘贴时仍使用原有选区行为。暂时无法保存附件时，原文本应可恢复。 [T3 Code 长文本粘贴](https://github.com/pingdotgg/t3code/blob/ccabed086ad47294173769c77d2d44e55bb8bd0d/docs/user/composer.md#L6-L13)
+- **给文件名搜索加入整词匹配。** 搜索 `cat` 目前会返回 `cat.txt`、`CAT-notes.md`、`cat_id.txt` 和 `scatter.txt`。验收开启整词后只剩前两项，核对与大小写和正则组合、分页重置、按 Return 打开正确的文件。 [Beluga 文件名搜索选项](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L73-L85)

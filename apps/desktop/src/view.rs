@@ -917,6 +917,7 @@ impl HiveApp {
                                         },
                                     ))
                                     .capture_action(cx.listener(Self::composer_enter))
+                                    .capture_action(cx.listener(Self::edit_latest_queued_input))
                                     .capture_action(cx.listener(Self::command_up))
                                     .capture_action(cx.listener(Self::command_down))
                                     .capture_action(cx.listener(Self::command_escape))

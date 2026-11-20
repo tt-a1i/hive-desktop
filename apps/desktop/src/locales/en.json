@@ -23,6 +23,7 @@
   "等待答复的协作问题": "Team question awaiting an answer",
   "等待投递的协作消息": "Team message awaiting delivery",
   "等待汇报的派单": "Dispatch awaiting a report",
+  "未命名派单": "Untitled dispatch",
   "成员已停止，仍有待办": "Stopped member with pending tasks",
   "收件箱返回了其他工作区的数据。": "The inbox returned data for a different workspace.",
   "收到的派单与所选派单不一致。": "The returned dispatch does not match the selected dispatch.",

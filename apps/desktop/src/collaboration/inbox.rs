@@ -343,10 +343,30 @@ impl ActionCenter {
     }
 
     fn entries(&self, mut name: impl FnMut(&str) -> String) -> Vec<Entry> {
-        self.attention
+        let mut rows: Vec<_> = self
+            .attention
             .iter()
-            .filter_map(|attention| attention.entry(self, &mut name))
-            .collect()
+            .filter_map(|attention| Some((attention, attention.entry(self, &mut name)?)))
+            .collect();
+        let mut titles = BTreeMap::new();
+        let mut references = BTreeMap::new();
+        for (attention, _) in &rows {
+            if let Some(id) = attention.waiting_report_id() {
+                *titles.entry(attention.task_title()).or_insert(0) += 1;
+                *references.entry(short_dispatch_id(id)).or_insert(0) += 1;
+            }
+        }
+        for (attention, entry) in &mut rows {
+            if let Some(id) = attention.waiting_report_id()
+                && (attention.task_title().is_none() || titles[&attention.task_title()] > 1)
+            {
+                let short = short_dispatch_id(id);
+                let reference = if references[short] == 1 { short } else { id };
+                // Keep the exact reference visible when a narrow row clips the title.
+                entry.subject = format!("{reference} · {}", entry.subject);
+            }
+        }
+        rows.into_iter().map(|(_, entry)| entry).collect()
     }
 }
 
@@ -443,6 +463,12 @@ struct Attention {
     message_created_at: Option<u64>,
     dispatch_backend: Option<Backend>,
     submitted_at: Option<u64>,
+    task_title: Option<String>,
+}
+
+fn short_dispatch_id(id: &str) -> &str {
+    // Callers have already verified that the ID is a UUID.
+    &id[id.len() - 8..]
 }
 
 #[derive(Clone)]
@@ -669,6 +695,18 @@ fn sort_entries(rows: &mut [(&str, Entry)]) {
 }
 
 impl Attention {
+    fn waiting_report_id(&self) -> Option<&str> {
+        (self.kind == "dispatch_waiting_report")
+            .then_some(self.dispatch_id.as_deref())
+            .flatten()
+    }
+
+    fn task_title(&self) -> Option<&str> {
+        self.task_title
+            .as_deref()
+            .filter(|title| !title.trim().is_empty())
+    }
+
     fn snooze_key(&self) -> Option<String> {
         match self.kind.as_str() {
             // Preserve identity when the same queued input becomes answerable.
@@ -720,13 +758,22 @@ impl Attention {
                 .clone()
                 .or_else(|| self.worker_id.as_deref().map(name))
                 .unwrap_or_default();
-            self.message_id.as_ref().map_or_else(
-                || member.clone(),
-                |id| {
-                    let short_id: String = id.chars().take(8).collect();
-                    format!("{member} · {short_id}")
-                },
-            )
+            if self.waiting_report_id().is_some() {
+                let title = self.task_title().unwrap_or_else(|| tr("未命名派单"));
+                if member.is_empty() {
+                    title.to_owned()
+                } else {
+                    format!("{title} · {member}")
+                }
+            } else {
+                self.message_id.as_ref().map_or_else(
+                    || member.clone(),
+                    |id| {
+                        let short_id: String = id.chars().take(8).collect();
+                        format!("{member} · {short_id}")
+                    },
+                )
+            }
         };
         let snooze_key = self.snooze_key();
         let wake = self
@@ -1699,12 +1746,65 @@ fn inbox_row<T: 'static>(
 #[cfg(test)]
 mod tests {
     use super::{
-        ArchiveInboxSession, Attention, Delay, Destination, Entry, MarkInboxRead, Priority,
-        Reminders, SnoozeEdit, Snoozes, UNREAD_CONVERSATION, Wake, now_ms, sort_entries,
+        ActionCenter, ArchiveInboxSession, Attention, Delay, Destination, Entry, MarkInboxRead,
+        Priority, Reminders, SnoozeEdit, Snoozes, UNREAD_CONVERSATION, Wake, now_ms, sort_entries,
     };
     use crate::protocol::MemberDesktopActivity;
     use serde_json::json;
     use std::collections::HashSet;
+
+    #[test]
+    fn waiting_report_titles_distinguish_same_member_at_same_time_and_keep_exact_targets() {
+        let reports = [
+            (
+                "11111111-0000-4000-8000-0000aaaabbbb",
+                Some("Review billing"),
+            ),
+            (
+                "22222222-0000-4000-8000-0000ccccdddd",
+                Some("Audit migration"),
+            ),
+            (
+                "33333333-0000-4000-8000-0000eeeeffff",
+                Some("Audit migration"),
+            ),
+            ("44444444-0000-4000-8000-000012345678", Some(" ")),
+            ("55555555-0000-4000-8000-000012345678", None),
+        ];
+        let attention: Vec<_> = reports
+            .iter()
+            .map(|(id, title)| {
+                json!({
+                    "kind": "dispatch_waiting_report", "dispatch_id": id, "task_title": title,
+                    "worker_id": "reviewer", "worker_name": "Same reviewer", "submitted_at": 100,
+                })
+            })
+            .collect();
+        let snapshot: ActionCenter = serde_json::from_value(json!({
+            "workspace_id": "workspace", "generated_at": 1000, "attention": attention,
+            "recent_dispatch_messages":[],
+        }))
+        .unwrap();
+        let rows = snapshot.entries(str::to_owned);
+        let untitled = super::tr("未命名派单");
+        assert_eq!(
+            rows.iter()
+                .map(|entry| entry.subject.clone())
+                .collect::<Vec<_>>(),
+            [
+                "Review billing · Same reviewer".to_owned(),
+                "ccccdddd · Audit migration · Same reviewer".to_owned(),
+                "eeeeffff · Audit migration · Same reviewer".to_owned(),
+                format!("{} · {untitled} · Same reviewer", reports[3].0),
+                format!("{} · {untitled} · Same reviewer", reports[4].0),
+            ]
+        );
+        for (entry, (dispatch, _)) in rows.iter().zip(reports) {
+            assert!(matches!(&entry.target, Destination::Dispatch(id) if id == dispatch));
+            assert_eq!(entry.snooze_key, Some(format!("report:{dispatch}")));
+            assert!(matches!(&entry.wake, Some(Wake::Dispatch { id, .. }) if id == dispatch));
+        }
+    }
 
     #[test]
     fn archive_allows_stopped_member_history_without_pending_work() {

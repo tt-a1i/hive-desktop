@@ -39,11 +39,30 @@ export interface HiveUserInputRow { type: 'user_input' | 'user_input_cancelled';
 interface InboxQuestion { workspaceId: string; dispatchId: string; messageId: string }
 interface InboxDispatchInput { dispatchId: string; sequence: number | null; createdAt: number | null }
 type ActionableMessageSource = {listActionableDispatchMessages(workspaceId: string): DispatchMessageRecord[]};
-type OpenDispatchSource = {listOpenDispatches(workspaceId: string):
-    Pick<DispatchRecord, 'id' | 'workspaceId' | 'status' | 'submittedAt' | 'toAgentId'>[]};
+type WaitingReportDispatch = Pick<DispatchRecord, 'id' | 'workspaceId' | 'status' | 'submittedAt' | 'toAgentId' | 'label' | 'text'>;
+type OpenDispatchSource = {
+    listOpenDispatches(workspaceId: string): WaitingReportDispatch[];
+    getDispatch(workspaceId: string, dispatchId: string): WaitingReportDispatch | undefined;
+};
 
 // Match Hive's action-center definition of a wait, not a task timeout.
 const WAITING_REPORT_MS = 10 * 60 * 1_000;
+
+function dispatchTitlePreview(dispatch: WaitingReportDispatch): string | null {
+    for (const text of [dispatch.label, dispatch.text]) {
+        const line = text?.trimStart().split(/[\r\n\u2028\u2029]/u, 1)[0]?.replace(/\s+/gu, ' ').trim();
+        if (!line) continue;
+        let length = 0;
+        let end = 0;
+        for (const character of line) {
+            if (length === 96) return `${line.slice(0, end).trimEnd()}…`;
+            end += character.length;
+            length++;
+        }
+        return line;
+    }
+    return null;
+}
 
 export function withInboxWaitingReports(
     result: unknown, workspaceId: string, store: OpenDispatchSource,
@@ -57,7 +76,20 @@ export function withInboxWaitingReports(
     const count = summary.waiting_reports;
     const isWaitingReport = (row: {kind?: unknown} | null) => row?.kind === 'dispatch_waiting_report';
     const firstWaiting = attention.findIndex(isWaitingReport);
-    if (firstWaiting < 0 || typeof count !== 'number' || count <= attention.filter(isWaitingReport).length) return result;
+    if (firstWaiting < 0 || typeof count !== 'number') return result;
+    const exactWaiting = (dispatch: WaitingReportDispatch) => dispatch.workspaceId === workspaceId
+        && dispatch.status === 'submitted' && dispatch.submittedAt !== null
+        && dispatch.submittedAt <= now - WAITING_REPORT_MS;
+    if (count <= attention.filter(isWaitingReport).length) {
+        return {...result, attention: attention.map(row => {
+            if (!isWaitingReport(row) || typeof row.dispatch_id !== 'string') return row;
+            const dispatch = store.getDispatch(workspaceId, row.dispatch_id);
+            return dispatch && exactWaiting(dispatch) && dispatch.id === row.dispatch_id
+                && dispatch.toAgentId === row.worker_id && dispatch.submittedAt === row.submitted_at
+                ? {...row, task_title: dispatchTitlePreview(dispatch)}
+                : row;
+        })};
+    }
 
     const workerNames = new Map<string, string>();
     if ('workers' in result && Array.isArray(result.workers)) {
@@ -67,8 +99,7 @@ export function withInboxWaitingReports(
     }
     const waiting = store.listOpenDispatches(workspaceId).flatMap(dispatch => {
         const submitted = dispatch.submittedAt;
-        if (dispatch.workspaceId !== workspaceId || dispatch.status !== 'submitted' || submitted === null
-            || submitted > now - WAITING_REPORT_MS) return [];
+        if (submitted === null || !exactWaiting(dispatch)) return [];
         return [{
             kind: 'dispatch_waiting_report',
             severity: 'info',
@@ -77,6 +108,7 @@ export function withInboxWaitingReports(
             minutes_ago: Math.floor((now - submitted) / 60_000),
             worker_id: dispatch.toAgentId,
             worker_name: workerNames.get(dispatch.toAgentId) ?? null,
+            task_title: dispatchTitlePreview(dispatch),
         }];
     });
     return {

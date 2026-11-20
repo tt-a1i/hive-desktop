@@ -173,13 +173,17 @@ try {
   const sqlite = new DatabaseSync(join(dataDir, 'hive', 'runtime.sqlite'));
   try {
     const insert = sqlite.prepare(`INSERT INTO dispatches
-      (id, workspace_id, from_agent_id, to_agent_id, text, status, created_at, submitted_at, root_dispatch_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      (id, workspace_id, from_agent_id, to_agent_id, text, status, created_at, submitted_at, root_dispatch_id, label)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const now = Date.now();
-    function seed(workspaceId: string, member: string, dispatchId: string, status: string, time: number) {
-      insert.run(dispatchId, workspaceId, `${workspaceId}:orchestrator`, member, 'Private fixture dispatch', status, time, time, dispatchId);
+    function seed(workspaceId: string, member: string, dispatchId: string, status: string, time: number,
+        label: string | null = null, body = 'Private fixture dispatch', createdAt = time) {
+      insert.run(dispatchId, workspaceId, `${workspaceId}:orchestrator`, member, body, status, createdAt, time, dispatchId, label);
     }
-    waiting.forEach((dispatchId, index) => seed(workspace.id, index === 3 ? later.id : early.id, dispatchId, 'submitted', now - 720_000 + index));
+    const titles = ['Audit migration', null, 'Audit migration', '  '];
+    const bodies = ['Do not include body with label', `  ${'🐝'.repeat(103)}\nprivate body`, 'Duplicate task label', ' \n '];
+    waiting.forEach((dispatchId, index) => seed(workspace.id, index === 3 ? later.id : early.id,
+      dispatchId, 'submitted', now - 720_000, titles[index]!, bodies[index]!, now - 720_000 + index));
     seed(workspace.id, later.id, randomUUID(), 'submitted', now);
     seed(workspace.id, later.id, randomUUID(), 'reported', now - 720_000);
     seed(workspace.id, later.id, randomUUID(), 'cancelled', now - 720_000);
@@ -189,7 +193,7 @@ try {
   }
   type Attention = {
     kind: string; dispatch_id?: string; worker_id?: string; worker_name?: string;
-    dispatch_backend?: string | null; severity?: string; submitted_at?: number; minutes_ago?: number;
+    dispatch_backend?: string | null; severity?: string; submitted_at?: number; minutes_ago?: number; task_title?: string | null;
   };
   type Center = {summary: {waiting_reports: number}; attention: Attention[]; recent_dispatch_messages: {dispatch_id: string}[]};
   const actionCenter = `/api/ui/workspaces/${workspace.id}/action-center`;
@@ -210,11 +214,15 @@ try {
   assert.deepEqual(reportRows(upstream).map(row => row.dispatch_id), waiting.slice(0, 3));
   assert.equal(desktop.summary.waiting_reports, 4);
   assert.deepEqual(reportRows(desktop).map(row => row.dispatch_id), waiting);
+  assert.ok(reportRows(upstream).every(row => !('task_title' in row)));
+  assert.deepEqual(reportRows(desktop).map(row => row.task_title), ['Audit migration', `${'🐝'.repeat(96)}…`, 'Audit migration', null]);
+  assert.equal(new Set(reportRows(desktop).map(row => row.submitted_at)).size, 1);
   const scoped = reportRows(desktop).filter(row => row.worker_id === later.id && row.dispatch_backend === 'codex');
   assert.deepEqual(scoped.map(row => [row.dispatch_id, row.worker_name]), [[waiting[3], 'Fourth reviewer']]);
   assert.deepEqual(Object.keys(scoped[0]!).sort(),
-    ['dispatch_backend', 'dispatch_id', 'kind', 'minutes_ago', 'severity', 'submitted_at', 'worker_id', 'worker_name']);
+    ['dispatch_backend', 'dispatch_id', 'kind', 'minutes_ago', 'severity', 'submitted_at', 'task_title', 'worker_id', 'worker_name']);
   console.log('INBOX_WAITING_REPORTS_OK: production wire includes the fourth exact member/backend while the authenticated HTTP preview remains capped');
+  console.log('INBOX_WAITING_REPORT_TITLES_OK: scoped task titles, same-time duplicates, blank fallback, bounded Unicode and desktop-only evidence');
 
   const watched = waiting[3]!;
   const unrelated = waiting[0]!;

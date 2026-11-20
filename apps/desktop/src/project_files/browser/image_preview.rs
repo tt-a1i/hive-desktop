@@ -1,6 +1,14 @@
-use crate::{attachments::render_image, language::tr, project_files::FileError};
+use crate::{attachments::render_image, language::tr, palette, project_files::FileError};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use gpui_kit::*;
+use gpui_kit::{
+    assets::IconName,
+    component::{
+        Sizable,
+        button::{Button, ButtonVariants},
+        scroll::{ScrollableElement, ScrollbarAxis},
+    },
+    *,
+};
 use image::{ImageDecoder, ImageFormat, ImageReader};
 use serde::Deserialize;
 use serde_json::Value;
@@ -13,10 +21,10 @@ const MAX_PIXELS: u64 = 9_000_000;
 const IMAGE_ERROR: &str = "项目文件图片无法显示。";
 static DECODERS: smol::lock::Semaphore = smol::lock::Semaphore::new(2);
 
-pub(super) struct PreviewImage(Arc<RenderImage>);
+struct PreviewImage(Arc<RenderImage>);
 
 impl PreviewImage {
-    pub(super) fn retain(render: Arc<RenderImage>, cx: &mut App) -> Entity<Self> {
+    fn retain(render: Arc<RenderImage>, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             cx.on_release(|image: &mut Self, cx| {
                 let render = image.0.clone();
@@ -26,6 +34,126 @@ impl PreviewImage {
             Self(render)
         })
     }
+}
+
+pub(super) struct ImageViewport {
+    image: Entity<PreviewImage>,
+    actual_size: bool,
+    scroll: ScrollHandle,
+}
+
+impl ImageViewport {
+    pub(super) fn new(render: Arc<RenderImage>, cx: &mut App) -> Self {
+        Self {
+            image: PreviewImage::retain(render, cx),
+            actual_size: false,
+            scroll: ScrollHandle::new(),
+        }
+    }
+
+    pub(super) fn expanded(&self) -> Self {
+        let scroll = ScrollHandle::new();
+        scroll.set_offset(self.scroll.offset());
+        Self {
+            image: self.image.clone(),
+            actual_size: self.actual_size,
+            scroll,
+        }
+    }
+
+    pub(super) fn toggle_size(&mut self) {
+        self.actual_size = !self.actual_size;
+        self.scroll = ScrollHandle::new();
+    }
+
+    pub(super) fn size_button(&self, id: &'static str, cx: &App) -> Button {
+        let label = if self.actual_size {
+            tr("适应窗口")
+        } else {
+            tr("原尺寸")
+        };
+        let button = Button::new(id)
+            .custom(palette::quiet_icon_variant(cx))
+            .compact()
+            .xsmall()
+            .size(px(26.))
+            .accessibility_label(label)
+            .tooltip(label);
+        if self.actual_size {
+            button.icon(IconName::Minimize2)
+        } else {
+            button.label("1:1")
+        }
+    }
+
+    pub(super) fn region(
+        &self,
+        id: &'static str,
+        path: &str,
+        height: Pixels,
+        window: &Window,
+        cx: &App,
+    ) -> Stateful<Div> {
+        let render = self.image.read(cx).0.clone();
+        let view = div()
+            .id(id)
+            .role(Role::Image)
+            .aria_label(format!("{}: {path}", tr("文件图片预览")))
+            .w_full()
+            .min_w_0()
+            .h(height)
+            .min_h_0()
+            .tab_stop(true);
+        if self.actual_size {
+            let size = actual_image_size(render.size(0), window.scale_factor());
+            let scroll = self.scroll.clone();
+            view.focusable()
+                .overflow_scroll()
+                .track_scroll(&self.scroll)
+                .scrollbar(&self.scroll, ScrollbarAxis::Both)
+                .child(img(render).w(size.width).h(size.height).flex_none())
+                .on_key_down(move |event, window, cx| {
+                    if event.keystroke.modifiers != Modifiers::default() {
+                        return;
+                    }
+                    if let Some(offset) = image_scroll_offset(
+                        event.keystroke.key.as_str(),
+                        scroll.offset(),
+                        scroll.max_offset(),
+                    ) {
+                        scroll.set_offset(offset);
+                        window.refresh();
+                        cx.stop_propagation();
+                    }
+                })
+        } else {
+            view.overflow_hidden()
+                .child(img(render).size_full().object_fit(ObjectFit::Contain))
+        }
+    }
+}
+
+fn actual_image_size(size: Size<DevicePixels>, display_scale: f32) -> Size<Pixels> {
+    size.map(|dimension| px(dimension.0 as f32 / display_scale))
+}
+
+fn image_scroll_offset(
+    key: &str,
+    offset: Point<Pixels>,
+    maximum: Point<Pixels>,
+) -> Option<Point<Pixels>> {
+    let step = px(36.);
+    let delta = match key {
+        "left" => point(step, px(0.)),
+        "right" => point(-step, px(0.)),
+        "up" => point(px(0.), step),
+        "down" => point(px(0.), -step),
+        _ => return None,
+    };
+    Some(point(
+        (offset.x + delta.x).clamp(-maximum.x, px(0.)),
+        (offset.y + delta.y).clamp(-maximum.y, px(0.)),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -94,33 +222,13 @@ fn decode(wire: WireImage) -> Option<Arc<RenderImage>> {
     Some(render_image(image))
 }
 
-pub(super) fn region(
-    id: &'static str,
-    image: &Entity<PreviewImage>,
-    path: &str,
-    height: Pixels,
-    cx: &App,
-) -> Stateful<Div> {
-    div()
-        .id(id)
-        .role(Role::Image)
-        .aria_label(format!("{}: {path}", tr("文件图片预览")))
-        .w_full()
-        .h(height)
-        .min_h_0()
-        .overflow_hidden()
-        .child(
-            img(image.read(cx).0.clone())
-                .w_full()
-                .h_full()
-                .object_fit(ObjectFit::Contain),
-        )
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{RasterFormat, WireImage, allowed_dimensions, decode};
+    use super::{
+        RasterFormat, WireImage, actual_image_size, allowed_dimensions, decode, image_scroll_offset,
+    };
     use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use gpui_kit::{DevicePixels, point, px, size};
     use std::io::Cursor;
 
     #[test]
@@ -170,5 +278,34 @@ mod tests {
         })
         .expect("valid PNG above the text limit");
         assert_eq!(image.as_bytes(0).unwrap().len(), 700 * 700 * 4);
+    }
+
+    #[test]
+    fn actual_size_uses_device_pixels_and_scrolls_both_axes() {
+        let resolution = size(DevicePixels(3200), DevicePixels(1800));
+        assert_eq!(
+            actual_image_size(resolution, 1.),
+            size(px(3200.), px(1800.))
+        );
+        assert_eq!(actual_image_size(resolution, 2.), size(px(1600.), px(900.)));
+        assert_eq!(
+            actual_image_size(resolution, 1.25),
+            size(px(2560.), px(1440.))
+        );
+        let maximum = point(px(80.), px(100.));
+        let start = point(px(-70.), px(-90.));
+        assert_eq!(
+            image_scroll_offset("right", start, maximum),
+            Some(point(px(-80.), px(-90.)))
+        );
+        assert_eq!(
+            image_scroll_offset("down", start, maximum),
+            Some(point(px(-70.), px(-100.)))
+        );
+        assert_eq!(
+            image_scroll_offset("up", point(px(-25.), px(-10.)), maximum),
+            Some(point(px(-25.), px(0.)))
+        );
+        assert_eq!(image_scroll_offset("escape", start, maximum), None);
     }
 }
