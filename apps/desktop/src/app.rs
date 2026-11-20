@@ -369,6 +369,8 @@ pub struct HiveApp {
     pub diffs_pr_base_input: Entity<InputState>,
     events: Task<()>,
     pub(crate) workspace_updates: Task<()>,
+    pub(crate) new_session_creation: Option<u64>,
+    pub(crate) scratch_session_retry: Option<(&'static str, String)>,
     _quit: Subscription,
     _composer_subscription: Subscription,
     _model_search_subscription: Subscription,
@@ -448,18 +450,19 @@ impl HiveApp {
         });
         Self::register_guarded_action::<crate::NewSessionShortcut>(
             cx,
-            |this, _window, cx| {
-                if !this.connected || this.closing || this.loading || !this.workspace_writes_allowed()
-                {
-                    return;
+            |this, window, cx| {
+                if !window.context_stack().iter().any(|context| context.contains("HiveTerminal")) {
+                    this.start_new_conversation(false, window, cx);
                 }
-                let backend = this
-                    .session
-                    .as_ref()
-                    .map(|session| session.backend.wire())
-                    .unwrap_or("pi");
-                this.hide_terminal(cx);
-                this.new_session(backend, cx);
+            },
+            window,
+        );
+        Self::register_guarded_action::<crate::keybindings::NewSessionInCurrentProject>(
+            cx,
+            |this, window, cx| {
+                if !window.context_stack().iter().any(|context| context.contains("HiveTerminal")) {
+                    this.start_new_conversation(true, window, cx);
+                }
             },
             window,
         );
@@ -903,6 +906,8 @@ impl HiveApp {
             maintenance_state: crate::maintenance::MaintenanceState::default(),
             desktop_updates: crate::settings::updates::State::default(),
             data_dir: None,
+            new_session_creation: None,
+            scratch_session_retry: None,
             diffs_pr_base_input,
             events: Task::ready(()),
             workspace_updates: Task::ready(()),

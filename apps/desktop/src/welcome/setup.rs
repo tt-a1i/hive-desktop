@@ -85,7 +85,7 @@ fn save_completed(root: &Path) -> io::Result<()> {
 }
 
 impl HiveApp {
-    pub(super) fn welcome_busy(&self) -> bool {
+    pub(crate) fn welcome_busy(&self) -> bool {
         self.welcome_setup.adding
             || self.welcome_setup.starting
             || self
@@ -151,6 +151,12 @@ impl HiveApp {
             return false;
         }
         true
+    }
+
+    pub(crate) fn mark_welcome_started(&mut self, cx: &mut Context<Self>) {
+        if !self.save_welcome_completion(cx) {
+            self.error = self.welcome_setup.notice.take();
+        }
     }
 
     pub(super) fn finish_welcome_setup(&mut self, window: &Window, cx: &mut Context<Self>) {

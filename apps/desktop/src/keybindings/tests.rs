@@ -5,6 +5,22 @@ use gpui_kit::{KeyBinding, Keymap, Keystroke, OperatingSystem};
 use std::{convert::identity, fs};
 
 #[test]
+fn older_custom_shortcut_keeps_its_chord_when_current_project_action_is_added() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join(FILE);
+    let os = OperatingSystem::Mac;
+    fs::write(&file, r#"{"version":1,"bindings":{"search":"cmd-k","find":"cmd-f","preferences":"cmd-,","new_session":"cmd-shift-n"}}"#).unwrap();
+    let loaded = load(root.path(), os, identity).unwrap();
+    assert_eq!(loaded.get(Target::NewSession).as_deref(), Some("cmd-shift-n"));
+    assert_eq!(loaded.get(Target::NewSessionCurrentProject), &None);
+
+    fs::write(&file, r#"{"version":1,"bindings":{"search":"cmd-k","find":"cmd-f","preferences":"cmd-,","new_session_current_project":null}}"#).unwrap();
+    let loaded = load(root.path(), os, identity).unwrap();
+    assert_eq!(loaded.get(Target::NewSession).as_deref(), Some("cmd-n"));
+    assert_eq!(loaded.get(Target::NewSessionCurrentProject), &None);
+}
+
+#[test]
 fn validates_single_modified_chords_and_detects_collisions() {
     for os in [OperatingSystem::Mac, OperatingSystem::Windows] {
         let defaults = Bindings::defaults(os);

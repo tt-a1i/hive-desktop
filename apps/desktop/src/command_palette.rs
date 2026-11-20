@@ -9,7 +9,7 @@ use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
-        input::{Input, InputEvent, InputState},
+        input::{Enter, Input, InputEvent, InputState, MoveDown, MoveUp},
         scroll::ScrollableElement,
         *,
     },
@@ -20,6 +20,11 @@ use gpui_kit::{
 #[derive(Clone)]
 enum PaletteAction {
     NewSession,
+    CreateConversation {
+        project: Option<String>,
+        backend: &'static str,
+        source_revision: u64,
+    },
     ToggleSidebar,
     ToggleTerminal,
     OpenGit,
@@ -48,19 +53,113 @@ struct CommandPalette {
     items: Vec<PaletteItem>,
     selected: usize,
     scroll: ScrollHandle,
+    project_picker: bool,
+}
+
+fn palette_labels(project_picker: bool) -> (&'static str, &'static str) {
+    if project_picker {
+        (tr("选择新会话的项目"), tr("按名称或路径搜索项目"))
+    } else {
+        (tr("快捷命令面板"), tr("输入命令、会话、项目或设置项…"))
+    }
 }
 
 impl HiveApp {
+    pub(crate) fn can_start_new_conversation(&self) -> bool {
+        self.connected
+            && !self.closing
+            && !self.loading
+            && !self.settings_panel
+            && !self.roles.visible
+            && !self.welcome_busy()
+            && self.workspace_writes_allowed()
+            && self.new_session_creation != Some(self.connection_generation)
+    }
+
+    fn new_conversation_backend(&self) -> &'static str {
+        self.session.as_ref().map_or("pi", |session| session.backend.wire())
+    }
+
+    pub(crate) fn start_scratch_conversation(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.can_start_new_conversation() {
+            self.create_new_session(None, self.new_conversation_backend(), None, Some(window), cx);
+        }
+    }
+
+    pub(crate) fn start_new_conversation(
+        &mut self,
+        current_project_only: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.can_start_new_conversation() || window.has_active_dialog(cx) {
+            return;
+        }
+        let backend = self.new_conversation_backend();
+        if current_project_only {
+            if let Some(project) = self.workspace.clone() {
+                self.create_new_session(Some(project), backend, None, Some(window), cx);
+            }
+            return;
+        }
+
+        let scratch_path = self.data_dir.as_ref().map(|root| root.join("scratch"));
+        let canonical_scratch_path = self.data_dir.as_ref()
+            .and_then(|root| root.canonicalize().ok())
+            .map(|root| root.join("scratch"));
+        let projects: Vec<_> = self.sorted_projects(cx).into_iter().filter(|workspace| {
+            let path = std::path::Path::new(&workspace.path);
+            self.workspace_removing.as_ref() != Some(&workspace.id)
+                && scratch_path.as_deref() != Some(path)
+                && canonical_scratch_path.as_deref() != Some(path)
+        }).collect();
+        if let [project] = projects.as_slice() {
+            self.create_new_session(Some(project.id.clone()), backend, None, Some(window), cx);
+            return;
+        }
+
+        let source_revision = self.open_request;
+        let mut items: Vec<_> = projects.into_iter().map(|project| PaletteItem {
+            group: "项目",
+            title: project.name.clone(),
+            subtitle: Some(project.path.clone()),
+            keywords: String::new(),
+            icon: Glyph::FolderOpen,
+            action: PaletteAction::CreateConversation {
+                project: Some(project.id.clone()), backend, source_revision,
+            },
+        }).collect();
+        items.push(PaletteItem {
+            group: "项目",
+            title: tr("不使用项目").into(),
+            subtitle: Some(tr("在独立的 Scratch 文件夹中开始").into()),
+            keywords: "scratch".into(),
+            icon: Glyph::SquarePen,
+            action: PaletteAction::CreateConversation { project: None, backend, source_revision },
+        });
+        self.open_palette(items, true, window, cx);
+    }
+
     pub(crate) fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.closing {
             return;
         }
         let items = self.build_command_palette_items(cx);
+        self.open_palette(items, false, window, cx);
+    }
+
+    fn open_palette(
+        &mut self,
+        items: Vec<PaletteItem>,
+        project_picker: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (title, placeholder) = palette_labels(project_picker);
         let app = cx.weak_entity();
         let palette_view = cx.new(|cx: &mut Context<CommandPalette>| {
             let query = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder(tr("输入命令、会话、项目或设置项…"))
+                InputState::new(window, cx).placeholder(placeholder)
             });
             cx.subscribe(&query, |this: &mut CommandPalette, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -76,13 +175,14 @@ impl HiveApp {
                 items,
                 selected: 0,
                 scroll: ScrollHandle::new(),
+                project_picker,
             }
         });
         let focus = palette_view.read(cx).query.read(cx).focus_handle(cx);
         let palette_width = (window.viewport_size().width - px(40.)).min(px(580.));
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
-                .title(tr("快捷命令面板"))
+                .title(title)
                 .w(palette_width)
                 .on_ok(|_, _, _| false)
                 .child(palette_view.clone())
@@ -97,7 +197,7 @@ impl HiveApp {
         items.push(PaletteItem {
             group: "操作",
             title: tr("新建会话").to_owned(),
-            subtitle: Some(tr("在当前工作区创建新对话").to_owned()),
+            subtitle: Some(tr("有多个项目时先选择项目").to_owned()),
             keywords: "new chat session thread 新建 会话".into(),
             icon: Glyph::SquarePen,
             action: PaletteAction::NewSession,
@@ -247,15 +347,10 @@ impl CommandPalette {
         window.close_dialog(cx);
         let _ = app.update(cx, |this, cx| {
             match action {
-                PaletteAction::NewSession => {
-                    if this.connected && !this.closing && !this.loading && this.workspace_writes_allowed() {
-                        let backend = this
-                            .session
-                            .as_ref()
-                            .map(|s| s.backend.wire())
-                            .unwrap_or("pi");
-                        this.hide_terminal(cx);
-                        this.new_session(backend, cx);
+                PaletteAction::NewSession => this.start_new_conversation(false, window, cx),
+                PaletteAction::CreateConversation { project, backend, source_revision } => {
+                    if this.open_request == source_revision && this.can_start_new_conversation() {
+                        this.create_new_session(project, backend, None, Some(window), cx);
                     }
                 }
                 PaletteAction::ToggleSidebar => {
@@ -301,6 +396,23 @@ impl CommandPalette {
             }
             cx.notify();
         });
+    }
+
+    fn has_marked_text(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.query.update(cx, |input, cx| input.marked_text_range(window, cx).is_some())
+    }
+
+    fn select_project_row(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.has_marked_text(window, cx) {
+            return;
+        }
+        let len = self.filtered_items(cx).len();
+        if len > 0 {
+            self.selected = (self.selected + if forward { 1 } else { len - 1 }) % len;
+            self.scroll.scroll_to_item(self.selected);
+            cx.notify();
+        }
+        cx.stop_propagation();
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -354,11 +466,26 @@ impl Render for CommandPalette {
         v_flex()
             .w_full()
             .gap_2p5()
-            .on_key_down(cx.listener(Self::on_key_down))
+            .when(!self.project_picker, |view| view.on_key_down(cx.listener(Self::on_key_down)))
             .child(
-                Input::new(&self.query)
-                    .cleanable(true)
-                    .prefix(Icon::new(Glyph::Search).size(px(14.)).text_color(Color::Muted.get(cx))),
+                div()
+                    .when(self.project_picker, |view| {
+                        view.capture_action(cx.listener(|this, action: &Enter, window, cx| {
+                            if !action.secondary && !action.shift && !this.has_marked_text(window, cx) {
+                                cx.stop_propagation();
+                                let action = this.filtered_items(cx).get(this.selected).map(|item| item.action.clone());
+                                if let Some(action) = action {
+                                    this.execute(action, window, cx);
+                                }
+                            }
+                        }))
+                        .capture_action(cx.listener(|this, _: &MoveDown, window, cx| this.select_project_row(true, window, cx)))
+                        .capture_action(cx.listener(|this, _: &MoveUp, window, cx| this.select_project_row(false, window, cx)))
+                    })
+                    .child(Input::new(&self.query)
+                        .aria_label(palette_labels(self.project_picker).1)
+                        .cleanable(true)
+                        .prefix(Icon::new(Glyph::Search).size(px(14.)).text_color(Color::Muted.get(cx)))),
             )
             .child(
                 div()
@@ -379,14 +506,20 @@ impl Render for CommandPalette {
                                         .text_center()
                                         .text_xs()
                                         .text_color(Color::Muted.get(cx))
-                                        .child(tr("没有匹配的命令、会话或设置项")),
+                                        .child(if self.project_picker { tr("没有匹配的项目") } else { tr("没有匹配的命令、会话或设置项") }),
                                 )
                             })
                             .children(filtered.into_iter().enumerate().map(|(ix, item)| {
                                 let is_sel = ix == selected;
                                 let action = item.action.clone();
+                                let accessible_name = match &item.subtitle {
+                                    Some(detail) => format!("{} · {detail}", item.title),
+                                    None => item.title.clone(),
+                                };
                                 Button::new(("palette-item", ix))
                                     .custom(palette::sidebar_item_variant(is_sel, cx))
+                                    .accessibility_label(accessible_name)
+                                    .selected(is_sel)
                                     .w_full()
                                     .h_auto()
                                     .px_2p5()

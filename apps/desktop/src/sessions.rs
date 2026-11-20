@@ -16,6 +16,12 @@ enum ConversationOpen {
     Connect(NativeSessionPanel),
 }
 
+#[derive(serde::Deserialize)]
+struct ScratchConversation {
+    workspace: Workspace,
+    session: Session,
+}
+
 pub(crate) enum NativeSessionPanel {
     Models,
     Commands,
@@ -597,109 +603,167 @@ impl HiveApp {
         backend: &'static str,
         cx: &mut Context<Self>,
     ) {
-        if !self.connected
-            || self.closing
-            || self.workspace_removing.as_ref() == Some(&project)
-            || !self
-                .workspaces
-                .iter()
-                .any(|workspace| workspace.id == project)
-        {
-            return;
-        }
-        if self.workspace.as_ref() != Some(&project) {
-            self.select_workspace(project, cx);
-        }
-        self.new_session(backend, cx);
+        self.create_new_session(Some(project), backend, None, None, cx);
     }
 
     pub fn new_session(&mut self, backend: &'static str, cx: &mut Context<Self>) {
         self.new_session_with_profile(backend, None, cx);
     }
 
-    pub(crate) fn new_session_with_profile(&mut self, backend: &'static str, profile: Option<crate::agent_profiles::ProfileRef>, cx: &mut Context<Self>) {
-        if !self.workspace_writes_allowed() || !self.connected {
-            return;
+    pub(crate) fn new_session_with_profile(
+        &mut self,
+        backend: &'static str,
+        profile: Option<crate::agent_profiles::ProfileRef>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(project) = self.workspace.clone() {
+            self.create_new_session(Some(project), backend, profile, None, cx);
         }
-        let Some(workspace) = self.workspace.clone() else {
-            return;
-        };
-        self.showing_welcome_guide = false;
-        if self
-            .attachments
-            .loading
-            .contains(&format!("workspace:{workspace}"))
+    }
+
+    pub(crate) fn create_new_session(
+        &mut self,
+        project: Option<String>,
+        backend: &'static str,
+        profile: Option<crate::agent_profiles::ProfileRef>,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::app::ErrorNotice;
+
+        if !self.connected
+            || self.closing
+            || self.new_session_creation == Some(self.connection_generation)
+            || !self.workspace_writes_allowed()
+            || project.as_ref().is_some_and(|id| {
+                self.workspace_removing.as_ref() == Some(id)
+                    || !self.workspaces.iter().any(|workspace| &workspace.id == id)
+                    || self.attachments.loading.contains(&format!("workspace:{id}"))
+            })
+            || (project.is_none() && self.workspace_removing.is_some())
         {
             return;
         }
         let Some(runtime) = self.runtime.clone() else {
-            self.error = Some("后台尚未连接".into());
             return;
         };
+        let scratch_id = if project.is_none() {
+            let request = self.scratch_session_retry.get_or_insert_with(|| {
+                (backend, uuid::Uuid::new_v4().to_string())
+            });
+            if request.0 != backend {
+                *request = (backend, uuid::Uuid::new_v4().to_string());
+            }
+            Some(request.1.clone())
+        } else {
+            None
+        };
+
         let connection = self.connection_generation;
         let open_request = self.open_request;
-        let mut params = json!({"workspaceId":workspace,"backend":backend});
-        if let Some(profile) = &profile { params["profile"] = json!(profile); }
+        let welcome = self.showing_welcome_guide;
+        let narrow = window.is_some_and(|window| window.viewport_size().width < px(820.));
+        let hide_terminal = window.is_some();
+        self.new_session_creation = Some(connection);
+        let (method, mut params) = if let Some(project) = &project {
+            ("chat.createRecord", json!({"workspaceId": project, "backend": backend}))
+        } else {
+            ("chat.createScratchRecord", json!({"requestId": scratch_id, "backend": backend}))
+        };
+        if let Some(reference) = &profile {
+            params["profile"] = json!(reference);
+        }
+        cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .request(
-                    "chat.createRecord",
-                    params,
-                )
-                .await;
+            let result = runtime.request(method, params).await;
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection {
                     return;
                 }
-                match result {
-                    Ok(value) => match serde_json::from_value::<Session>(value) {
-                        Ok(session) => {
-                            if profile.as_ref().is_some_and(|reference| session.profile.as_ref() != Some(reference)) {
-                                this.error = Some("创建会话返回的配置引用不匹配".into());
-                                cx.notify();
-                                return;
-                            }
-                            if this.workspace.as_ref() == Some(&session.workspace_id)
-                                && this.open_request == open_request
-                                && this.workspace_writes_allowed()
+                this.new_session_creation = None;
+                let result = result
+                    .map_err(|error| ErrorNotice::Detail("创建会话失败", format!("{backend}: {error}")))
+                    .and_then(|value| {
+                        let parsed = if scratch_id.is_some() {
+                            serde_json::from_value::<ScratchConversation>(value)
+                                .map(|response| (Some(response.workspace), response.session))
+                        } else {
+                            serde_json::from_value::<Session>(value).map(|session| (None, session))
+                        };
+                        let (workspace, session) = parsed.map_err(|error| {
+                            ErrorNotice::Detail("创建会话响应错误", error.to_string())
+                        })?;
+                        let expected = project.as_deref()
+                            .or_else(|| workspace.as_ref().map(|item| item.id.as_str()));
+                        if session.id.is_empty()
+                            || expected != Some(session.workspace_id.as_str())
+                            || session.backend.wire() != backend
+                            || profile.as_ref().is_some_and(|reference| session.profile.as_ref() != Some(reference))
+                            || scratch_id.as_ref().is_some_and(|id| id != &session.id || !session.scratch)
+                        {
+                            return Err(ErrorNotice::Message("创建会话返回的会话身份不匹配"));
+                        }
+                        if let Some(workspace) = workspace {
+                            if workspace.id.is_empty()
+                                || !std::path::Path::new(&workspace.path).is_absolute()
+                                || this.workspaces.iter().any(|item| {
+                                    (item.id == workspace.id) != (item.path == workspace.path)
+                                })
                             {
-                                this.sessions.retain(|existing| existing.id != session.id);
-                                this.sessions.insert(0, session.clone());
-                                this.close_collaboration();
-                                let workspace_draft = format!("workspace:{}", session.workspace_id);
-                                let transfer = this.session.is_none()
-                                    && this.draft_owner.as_ref() == Some(&workspace_draft);
-                                let session_key = format!("session:{}", session.id);
-                                this.open_session(session.id, cx);
-                                this.focus_project_input = true;
-                                if transfer {
-                                    this.attachments
-                                        .transfer(&workspace_draft, session_key.clone());
-                                    if let Some(text) = this.drafts.remove(&workspace_draft) {
-                                        this.drafts.insert(session_key, text);
-                                    }
-                                }
+                                return Err(ErrorNotice::Message("返回的临时工作区与现有项目冲突"));
+                            }
+                            this.scratch_session_retry = None;
+                            if !this.workspaces.iter().any(|item| item.id == workspace.id) {
+                                this.workspaces.push(workspace);
                             }
                         }
-                        Err(error) => {
-                            this.error = Some(crate::app::ErrorNotice::Detail(
-                                "创建会话响应错误",
-                                error.to_string(),
-                            ))
+                        Ok(session)
+                    });
+
+                match result {
+                    Ok(session) if this.open_request == open_request
+                        && this.showing_welcome_guide == welcome
+                        && this.connected
+                        && !this.closing
+                        && !this.settings_panel
+                        && !this.roles.visible
+                        && this.workspace_writes_allowed()
+                        && !this.removed_sessions.contains(&session.id)
+                        && this.workspace_removing.as_ref() != Some(&session.workspace_id)
+                        && this.workspaces.iter().any(|item| item.id == session.workspace_id) =>
+                    {
+                        if hide_terminal {
+                            this.hide_terminal(cx);
                         }
-                    },
-                    Err(error) => {
-                        this.error = Some(crate::app::ErrorNotice::Detail(
-                            "创建会话失败",
-                            format!("{backend}: {error}"),
-                        ))
+                        let opened = if this.workspace.as_ref() == Some(&session.workspace_id) {
+                            if narrow {
+                                this.sidebar_open = false;
+                            }
+                            this.accept_created_session(session, cx)
+                        } else {
+                            // The first save for the new project must already identify the new session.
+                            this.navigation.sessions.insert(session.workspace_id.clone(), session.id.clone());
+                            this.navigate_to_session_at(session, ConversationOpen::Resume, narrow, cx)
+                        };
+                        if opened {
+                            this.focus_project_input = true;
+                            if welcome {
+                                this.mark_welcome_started(cx);
+                            }
+                        }
                     }
+                    Ok(session) => {
+                        this.refresh_project_sessions(session.workspace_id, cx);
+                    }
+                    Err(error) if this.open_request == open_request => this.error = Some(error),
+                    Err(_) => (),
                 }
                 cx.notify();
             });
         })
         .detach();
     }
+
     pub(crate) fn accept_created_session(
         &mut self,
         session: Session,
@@ -734,14 +798,19 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.navigate_to_session_at(session, ConversationOpen::Resume, window, cx)
+        self.navigate_to_session_at(
+            session,
+            ConversationOpen::Resume,
+            window.viewport_size().width < px(820.),
+            cx,
+        )
     }
 
     fn navigate_to_session_at(
         &mut self,
         session: Session,
         target: ConversationOpen,
-        window: &mut Window,
+        narrow: bool,
         cx: &mut Context<Self>,
     ) -> bool {
         if !self.connected
@@ -755,7 +824,7 @@ impl HiveApp {
         {
             return false;
         }
-        if window.viewport_size().width < px(820.) {
+        if narrow {
             self.sidebar_open = false;
         }
         self.close_collaboration();
@@ -793,7 +862,7 @@ impl HiveApp {
         let target = hit.body_match.map_or(ConversationOpen::Resume, |body| {
             ConversationOpen::Focus(body.message_id)
         });
-        self.navigate_to_session_at(hit.session, target, window, cx)
+        self.navigate_to_session_at(hit.session, target, window.viewport_size().width < px(820.), cx)
     }
 
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {

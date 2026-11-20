@@ -8,8 +8,8 @@ pub(in crate::collaboration) use self::badge::InboxBadge;
 use self::placement::{InboxSections, RowId, RowPlacement};
 use super::snoozes::now_ms;
 use super::{
-    ActionCenter, Destination, Entry, InboxRowInteraction, Reminders, inbox_row, inbox_status,
-    is_snoozed, read_action_center, same_wake_target, toggle_button,
+    ActionCenter, Destination, Entry, InboxRowInteraction, Reminders, SNOOZE_CHANGED, inbox_row,
+    inbox_status, is_snoozed, read_action_center, toggle_button,
 };
 use crate::{
     app::HiveApp,
@@ -823,7 +823,7 @@ impl Render for GlobalInbox {
             let title = display_project(project, &app.workspaces);
             let data = &self.projects[id];
             let reminders = &data.reminders;
-            let snoozed = is_snoozed(&entry, reminders, now);
+            let reminder = reminders.active_reminder(&entry, now);
             if !awaiting_position
                 && let Some(item) = data.badge_item(app, id, &entry, now)
                 && !app.collaboration.inbox_badge.sees(&item)
@@ -884,37 +884,35 @@ impl Render for GlobalInbox {
                 &id,
                 Some(title),
                 entry,
-                snoozed,
+                reminder,
                 reminders.saved.is_some(),
                 open,
                 &self.scroll,
                 cx,
                 Some(interaction),
-                move |this, workspace, key, delay, wake, cx| {
+                move |this, edit, delay, cx| {
+                    let workspace = edit.workspace.as_str();
                     if !this.is_current(connection, cx) {
-                        return Err("收件箱事项已变更，请关闭后重新选择。");
+                        return Err(SNOOZE_CHANGED);
                     }
                     let Some(app) = this.app.upgrade() else {
-                        return Err("收件箱事项已变更，请关闭后重新选择。");
+                        return Err(SNOOZE_CHANGED);
                     };
                     let Some(project) = this.projects.get_mut(workspace) else {
-                        return Err("收件箱事项已变更，请关闭后重新选择。");
+                        return Err(SNOOZE_CHANGED);
                     };
                     let state = app.read(cx);
                     if !state.workspaces.iter().any(|item| item.id == workspace)
                         || state.workspace_removing.as_deref() == Some(workspace)
-                        || !project.entries(state).iter().any(|entry| {
-                            entry.snooze_key.as_deref() == Some(key)
-                                && (delay.is_none() || same_wake_target(&entry.wake, wake))
-                        })
+                        || !project
+                            .entries(state)
+                            .iter()
+                            .any(|entry| edit.matches(entry))
                     {
-                        return Err("收件箱事项已变更，请关闭后重新选择。");
+                        return Err(SNOOZE_CHANGED);
                     }
                     let root = state.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
-                    let reminder = delay
-                        .map(|delay| delay.reminder(now_ms(), wake))
-                        .transpose()?;
-                    let result = project.reminders.set(root, workspace, key, reminder);
+                    let result = project.reminders.set(root, edit, delay);
                     if result.is_ok()
                         && state.workspace.as_deref() == Some(workspace)
                         && state.collaboration.visible

@@ -95,8 +95,23 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 收件箱先取消自定义暂缓，确认没有写入。将 Beacon 问题改为当地 11:37 后保存，磁盘记录与所选时刻一致。冷启动后仍在暂缓区，新问题到来时原事项提前恢复。从等待 Agent 区段将 Atlas 的事项暂缓到 15:42，保存的时间与辅助技术读到的日期、时间和时区一致。证据在 `.artifacts/inbox-custom-qa`。
 - 203 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 通过交叉类型检查，Windows 原生交互待复验。TypeScript 检查、运行时构建、项目文件和工作树引用、Scratch 创建和转项目、工作区删除专项通过。
 
+## 2026-11-21 第八批
+
+本轮从 Hive Desktop `2e0ef71` 开始。参考默认分支为 T3 Code `c813e7d`、Cindy `79d93b1`、Beluga `45a484b`，Hive 上游为 `18861b8`。
+
+- **从全局新建入口选择新对话的项目。** 多个项目时可以按名称或路径搜索，选择后再创建。关闭选择器可以回到原位置继续写草稿。`Cmd/Ctrl+Shift+N` 或按住 Shift 点击新建可直接用当前项目。还可以在专用 Scratch 文件夹开始，不必先选已有项目。 [T3 Code 新对话](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L8-L13) · [快捷键](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/packages/shared/src/keybindings.ts#L108-L112)
+- **在暂缓列表查看和调整唤回时间。** 两个收件箱都显示当前时区的唤回时刻或「无限期」。重新打开自定义调整时带入原时刻。菜单增加 3 小时、今晚 18:00、明天 09:00 和下周一 09:00。过了今晚的时刻就收起该项。事项提前唤回或已经改期时，旧操作不可覆盖新状态。 [Cindy 暂缓规则](https://github.com/makecindy/cindy/blob/79d93b160b97f7617f02a8821bfde976fa02f4b5/docs/product-rules/task-inbox.md#L75-L89)
+- **用键盘展开文件预览并返回。** 在文件浏览区按 `Cmd/Ctrl+Enter` 展开当前已读入的文件，按 Esc 回到原位置。停靠面板和窄窗的文件弹层共用这套操作。在搜索框和聊天输入区可继续使用原有快捷键。 [Beluga 预览快捷键](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L110-L113)
+
+- macOS 从 Alpha 按 `Cmd+N`，按 Esc 后直接继续打字，原草稿和附件仍在。在选择器按路径找到 Beta 后用 Return 确认。将实际创建回包延迟四秒，界面在等待期间留在 Alpha。收到回包后打开新 Beta 会话，首次持久化导航就使用它的准确 ID。返回 Alpha 时原草稿和附件哈希一致。另验 `Cmd+Shift+N` 直接在当前 Beta 新建。证据在 `.artifacts/chooser-eighth-qa`。
+- macOS 使用全新数据目录，从欢迎页按 `Cmd+N`，屏幕阅读器可读出「不使用项目」，按 Return 创建并打开同一条 Scratch 会话。证据在 `.artifacts/chooser-scratch-eighth-qa/receipt.json`。
+- macOS 跨项目收件箱实测用「明天 09:00」保存，列表显示该时刻。打开自定义调整时带入 09:00，调整到 12:43 后核对磁盘上的同一事项和精确时间。重新打开调整，插入同一派单的新消息后，旧表单保存时保留错误提示，事项保持唤回。证据在 `.artifacts/snooze-eighth-qa`。
+- macOS 串联验证停靠和 900 像素窄窗。搜索框内按 `Cmd+Enter` 保留搜索，选中文件后按相同快捷键展开第 350 行命中。Esc 返回后仍有原查询、命中行和文件预览。窄窗中 Esc 只关闭展开阅读层，返回原文件树和预览。宽窗返回后不点鼠标，再按相同快捷键可以重新展开，验证了焦点恢复。证据在 `.artifacts/reader-keys-qa/receipt.md`。
+- 复测最初对照 Maka 发现的旧消息定位问题。对 10,000 条消息请求最近一页和第 50 条附近，各返回 120 条。定位页保留向前和向后游标。现有分页专项还验证了两向完整遍历。证据在 `.artifacts/competitive-ux/eighth/old-history-anchor.json` 和 `history-window.log`。 [Maka Rust 分支的游标查询](https://github.com/apache/maka/blob/871e747340088c98d69584eb8bdd5b9b3df84bd3/plugins/agent/state/src/session_history/source_tree/queries.rs#L83-L104)
+- 209 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 交叉类型检查、TypeScript 检查、Scratch 和历史分页专项通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **多个项目时从全局快捷键选择新对话的归属。** 同时打开两个项目，用新建快捷键选择另一个项目，确认选择前保留草稿，取消后还在原会话。随后检查在当前项目直接新建和未发送草稿改项目的交互。 [T3 Code 新对话](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L8-L13) · [在项目间切换草稿](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L25-L33)
-- **查看已暂缓事项的唤回时间。** 在一个列表放入到期、未来和无限期事项，检查能否从列表直接区分，也能否重新指定时间。根据本地作息补充今晚、明早、下周一等日历快捷项。 [Cindy 暂缓规则](https://github.com/makecindy/cindy/blob/79d93b160b97f7617f02a8821bfde976fa02f4b5/docs/product-rules/task-inbox.md#L75-L89)
-- **从文件预览用键盘展开和返回。** 复验停靠面板与窄窗弹层。展开时保留正文命中，返回时恢复原控件焦点，快捷键在聊天输入或搜索字段内继续执行原操作。 [Beluga 预览快捷键](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L110-L113)
+- **把未发送的草稿带到另一个项目。** 从一个项目的空对话写入草稿和附件，再切换目标。核对文本与附件一起到达，来源草稿在目标读取失败时仍能恢复，两个项目原有草稿都有清楚的归属。 [T3 Code 草稿换项目](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L25-L33)
+- **让收件箱的暂缓操作能当场撤销。** 暂缓或取消暂缓后，从同一窗口撤销并恢复原唤回时间。用两条并发变化的事项核对，后来到的回复仍按原规则唤回。 [T3 Code 操作撤销](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L65-L69) · [Cindy 收件箱行操作](https://github.com/makecindy/cindy/blob/79d93b160b97f7617f02a8821bfde976fa02f4b5/docs/product-rules/task-inbox.md#L59-L64)
+- **在文件面板阅读 Markdown 并随时看源码。** 用带标题、代码块、链接及搜索命中的 README 走一遍紧凑和展开预览。切回源码时保持原文件、搜索行和范围。 [Beluga Markdown 预览](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L97-L118)

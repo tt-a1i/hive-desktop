@@ -121,20 +121,49 @@ impl Snoozes {
                 .is_some_and(|item| !item.expired(now))
     }
 
+    pub(super) fn active_reminder(&self, key: &str, now: u64) -> Option<Reminder> {
+        self.reminders
+            .get(key)
+            .filter(|reminder| !reminder.expired(now))
+            .cloned()
+            .or_else(|| self.keys.contains(key).then(Reminder::default))
+    }
+
+    pub(super) fn edit(
+        root: &Path,
+        workspace: &str,
+        key: &str,
+        previous: Option<&Reminder>,
+        next: Option<Reminder>,
+        now: u64,
+    ) -> io::Result<(Self, bool)> {
+        let mut applied = false;
+        let saved = Self::update(root, workspace, |saved| {
+            if saved.active_reminder(key, now).as_ref() == previous {
+                saved.assign(key, next);
+                applied = true;
+            }
+        })?;
+        Ok((saved, applied))
+    }
+
+    #[cfg(test)]
     pub(super) fn set(
         root: &Path,
         workspace: &str,
         key: &str,
         reminder: Option<Reminder>,
     ) -> io::Result<Self> {
-        Self::update(root, workspace, |saved| {
-            saved.keys.remove(key);
-            if let Some(reminder) = reminder {
-                saved.reminders.insert(key.to_owned(), reminder);
-            } else {
-                saved.reminders.remove(key);
-            }
-        })
+        Self::update(root, workspace, |saved| saved.assign(key, reminder))
+    }
+
+    fn assign(&mut self, key: &str, reminder: Option<Reminder>) {
+        self.keys.remove(key);
+        if let Some(reminder) = reminder {
+            self.reminders.insert(key.to_owned(), reminder);
+        } else {
+            self.reminders.remove(key);
+        }
     }
 
     pub(super) fn reconcile(
@@ -370,6 +399,97 @@ mod tests {
                 .unwrap()
                 .active(key, until)
         );
+    }
+
+    #[test]
+    fn rescheduling_checks_the_old_reminder_and_cannot_recreate_it_after_wake() {
+        let root = tempfile::tempdir().unwrap();
+        let key = "message:old";
+        let wake = Some(Wake::Dispatch {
+            id: DISPATCH.into(),
+            sequence: Some(7),
+            observed_at: 0,
+        });
+        let original = Delay::Until(5_000).reminder(100, &wake).unwrap();
+        Snoozes::set(root.path(), WORKSPACE, key, Some(original.clone())).unwrap();
+        let revision = Delay::Until(10_000).reminder(200, &wake).unwrap();
+        let (_, applied) = Snoozes::edit(
+            root.path(),
+            WORKSPACE,
+            key,
+            Some(&original),
+            Some(revision.clone()),
+            200,
+        )
+        .unwrap();
+        assert!(applied);
+        assert_eq!(
+            Snoozes::load(root.path(), WORKSPACE)
+                .unwrap()
+                .active_reminder(key, 200),
+            Some(revision.clone())
+        );
+        let path = Snoozes::path(root.path(), WORKSPACE).unwrap();
+        let saved_bytes = fs::read(&path).unwrap();
+        for (expected, now) in [(&original, 200), (&revision, 10_000)] {
+            let next = Delay::Until(30_000).reminder(now, &wake).unwrap();
+            let (_, applied) =
+                Snoozes::edit(root.path(), WORKSPACE, key, Some(expected), Some(next), now)
+                    .unwrap();
+            assert!(!applied);
+            assert_eq!(fs::read(&path).unwrap(), saved_bytes);
+        }
+        let fresh = snapshot(&[message(WORKSPACE, DISPATCH, "fresh", 8, 300)]);
+        Snoozes::load(root.path(), WORKSPACE)
+            .unwrap()
+            .reconcile(root.path(), 300, Some(&fresh), &BTreeMap::new())
+            .unwrap_or_else(|(_, error)| panic!("{error}"));
+        let next = Delay::Until(30_000).reminder(300, &wake).unwrap();
+        let (saved, applied) = Snoozes::edit(
+            root.path(),
+            WORKSPACE,
+            key,
+            Some(&revision),
+            Some(next),
+            300,
+        )
+        .unwrap();
+        assert!(!applied);
+        assert!(!saved.active(key, 300));
+    }
+
+    #[test]
+    fn legacy_indefinite_reminders_can_be_rescheduled() {
+        let root = tempfile::tempdir().unwrap();
+        let key = "message:old";
+        let path = Snoozes::path(root.path(), WORKSPACE).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            json!({"workspace_id": WORKSPACE, "keys": [key]}).to_string(),
+        )
+        .unwrap();
+        let previous = Snoozes::load(root.path(), WORKSPACE)
+            .unwrap()
+            .active_reminder(key, 100)
+            .unwrap();
+        assert_eq!(previous.expires_at, None);
+        let next = Delay::Until(50_000).reminder(100, &None).unwrap();
+        let (saved, applied) = Snoozes::edit(
+            root.path(),
+            WORKSPACE,
+            key,
+            Some(&previous),
+            Some(next),
+            100,
+        )
+        .unwrap();
+        assert!(applied);
+        assert_eq!(
+            saved.active_reminder(key, 100).unwrap().expires_at,
+            Some(50_000)
+        );
+        assert!(saved.keys.is_empty());
     }
 
     #[test]

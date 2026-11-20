@@ -311,6 +311,8 @@ impl HiveApp {
         })
         .icon(if id == "home-agent" {
             Glyph::Sparkles
+        } else if id == "new-session-menu" {
+            Glyph::ChevronDown
         } else if project.is_some() {
             Glyph::Plus
         } else {
@@ -319,20 +321,7 @@ impl HiveApp {
         .when(id != "new-session-menu" && project.is_none(), |b| {
             b.label(label)
         })
-        .tooltip(
-            project_label.clone().unwrap_or_else(|| {
-                if id == "new-session-menu" {
-                    crate::keybindings::hint(
-                        crate::keybindings::Target::NewSession,
-                        "新建会话，选择 Agent 后端",
-                        cx,
-                    )
-                    .into()
-                } else {
-                    tr("新建会话，选择 Agent 后端").into()
-                }
-            }),
-        )
+        .tooltip(project_label.clone().unwrap_or_else(|| tr("新建会话，选择 Agent 后端").into()))
         .accessibility_label(project_label.unwrap_or_else(|| {
             if id == "new-session-menu" {
                 tr("新建会话，选择 Agent 后端").into()
@@ -388,9 +377,18 @@ impl HiveApp {
                 menu = menu.item(PopupMenuItem::new(format!("{} · {} · r{}", profile.label, backend, profile.current_revision)).on_click(move |_, window, cx| {
                     let _ = weak.update(cx, |this, cx| {
                         if window.viewport_size().width < px(820.) { this.sidebar_open = false; }
-                        if let Some(project) = &target { if this.workspace.as_ref() != Some(project) { this.select_workspace(project.clone(), cx); } }
-                        this.new_session_with_profile(backend, Some(reference.clone()), cx);
+                        if let Some(project) = &target {
+                            this.create_new_session(Some(project.clone()), backend, Some(reference.clone()), None, cx);
+                        } else {
+                            this.new_session_with_profile(backend, Some(reference.clone()), cx);
+                        }
                     });
+                }));
+            }
+            if id == "new-session-menu" {
+                let scratch = weak.clone();
+                menu = menu.separator().item(PopupMenuItem::new(tr("不使用项目")).on_click(move |_, window, cx| {
+                    let _ = scratch.update(cx, |this, cx| this.start_scratch_conversation(window, cx));
                 }));
             }
             let isolated = weak.clone();
@@ -780,6 +778,26 @@ impl HiveApp {
                                 query.update(cx, |input, cx| input.set_value("", window, cx));
                                 this.add_workspace_open = !this.add_workspace_open;
                                 cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("new-conversation")
+                            .custom(palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(26.))
+                            .w(px(26.))
+                            .rounded_md()
+                            .icon(Glyph::SquarePen)
+                            .accessibility_label(tr("全局新建对话"))
+                            .tooltip(crate::keybindings::hint(
+                                crate::keybindings::Target::NewSession,
+                                "新建对话，Shift+点击在当前项目中创建",
+                                cx,
+                            ))
+                            .disabled(!self.can_start_new_conversation())
+                            .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
+                                this.start_new_conversation(event.modifiers().shift, window, cx);
                             })),
                     )
                     .child(self.new_chat_menu("new-session-menu", tr("新建会话"), None, cx)),

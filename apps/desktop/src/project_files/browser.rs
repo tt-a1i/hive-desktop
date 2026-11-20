@@ -180,13 +180,34 @@ struct EditorOpenIdentity {
 
 struct ExpandedFilePreview {
     browser: WeakEntity<FileBrowser>,
+    app: WeakEntity<HiveApp>,
     scope: Scope,
     scope_generation: u64,
     selection: Match,
     text: TextPages,
     scroll: ScrollHandle,
     focus: FocusHandle,
+    return_focus: Option<FocusHandle>,
     dismissed: bool,
+}
+
+fn is_expand_preview_chord(keystroke: &Keystroke, mac: bool) -> bool {
+    keystroke.key == "enter"
+        && keystroke.modifiers
+            == (Modifiers {
+                platform: mac,
+                control: !mac,
+                ..Modifiers::default()
+            })
+}
+
+fn expand_preview_hint(cx: &App) -> String {
+    let shortcut = if cx.platform_info().is_mac() {
+        "Cmd+Enter"
+    } else {
+        "Ctrl+Enter"
+    };
+    format!("{} ({shortcut})", tr("展开预览"))
 }
 
 fn preview_text(id: &'static str, text: &TextPages, cx: &App) -> Stateful<Div> {
@@ -436,6 +457,7 @@ pub(crate) struct FileBrowser {
     directories: HashMap<String, Directory>,
     expansions: Entity<FileTreeExpansions>,
     root_focus: FocusHandle,
+    browser_focus: FocusHandle,
     resize_focus: FocusHandle,
     tree_focus: FocusHandle,
     tree_selected: Option<TreeItem>,
@@ -631,6 +653,7 @@ impl HiveApp {
                 directories: HashMap::new(),
                 expansions,
                 root_focus: cx.focus_handle(),
+                browser_focus: cx.focus_handle(),
                 resize_focus: cx.focus_handle(),
                 tree_focus: cx.focus_handle(),
                 tree_selected: None,
@@ -1556,7 +1579,36 @@ impl FileBrowser {
         cx.notify();
     }
 
-    fn expand_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_expand_preview_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.is_held
+            || !is_expand_preview_chord(&event.keystroke, cx.platform_info().is_mac())
+            || !self.browser_focus.contains_focused(window, cx)
+            || self
+                .query
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        {
+            return;
+        }
+        if self.tree_focus.contains_focused(window, cx)
+            && self.preview.as_ref().is_some_and(|preview| {
+                !matches!(&self.tree_selected, Some(TreeItem::Entry(path)) if *path == preview.selection.path)
+            })
+        {
+            return;
+        }
+        if self.expand_preview(window, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn expand_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.current(cx)
             || self
                 .expanded_preview
@@ -1565,16 +1617,16 @@ impl FileBrowser {
                 .is_some()
             || self.docked && window.has_active_dialog(cx)
         {
-            return;
+            return false;
         }
         let Some(preview) = &self.preview else {
-            return;
+            return false;
         };
         let Some(text) = &preview.text else {
-            return;
+            return false;
         };
         let Some(scope) = self.scope.clone() else {
-            return;
+            return false;
         };
         let browser = cx.entity();
         let app = self.app.clone();
@@ -1583,6 +1635,9 @@ impl FileBrowser {
         let scroll = ScrollHandle::new();
         scroll.set_offset(preview.scroll.offset());
         let scope_generation = self.scope_generation;
+        let return_focus = window
+            .focused(cx)
+            .filter(|_| self.browser_focus.contains_focused(window, cx));
         let reader = cx.new(|cx| {
             cx.observe(&browser, |_, _, cx| cx.notify()).detach();
             if let Some(app) = app.upgrade() {
@@ -1590,12 +1645,14 @@ impl FileBrowser {
             }
             ExpandedFilePreview {
                 browser: browser.downgrade(),
+                app,
                 scope,
                 scope_generation,
                 selection,
                 text,
                 scroll,
                 focus: cx.focus_handle(),
+                return_focus,
                 dismissed: false,
             }
         });
@@ -1609,8 +1666,10 @@ impl FileBrowser {
                 .title(tr("文件预览"))
                 .w((window.viewport_size().width - px(48.)).min(px(1120.)))
                 .on_ok(|_, _, _| false)
-                .on_close(move |_, _, cx| {
-                    let _ = reader_owner.update(cx, |reader, _| reader.dismissed = true);
+                .on_close(move |_, window, cx| {
+                    let _ = reader_owner.update(cx, |reader, cx| {
+                        reader.restore_focus_after_close(window, cx)
+                    });
                 })
                 .child(reader.clone())
         });
@@ -1620,6 +1679,7 @@ impl FileBrowser {
                 focus.focus(window, cx);
             }
         });
+        true
     }
 
     fn file_row(&self, hit: Match, label: String, active: usize, cx: &Context<Self>) -> Button {
@@ -1938,10 +1998,10 @@ impl FileBrowser {
                                     .xsmall()
                                     .size(px(24.))
                                     .icon(Glyph::Maximize2)
-                                    .tooltip(tr("展开预览"))
+                                    .tooltip(expand_preview_hint(cx))
                                     .accessibility_label(tr("展开预览"))
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.expand_preview(window, cx)
+                                        this.expand_preview(window, cx);
                                     })),
                             )
                         })
@@ -2033,6 +2093,45 @@ impl ExpandedFilePreview {
         })
     }
 
+    fn restore_focus_after_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dismissed {
+            return;
+        }
+        let current = self.current(cx);
+        self.dismissed = true;
+        if let Some(browser) = self.browser.upgrade() {
+            let browser = browser.read(cx);
+            let docked = browser.docked;
+            let fallback = browser.browser_focus.clone();
+            let dock_visible = !docked
+                || self
+                    .app
+                    .upgrade()
+                    .is_some_and(|app| app.read(cx).can_dock_project_files(window));
+            if current && dock_visible {
+                let focus = self.return_focus.take().unwrap_or(fallback);
+                focus.focus(window, cx);
+                return;
+            }
+            if !docked && window.has_active_dialog(cx) {
+                fallback.focus(window, cx);
+                return;
+            }
+        }
+        if !window.has_active_dialog(cx) {
+            let composer = self.app.upgrade().and_then(|app| {
+                let app = app.read(cx);
+                app.viewing_conversation()
+                    .then(|| app.input.read(cx).focus_handle(cx))
+            });
+            if let Some(focus) = composer {
+                focus.focus(window, cx);
+            } else {
+                window.blur(cx);
+            }
+        }
+    }
+
     fn page(&mut self, step: isize, cx: &mut Context<Self>) {
         if self.current(cx) && step_preview(&mut self.text, &mut self.scroll, step) {
             cx.notify();
@@ -2046,9 +2145,10 @@ impl Render for ExpandedFilePreview {
             .outline()
             .small()
             .label(tr("返回文件"))
+            .tooltip(format!("{} (Esc)", tr("返回文件")))
             .on_click(cx.listener(|this, _, window, cx| {
-                this.dismissed = true;
                 window.close_dialog(cx);
+                this.restore_focus_after_close(window, cx);
             }));
         let view = v_flex().w_full().min_w_0().gap_3();
         if !self.current(cx) {
@@ -2150,6 +2250,10 @@ impl Render for ExpandedFilePreview {
 impl Render for FileBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut view = v_flex()
+            .id("project-file-browser-body")
+            .track_focus(&self.browser_focus)
+            .tab_stop(false)
+            .capture_key_down(cx.listener(Self::handle_expand_preview_key))
             .min_w_0()
             .gap_2()
             .when(self.docked, |view| view.size_full().min_h_0());
@@ -2447,9 +2551,10 @@ mod tests {
     use super::{
         Directory, DirectoryEntry, EditorOpenIdentity, FILE_TREE_STATUS_LIMIT, FileError,
         FileReveal, FileTreeExpansions, Match, RevealStep, Scope, TextPages, TreeRow, TreeScope,
-        TreeSource, dock_width, json, px, step_preview, unrequested_expansions, visible_tree,
+        TreeSource, dock_width, is_expand_preview_chord, json, px, step_preview,
+        unrequested_expansions, visible_tree,
     };
-    use gpui_kit::{ScrollHandle, point};
+    use gpui_kit::{Keystroke, Modifiers, ScrollHandle, point};
     use std::collections::{HashMap, HashSet};
 
     #[test]
@@ -2467,6 +2572,42 @@ mod tests {
         assert_eq!(dock_width(preferred, px(1000.)), Some(px(400.)));
         assert_eq!(dock_width(preferred, px(900.)), None);
         assert_eq!(dock_width(preferred, px(1200.)), preferred);
+    }
+
+    #[test]
+    fn preview_expand_accepts_only_the_platform_modified_enter() {
+        let command = Modifiers {
+            platform: true,
+            ..Default::default()
+        };
+        let control = Modifiers {
+            control: true,
+            ..Default::default()
+        };
+        let key = |key: &str, modifiers| Keystroke {
+            key: key.into(),
+            key_char: None,
+            modifiers,
+        };
+        assert!(is_expand_preview_chord(&key("enter", command), true));
+        assert!(is_expand_preview_chord(&key("enter", control), false));
+        assert!(!is_expand_preview_chord(&key("enter", control), true));
+        assert!(!is_expand_preview_chord(&key("enter", command), false));
+        assert!(!is_expand_preview_chord(
+            &key("enter", Modifiers::none()),
+            true
+        ));
+        assert!(!is_expand_preview_chord(
+            &key(
+                "enter",
+                Modifiers {
+                    shift: true,
+                    ..command
+                }
+            ),
+            true
+        ));
+        assert!(!is_expand_preview_chord(&key("escape", command), true));
     }
 
     fn session_with_execution_path(id: &str, path: Option<&str>) -> crate::protocol::Session {

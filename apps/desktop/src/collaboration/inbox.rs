@@ -55,6 +55,21 @@ struct Reminders {
     write_error: Option<io::Error>,
 }
 
+const SNOOZE_CHANGED: &str = "收件箱事项已变更，请关闭后重新选择。";
+
+struct SnoozeEdit {
+    workspace: String,
+    key: String,
+    wake: Option<Wake>,
+    previous: Option<Reminder>,
+}
+
+impl SnoozeEdit {
+    fn matches(&self, entry: &Entry) -> bool {
+        entry.snooze_key.as_ref() == Some(&self.key) && same_wake_target(&entry.wake, &self.wake)
+    }
+}
+
 impl Reminders {
     fn reconcile(
         &mut self,
@@ -87,24 +102,40 @@ impl Reminders {
     fn set(
         &mut self,
         root: &std::path::Path,
-        workspace: &str,
-        key: &str,
-        reminder: Option<Reminder>,
+        edit: &SnoozeEdit,
+        delay: Option<Delay>,
     ) -> Result<(), &'static str> {
         if self.saved.is_none() {
             return Err("无法读取已暂缓事项");
         }
-        match Snoozes::set(root, workspace, key, reminder) {
-            Ok(saved) => {
+        let now = now_ms();
+        let next = delay
+            .map(|delay| delay.reminder(now, &edit.wake))
+            .transpose()?;
+        match Snoozes::edit(
+            root,
+            &edit.workspace,
+            &edit.key,
+            edit.previous.as_ref(),
+            next,
+            now,
+        ) {
+            Ok((saved, applied)) => {
                 self.saved = Some(saved);
                 self.write_error = None;
-                Ok(())
+                if applied { Ok(()) } else { Err(SNOOZE_CHANGED) }
             }
             Err(error) => {
                 self.write_error = Some(error);
                 Err("无法保存已暂缓事项")
             }
         }
+    }
+
+    fn active_reminder(&self, entry: &Entry, now: u64) -> Option<Reminder> {
+        self.saved
+            .as_ref()?
+            .active_reminder(entry.snooze_key.as_deref()?, now)
     }
 
     fn notice(&self) -> Option<(&'static str, &io::Error)> {
@@ -666,7 +697,9 @@ impl HiveApp {
                 },
             )
             .children(rows.into_iter().map(|(workspace, entry)| {
-                let hidden = snoozed(&entry);
+                let reminder = current
+                    .then(|| inbox.reminders.active_reminder(&entry, now))
+                    .flatten();
                 let workspace = workspace.to_owned();
                 let snooze_workspace = workspace.clone();
                 let target = entry.target.clone();
@@ -693,35 +726,29 @@ impl HiveApp {
                     &snooze_workspace,
                     None,
                     entry,
-                    hidden,
+                    reminder,
                     current && inbox.reminders.saved.is_some() && !self.closing,
                     action.disabled(!self.connected || self.closing),
                     scroll,
                     cx,
                     None,
-                    |this, workspace, key, delay, wake, cx| {
+                    |this, edit, delay, cx| {
+                        let workspace = edit.workspace.as_str();
                         if !this.connected
                             || this.closing
                             || this.workspace.as_deref() != Some(workspace)
                             || this.workspace_removing.as_deref() == Some(workspace)
                             || this.collaboration.inbox.workspace.as_deref() != Some(workspace)
                             || this.collaboration.inbox.connection != this.connection_generation
-                            || !this.scoped_entries(workspace).iter().any(|entry| {
-                                entry.snooze_key.as_deref() == Some(key)
-                                    && (delay.is_none() || same_wake_target(&entry.wake, wake))
-                            })
+                            || !this
+                                .scoped_entries(workspace)
+                                .iter()
+                                .any(|entry| edit.matches(entry))
                         {
-                            return Err("收件箱事项已变更，请关闭后重新选择。");
+                            return Err(SNOOZE_CHANGED);
                         }
                         let root = this.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
-                        let reminder = delay
-                            .map(|delay| delay.reminder(now_ms(), wake))
-                            .transpose()?;
-                        let result = this
-                            .collaboration
-                            .inbox
-                            .reminders
-                            .set(root, workspace, key, reminder);
+                        let result = this.collaboration.inbox.reminders.set(root, edit, delay);
                         cx.notify();
                         result
                     },
@@ -800,20 +827,13 @@ fn inbox_row<T: 'static>(
     workspace: &str,
     project: Option<String>,
     entry: Entry,
-    snoozed: bool,
+    reminder: Option<Reminder>,
     can_snooze: bool,
     open: Button,
     scroll: &ScrollHandle,
     cx: &Context<T>,
     interaction: Option<InboxRowInteraction>,
-    on_snooze: impl Fn(
-        &mut T,
-        &str,
-        &str,
-        Option<Delay>,
-        &Option<Wake>,
-        &mut Context<T>,
-    ) -> Result<(), &'static str>
+    on_snooze: impl Fn(&mut T, &SnoozeEdit, Option<Delay>, &mut Context<T>) -> Result<(), &'static str>
     + 'static,
 ) -> AnyElement {
     let label = tr(entry.label);
@@ -823,8 +843,19 @@ fn inbox_row<T: 'static>(
         .clone()
         .unwrap_or_else(|| entry.target.key());
     let row_id = format!("{workspace}:{row_key}");
-    let snooze_label = if snoozed {
-        tr("取消暂缓")
+    let wake_label = reminder.as_ref().map(|reminder| match reminder.expires_at {
+        Some(epoch) => format!(
+            "{} · {}",
+            tr("唤回时间"),
+            schedule::Deadline::from_epoch_local(epoch).map_or_else(
+                || tr("本地时间不可用").to_owned(),
+                |deadline| deadline.label()
+            )
+        ),
+        None => tr("无限期").to_owned(),
+    });
+    let snooze_label = if reminder.is_some() {
+        tr("调整暂缓时间")
     } else {
         tr("暂缓")
     };
@@ -868,7 +899,18 @@ fn inbox_row<T: 'static>(
                             .text_color(Color::Muted.get(cx))
                             .truncate()
                             .child(subject.clone()),
-                    ),
+                    )
+                    .when_some(wake_label, |details, wake_label| {
+                        details.child(
+                            div()
+                                .id("inbox-row-wake-time")
+                                .role(Role::Label)
+                                .aria_label(wake_label.clone())
+                                .text_xs()
+                                .text_color(Color::Muted.get(cx))
+                                .child(wake_label),
+                        )
+                    }),
             )
             .child(
                 h_flex()
@@ -883,29 +925,43 @@ fn inbox_row<T: 'static>(
                         })
                     })
                     .when_some(entry.snooze_key, |buttons, key| {
-                        let workspace = workspace.to_owned();
+                        let initial_deadline =
+                            reminder.as_ref().and_then(|reminder| reminder.expires_at);
+                        let editing = reminder.is_some();
+                        let edit = SnoozeEdit {
+                            workspace: workspace.to_owned(),
+                            key,
+                            wake: entry.wake,
+                            previous: reminder,
+                        };
                         let entity = cx.weak_entity();
-                        if snoozed {
-                            return buttons.child(snooze_button.on_click(move |_, _, cx| {
-                                let _ = entity.update(cx, |this, cx| {
-                                    on_snooze(this, &workspace, &key, None, &None, cx)
-                                });
-                            }));
-                        }
-                        let on_snooze = std::rc::Rc::new(on_snooze);
+                        let apply = std::rc::Rc::new(move |delay, cx: &mut App| {
+                            entity
+                                .update(cx, |this, cx| on_snooze(this, &edit, delay, cx))
+                                .unwrap_or(Err(SNOOZE_CHANGED))
+                        });
+                        let buttons = buttons.when(editing, |buttons| {
+                            let apply = apply.clone();
+                            let unsnooze = tr("取消暂缓");
+                            buttons.child(
+                                Button::new("unsnooze-inbox-item")
+                                    .ghost()
+                                    .compact()
+                                    .xsmall()
+                                    .label(unsnooze)
+                                    .disabled(!can_snooze)
+                                    .accessibility_label(format!(
+                                        "{unsnooze} · {label} · {subject}"
+                                    ))
+                                    .on_click(move |_, _, cx| {
+                                        let _ = apply(None, cx);
+                                    }),
+                            )
+                        });
                         let menu = snooze_button.dropdown_menu(move |menu, _, _| {
-                            let entity = entity.clone();
-                            let on_snooze = on_snooze.clone();
-                            let workspace = workspace.clone();
-                            let key = key.clone();
-                            let wake = entry.wake.clone();
-                            let save = std::rc::Rc::new(move |delay, cx: &mut App| {
-                                entity
-                                    .update(cx, |this, cx| {
-                                        on_snooze(this, &workspace, &key, Some(delay), &wake, cx)
-                                    })
-                                    .unwrap_or(Err("收件箱事项已变更，请关闭后重新选择。"))
-                            });
+                            let apply = apply.clone();
+                            let save =
+                                std::rc::Rc::new(move |delay, cx: &mut App| apply(Some(delay), cx));
                             let menu = schedule::presets().into_iter().fold(
                                 menu,
                                 |menu, (title, deadline)| {
@@ -937,7 +993,12 @@ fn inbox_row<T: 'static>(
                             .item(
                                 PopupMenuItem::new(tr("自定义日期和时间…")).on_click(
                                     move |_, window, cx| {
-                                        schedule::open_custom_snooze(save.clone(), window, cx);
+                                        schedule::open_custom_snooze(
+                                            save.clone(),
+                                            initial_deadline,
+                                            window,
+                                            cx,
+                                        );
                                     },
                                 ),
                             )
@@ -964,8 +1025,37 @@ fn inbox_row<T: 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::{Attention, Destination, Entry, Priority, sort_entries};
+    use super::{Attention, Destination, Entry, Priority, SnoozeEdit, Wake, sort_entries};
     use serde_json::json;
+
+    #[test]
+    fn reschedule_rejects_new_wake_signals_on_the_same_row() {
+        let wake = |sequence| {
+            Some(Wake::Dispatch {
+                id: "dispatch".into(),
+                sequence: Some(sequence),
+                observed_at: 0,
+            })
+        };
+        let mut entry = Entry {
+            label: "",
+            subject: "".into(),
+            target: Destination::Dispatch("dispatch".into()),
+            snooze_key: Some("message:question".into()),
+            wake: wake(7),
+            priority: Priority::NeedsUser,
+            updated_at: 0,
+        };
+        let edit = SnoozeEdit {
+            workspace: "project".into(),
+            key: "message:question".into(),
+            wake: wake(7),
+            previous: None,
+        };
+        assert!(edit.matches(&entry));
+        entry.wake = wake(8);
+        assert!(!edit.matches(&entry));
+    }
 
     #[test]
     fn user_actions_precede_unread_and_active_across_projects() {

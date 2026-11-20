@@ -12,6 +12,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+gpui_kit::actions!(hive_desktop, [NewSessionInCurrentProject]);
+
 pub(crate) const FILE: &str = "desktop-keybindings.json";
 const CHORD_CONFLICT: &str = "快捷键与另一个操作冲突，请选择不同的组合键。";
 
@@ -44,6 +46,7 @@ impl TargetGroup {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Target {
     NewSession,
+    NewSessionCurrentProject,
     Search,
     CommandPalette,
     Find,
@@ -58,8 +61,9 @@ pub(crate) enum Target {
     Preferences,
 }
 
-const TARGETS: [Target; 13] = [
+const TARGETS: [Target; 14] = [
     Target::NewSession,
+    Target::NewSessionCurrentProject,
     Target::Search,
     Target::CommandPalette,
     Target::Find,
@@ -78,6 +82,7 @@ impl Target {
     pub(crate) fn index(self) -> usize {
         match self {
             Self::NewSession => 0,
+            Self::NewSessionCurrentProject => 13,
             Self::Search => 1,
             Self::CommandPalette => 2,
             Self::Find => 3,
@@ -96,6 +101,7 @@ impl Target {
     pub(crate) fn group(self) -> TargetGroup {
         match self {
             Self::NewSession
+            | Self::NewSessionCurrentProject
             | Self::Search
             | Self::CommandPalette
             | Self::Find
@@ -113,6 +119,7 @@ impl Target {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::NewSession => tr("新建会话"),
+            Self::NewSessionCurrentProject => tr("在当前项目新建会话"),
             Self::Search => tr("搜索会话"),
             Self::CommandPalette => tr("快捷命令面板"),
             Self::Find => tr("查找会话内容"),
@@ -130,7 +137,8 @@ impl Target {
 
     pub(crate) fn description(self) -> &'static str {
         match self {
-            Self::NewSession => tr("在当前工作区以最近使用的 Agent 发起新对话"),
+            Self::NewSession => tr("新建会话；有多个项目时先选择项目"),
+            Self::NewSessionCurrentProject => tr("直接在当前项目中创建会话"),
             Self::Search => tr("打开全局会话搜索窗口"),
             Self::CommandPalette => tr("打开全局快捷命令面板，快速切换会话、项目、面板与设置"),
             Self::Find => tr("在当前对话消息中搜索内容"),
@@ -149,6 +157,7 @@ impl Target {
     pub(crate) fn anchor_id(self) -> &'static str {
         match self {
             Self::NewSession => "shortcut-new-session",
+            Self::NewSessionCurrentProject => "shortcut-new-session-current-project",
             Self::Search => "shortcut-search",
             Self::CommandPalette => "shortcut-command-palette",
             Self::Find => "shortcut-find",
@@ -169,6 +178,8 @@ impl Target {
         match (self, mac) {
             (Self::NewSession, true) => "cmd-n",
             (Self::NewSession, false) => "ctrl-n",
+            (Self::NewSessionCurrentProject, true) => "cmd-shift-n",
+            (Self::NewSessionCurrentProject, false) => "ctrl-shift-n",
             (Self::Search, true) => "cmd-k",
             (Self::Search, false) => "ctrl-k",
             (Self::CommandPalette, true) => "cmd-shift-p",
@@ -199,6 +210,7 @@ impl Target {
     fn action(self) -> Box<dyn Action> {
         match self {
             Self::NewSession => Box::new(crate::NewSessionShortcut),
+            Self::NewSessionCurrentProject => Box::new(NewSessionInCurrentProject),
             Self::Search => Box::new(crate::OpenSessionSearch),
             Self::CommandPalette => Box::new(crate::OpenCommandPalette),
             Self::Find => Box::new(crate::OpenConversationFind),
@@ -223,6 +235,7 @@ pub(crate) struct Bindings {
     pub find: Option<String>,
     pub preferences: Option<String>,
     pub new_session: Option<String>,
+    pub new_session_current_project: Option<String>,
     pub toggle_sidebar: Option<String>,
     pub toggle_terminal: Option<String>,
     pub open_git_workspace: Option<String>,
@@ -250,6 +263,8 @@ struct StoredBindings {
     preferences: Option<String>,
     #[serde(default, deserialize_with = "some_present")]
     new_session: Option<Option<String>>,
+    #[serde(default, deserialize_with = "some_present")]
+    new_session_current_project: Option<Option<String>>,
     #[serde(default, deserialize_with = "some_present")]
     toggle_sidebar: Option<Option<String>>,
     #[serde(default, deserialize_with = "some_present")]
@@ -282,6 +297,7 @@ impl StoredBindings {
             (Target::Find, Some(self.find)),
             (Target::Preferences, Some(self.preferences)),
             (Target::NewSession, self.new_session),
+            (Target::NewSessionCurrentProject, self.new_session_current_project),
             (Target::ToggleSidebar, self.toggle_sidebar),
             (Target::ToggleTerminal, self.toggle_terminal),
             (Target::OpenGitWorkspace, self.open_git_workspace),
@@ -336,6 +352,7 @@ impl Bindings {
             find: Some(Target::Find.default(os).to_owned()),
             preferences: Some(Target::Preferences.default(os).to_owned()),
             new_session: Some(Target::NewSession.default(os).to_owned()),
+            new_session_current_project: Some(Target::NewSessionCurrentProject.default(os).to_owned()),
             toggle_sidebar: Some(Target::ToggleSidebar.default(os).to_owned()),
             toggle_terminal: Some(Target::ToggleTerminal.default(os).to_owned()),
             open_git_workspace: Some(Target::OpenGitWorkspace.default(os).to_owned()),
@@ -350,6 +367,7 @@ impl Bindings {
     pub(crate) fn get(&self, target: Target) -> &Option<String> {
         match target {
             Target::NewSession => &self.new_session,
+            Target::NewSessionCurrentProject => &self.new_session_current_project,
             Target::Search => &self.search,
             Target::CommandPalette => &self.command_palette,
             Target::Find => &self.find,
@@ -368,6 +386,7 @@ impl Bindings {
     pub(crate) fn set(&mut self, target: Target, value: Option<String>) {
         let slot = match target {
             Target::NewSession => &mut self.new_session,
+            Target::NewSessionCurrentProject => &mut self.new_session_current_project,
             Target::Search => &mut self.search,
             Target::CommandPalette => &mut self.command_palette,
             Target::Find => &mut self.find,
