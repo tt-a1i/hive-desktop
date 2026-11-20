@@ -1,4 +1,5 @@
 mod global;
+mod placement;
 mod schedule;
 mod snoozes;
 mod undo;
@@ -22,6 +23,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+use placement::{InboxSections, SnoozedUntil};
 use serde::Deserialize;
 use serde_json::json;
 use snoozes::{Delay, Reminder, Snoozes, Wake, now_ms};
@@ -170,6 +172,15 @@ impl Reminders {
         self.saved
             .as_ref()?
             .active_reminder(entry.snooze_key.as_deref()?, now)
+    }
+
+    fn snoozed_until(&self, entry: &Entry, now: u64) -> Option<SnoozedUntil> {
+        let reminder = self.active_reminder(entry, now)?;
+        Some(
+            reminder
+                .expires_at
+                .map_or(SnoozedUntil::Indefinitely, SnoozedUntil::At),
+        )
     }
 
     fn notice(&self) -> Option<(&'static str, &io::Error)> {
@@ -657,20 +668,30 @@ impl HiveApp {
         let inbox = &self.collaboration.inbox;
         let workspace = self.workspace.as_deref().unwrap_or("");
         let current = inbox.workspace.as_deref() == Some(workspace);
-        let mut rows: Vec<_> = self
+        let rows: Vec<_> = self
             .scoped_entries(workspace)
             .into_iter()
             .map(|entry| (workspace, entry))
             .collect();
-        sort_entries(&mut rows);
         let now = now_ms();
-        let snoozed = |entry: &Entry| current && is_snoozed(entry, &inbox.reminders, now);
+        let sections = InboxSections::from_rows(rows, |_, entry| {
+            current
+                .then(|| inbox.reminders.snoozed_until(entry, now))
+                .flatten()
+        });
         let show_snoozed = current && inbox.show_snoozed;
-        let has_snoozed = rows.iter().any(|(_, entry)| snoozed(entry));
-        rows.retain(|(_, entry)| show_snoozed || !snoozed(entry));
+        let has_snoozed = !sections.snoozed.is_empty();
+        let has_items = !sections.attention.is_empty()
+            || !sections.waiting.is_empty()
+            || (show_snoozed && has_snoozed);
+        let rows = sections
+            .attention
+            .into_iter()
+            .chain(sections.waiting)
+            .chain(sections.snoozed.into_iter().filter(move |_| show_snoozed));
         let status = if current && inbox.error.is_some() {
             Some("无法刷新协作收件箱")
-        } else if rows.is_empty() {
+        } else if !has_items {
             Some(
                 if self.workspace.is_some() && (!current || inbox.action_center.is_none()) {
                     "正在读取收件箱…"
@@ -730,7 +751,7 @@ impl HiveApp {
                     ))
                 },
             )
-            .children(rows.into_iter().map(|(workspace, entry)| {
+            .children(rows.map(|(workspace, entry)| {
                 let reminder = current
                     .then(|| inbox.reminders.active_reminder(&entry, now))
                     .flatten();

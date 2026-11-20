@@ -7,9 +7,11 @@ pub(crate) mod search;
 use crate::{app::HiveApp, history_navigation::HistoryDirection, protocol::*};
 use gpui_kit::*;
 use serde_json::json;
+use std::path::PathBuf;
 
 enum ConversationOpen {
     Resume,
+    AttachFiles(Vec<PathBuf>),
     Focus(String),
     Find(String),
     Latest,
@@ -807,6 +809,79 @@ impl HiveApp {
         )
     }
 
+    pub(crate) fn can_drop_files_on_session(&self, session: &Session) -> bool {
+        let key = format!("session:{}", session.id);
+        let selected = self.workspace.as_ref() == Some(&session.workspace_id)
+            && self.session.as_ref().is_some_and(|current| current.id == session.id);
+        self.connected
+            && !self.closing
+            && !session.archived
+            && !self.removed_sessions.contains(&session.id)
+            && !self.session_archive_loading.contains(&session.id)
+            && self.workspace_removing.as_ref() != Some(&session.workspace_id)
+            && self.workspaces.iter().any(|workspace| workspace.id == session.workspace_id)
+            && !self.inflight_inputs.contains_key(&session.id)
+            && !self.attachments.loading.contains(&key)
+            && !(selected && (self.loading || self.conversation_is_read_only()))
+    }
+
+    pub(crate) fn drop_files_on_session(
+        &mut self,
+        session: Session,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() || !self.can_drop_files_on_session(&session) {
+            return;
+        }
+        if self.viewing_conversation()
+            && self.conversation_ready
+            && self.workspace.as_ref() == Some(&session.workspace_id)
+            && self.session.as_ref().is_some_and(|current| current.id == session.id)
+        {
+            if window.viewport_size().width < px(820.) {
+                self.sidebar_open = false;
+            }
+            self.attach_open_conversation_files(&session.workspace_id, &session.id, paths, cx);
+            return;
+        }
+        self.navigate_to_session_at(
+            session,
+            ConversationOpen::AttachFiles(paths),
+            window.viewport_size().width < px(820.),
+            cx,
+        );
+    }
+
+    fn attach_open_conversation_files(
+        &mut self,
+        workspace: &str,
+        session: &str,
+        paths: Vec<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.conversation_ready
+            || self.workspace.as_deref() != Some(workspace)
+            || !self.session.as_ref().is_some_and(|current| {
+                current.id == session
+                    && current.workspace_id == workspace
+                    && self.can_drop_files_on_session(current)
+            })
+            // Navigation events can update this cache before an older open reply
+            // replaces the active session snapshot.
+            || self.sessions.iter().any(|row| row.id == session && row.archived)
+            || self.draft_target.as_deref() != Some(format!("session:{session}").as_str())
+        {
+            self.error = Some("当前会话暂不能添加附件，请稍后再试。".into());
+            cx.notify();
+            return;
+        }
+        self.import_image_paths(paths, cx);
+        self.focus_project_input = self.viewing_conversation();
+        cx.notify();
+    }
+
     fn navigate_to_session_at(
         &mut self,
         session: Session,
@@ -1021,7 +1096,7 @@ impl HiveApp {
         let around_message_id = match &target {
             ConversationOpen::Focus(id) | ConversationOpen::Find(id) => Some(id.clone()),
             ConversationOpen::Latest => None,
-            ConversationOpen::Resume | ConversationOpen::Connect(_) => self.reading_positions.anchor(&request_workspace, &id)
+            ConversationOpen::Resume | ConversationOpen::AttachFiles(_) | ConversationOpen::Connect(_) => self.reading_positions.anchor(&request_workspace, &id)
                 .and_then(anchor_message)
                 .or_else(|| matches!(&target, ConversationOpen::Connect(_)).then_some(opened_around).flatten()),
         };
@@ -1112,9 +1187,12 @@ impl HiveApp {
                         for event in std::mem::take(&mut this.pending_events) {
                             this.agent_event(event, cx);
                         }
-                        this.restore_conversation_position(&id, matches!(&target, ConversationOpen::Resume | ConversationOpen::Connect(_)), cx);
+                        this.restore_conversation_position(&id, matches!(&target, ConversationOpen::Resume | ConversationOpen::AttachFiles(_) | ConversationOpen::Connect(_)), cx);
                         this.conversation_find = retained_find;
                         match target {
+                            ConversationOpen::AttachFiles(paths) => {
+                                this.attach_open_conversation_files(&request_workspace, &id, paths, cx);
+                            }
                             ConversationOpen::Find(message) => this.finish_conversation_find_jump(&message, cx),
                             ConversationOpen::Focus(message_id) => {
                                 if let Some(message) = this.message_mut(&message_id)

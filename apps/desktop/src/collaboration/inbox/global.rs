@@ -1,11 +1,9 @@
 #[path = "badge.rs"]
 mod badge;
-#[path = "placement.rs"]
-mod placement;
 
 use self::badge::BadgeItem;
 pub(in crate::collaboration) use self::badge::InboxBadge;
-use self::placement::{InboxSections, RowId, RowPlacement};
+use super::placement::{InboxSections, RowId, RowPlacement};
 use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
 use super::{
@@ -719,7 +717,7 @@ impl Render for GlobalInbox {
             Vec::new()
         };
         let fresh = InboxSections::from_rows(rows, |id, entry| {
-            is_snoozed(entry, &self.projects[id].reminders, now)
+            self.projects[id].reminders.snoozed_until(entry, now)
         });
         let has_snoozed = !fresh.snoozed.is_empty();
         let loading = projects
@@ -1167,6 +1165,7 @@ mod tests {
         RowId, display_project, row_is_visible, selected_project, update_new_items,
     };
     use crate::collaboration::inbox::Priority;
+    use crate::collaboration::inbox::placement::SnoozedUntil;
     use crate::protocol::Workspace;
     use gpui_kit::{Bounds, point, px, size};
     use serde_json::json;
@@ -1300,7 +1299,8 @@ mod tests {
             }),
         );
         let sections = InboxSections::from_rows(rows, |project, entry| {
-            project == "left" && entry.snooze_key.as_deref() == Some("message:queued")
+            (project == "left" && entry.snooze_key.as_deref() == Some("message:queued"))
+                .then_some(SnoozedUntil::Indefinitely)
         });
         let labels = |entries: Vec<(&str, Entry)>| {
             entries

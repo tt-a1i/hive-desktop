@@ -1,4 +1,4 @@
-use super::super::{Entry, Priority, sort_entries};
+use super::{Entry, Priority, sort_entries};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -35,6 +35,12 @@ enum Section {
 
 type Row<'a> = (&'a str, Entry);
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum SnoozedUntil {
+    At(u64),
+    Indefinitely,
+}
+
 #[derive(Default)]
 pub(super) struct InboxSections<'a> {
     pub(super) attention: Vec<Row<'a>>,
@@ -45,20 +51,23 @@ pub(super) struct InboxSections<'a> {
 impl<'a> InboxSections<'a> {
     pub(super) fn from_rows(
         mut rows: Vec<Row<'a>>,
-        mut snoozed: impl FnMut(&str, &Entry) -> bool,
+        mut snoozed_until: impl FnMut(&str, &Entry) -> Option<SnoozedUntil>,
     ) -> Self {
         sort_entries(&mut rows);
         let mut sections = Self::default();
+        let mut snoozed = Vec::new();
         for (project, entry) in rows {
-            let section = if snoozed(project, &entry) {
-                Section::Snoozed
+            if let Some(until) = snoozed_until(project, &entry) {
+                snoozed.push((until, (project, entry)));
             } else if entry.priority == Priority::Active {
-                Section::Waiting
+                sections.waiting.push((project, entry));
             } else {
-                Section::Attention
-            };
-            sections.group_mut(section).push((project, entry));
+                sections.attention.push((project, entry));
+            }
         }
+        // Entries with the same deadline retain the normal priority order.
+        snoozed.sort_by_key(|(until, _)| *until);
+        sections.snoozed = snoozed.into_iter().map(|(_, row)| row).collect();
         sections
     }
 
@@ -234,7 +243,7 @@ impl RowPlacement {
 
 #[cfg(test)]
 mod tests {
-    use super::{InboxSections, Row, RowId, RowPlacement};
+    use super::{InboxSections, Row, RowId, RowPlacement, SnoozedUntil};
     use crate::collaboration::inbox::{Destination, Entry, Priority};
 
     fn row(
@@ -264,13 +273,80 @@ mod tests {
     }
 
     #[test]
+    fn snoozed_rows_use_deadlines_with_normal_ties_and_indefinite_last() {
+        let sections = InboxSections::from_rows(
+            vec![
+                row("beacon", "priority tie", Priority::NeedsUser, 10),
+                row("alpha", "workspace tie", Priority::NeedsUser, 10),
+                row("atlas", "unread tie", Priority::Unread, 99),
+                row("atlas", "early working", Priority::Active, 1),
+                row("other", "indefinite", Priority::NeedsUser, 120),
+                row("other", "ready", Priority::Unread, 1),
+            ],
+            |_, entry| match entry.subject.as_str() {
+                "early working" => Some(SnoozedUntil::At(100)),
+                "workspace tie" | "priority tie" | "unread tie" => Some(SnoozedUntil::At(200)),
+                "indefinite" => Some(SnoozedUntil::Indefinitely),
+                _ => None,
+            },
+        );
+        assert_eq!(labels(&sections.attention), ["ready"]);
+        assert_eq!(
+            labels(&sections.snoozed),
+            [
+                "early working",
+                "workspace tie",
+                "priority tie",
+                "unread tie",
+                "indefinite"
+            ]
+        );
+    }
+
+    #[test]
+    fn rescheduling_reorders_only_after_row_interaction_releases() {
+        let active = row("beacon", "existing", Priority::NeedsUser, 2);
+        let id = RowId::for_entry(active.0, &active.1);
+        let mut placement = RowPlacement::default();
+        let fresh = |beacon| {
+            InboxSections::from_rows(
+                vec![
+                    row("beacon", "existing", Priority::NeedsUser, 2),
+                    row("atlas", "earlier", Priority::Unread, 5),
+                ],
+                |workspace, _| {
+                    if workspace == "beacon" {
+                        beacon
+                    } else {
+                        Some(SnoozedUntil::At(100))
+                    }
+                },
+            )
+        };
+        let before = placement.arrange(fresh(Some(SnoozedUntil::At(200))), None, false, true);
+        assert_eq!(labels(&before.snoozed), ["earlier", "existing"]);
+        assert!(placement.menu(&id, true));
+        let held = placement.arrange(fresh(Some(SnoozedUntil::At(50))), Some(&id), false, true);
+        assert_eq!(labels(&held.snoozed), ["earlier", "existing"]);
+
+        assert!(placement.menu(&id, false));
+        let released = placement.arrange(fresh(Some(SnoozedUntil::At(50))), None, false, true);
+        assert_eq!(labels(&released.snoozed), ["existing", "earlier"]);
+        let undone = placement.arrange(fresh(Some(SnoozedUntil::At(200))), None, false, true);
+        assert_eq!(labels(&undone.snoozed), ["earlier", "existing"]);
+        let woke = placement.arrange(fresh(None), None, false, true);
+        assert_eq!(labels(&woke.snoozed), ["earlier"]);
+        assert_eq!(labels(&woke.attention), ["existing"]);
+    }
+
+    #[test]
     fn an_inserted_higher_priority_row_waits_for_pointer_or_keyboard_to_leave() {
         for keyboard in [false, true] {
             let mut placement = RowPlacement::default();
             let initial = row("beacon", "beacon-original", Priority::Unread, 2);
             let original = RowId::for_entry(initial.0, &initial.1);
             placement.arrange(
-                InboxSections::from_rows(vec![initial], |_, _| false),
+                InboxSections::from_rows(vec![initial], |_, _| None),
                 None,
                 false,
                 false,
@@ -285,7 +361,7 @@ mod tests {
                         row("beacon", "beacon-original", Priority::Unread, 2),
                         row("atlas", "atlas-new-question", Priority::NeedsUser, 7),
                     ],
-                    |_, _| false,
+                    |_, _| None,
                 )
             };
             let held = placement.arrange(fresh(), focus, false, false);
@@ -308,7 +384,7 @@ mod tests {
         let mut placement = RowPlacement::default();
         let active = row("beacon", "beacon-original", Priority::Active, 2);
         let id = RowId::for_entry(active.0, &active.1);
-        let original = InboxSections::from_rows(vec![active], |_, _| false);
+        let original = InboxSections::from_rows(vec![active], |_, _| None);
         placement.arrange(original, None, true, false);
         assert!(placement.hover(&id, true));
         assert!(placement.menu(&id, true));
@@ -319,7 +395,9 @@ mod tests {
                     row("beacon", "beacon-original", Priority::NeedsUser, 7),
                     row("atlas", "atlas-new-question", Priority::NeedsUser, 9),
                 ],
-                |workspace, _| snoozed && workspace == "beacon",
+                |workspace, _| {
+                    (snoozed && workspace == "beacon").then_some(SnoozedUntil::Indefinitely)
+                },
             )
         };
         let held = placement.arrange(fresh(false), None, true, true);
@@ -339,7 +417,7 @@ mod tests {
         let id = RowId::for_entry(active.0, &active.1);
         let pending = || row("atlas", "atlas-waiting", Priority::Active, 3);
         placement.arrange(
-            InboxSections::from_rows(vec![active, pending()], |_, _| false),
+            InboxSections::from_rows(vec![active, pending()], |_, _| None),
             None,
             false,
             false,
@@ -351,7 +429,7 @@ mod tests {
                     row("beacon", "beacon-original", Priority::Unread, 2),
                     pending(),
                 ],
-                |_, _| false,
+                |_, _| None,
             ),
             None,
             false,
@@ -361,7 +439,7 @@ mod tests {
 
         let filtered = InboxSections::from_rows(
             vec![row("atlas", "atlas-new-question", Priority::NeedsUser, 8)],
-            |_, _| false,
+            |_, _| None,
         );
         let displayed = placement.arrange(filtered, Some(&id), false, false);
         assert!(!placement.shows(&id));

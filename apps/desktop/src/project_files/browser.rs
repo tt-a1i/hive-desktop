@@ -37,6 +37,7 @@ use std::{
 };
 
 const PAGE_SIZE: usize = 100;
+const TREE_PREVIEW_DELAY: Duration = Duration::from_millis(120);
 const MARKDOWN_MAX_BYTES: usize = 64 * 1024;
 const MARKDOWN_MAX_BLOCK_BYTES: usize = 8 * 1024;
 const MARKDOWN_MAX_LINES: usize = 1000;
@@ -174,6 +175,11 @@ struct Preview {
     scroll: ScrollHandle,
     editor_task: Option<Task<()>>,
     editor_error: Option<String>,
+}
+
+enum TreePreview {
+    Waiting { _task: Task<()> },
+    Reading { previous: Option<Preview> },
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -541,6 +547,29 @@ enum TreeItem {
     LoadMore(String),
 }
 
+impl TreeItem {
+    fn file_path<'a>(&'a self, directories: &HashMap<String, Directory>) -> Option<&'a str> {
+        let TreeItem::Entry(path) = self else {
+            return None;
+        };
+        tree_entry(directories, path)
+            .is_some_and(|entry| !entry.directory)
+            .then_some(path.as_str())
+    }
+}
+
+fn tree_entry<'a>(
+    directories: &'a HashMap<String, Directory>,
+    path: &str,
+) -> Option<&'a DirectoryEntry> {
+    let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
+    directories
+        .get(parent)?
+        .entries
+        .iter()
+        .find(|entry| entry.path == path)
+}
+
 enum TreeRow<'a> {
     Entry(&'a DirectoryEntry, usize),
     Status(&'a Directory, usize),
@@ -647,6 +676,7 @@ pub(crate) struct FileBrowser {
     preview: Option<Preview>,
     preview_generation: u64,
     preview_task: Option<Task<()>>,
+    tree_preview: Option<TreePreview>,
     expanded_preview: Option<WeakEntity<ExpandedFilePreview>>,
     git_generation: u64,
     git_status: TreeGitStatus,
@@ -786,6 +816,17 @@ impl HiveApp {
         let expansions = self.project_file_tree_expansions.clone();
         let browser = cx.new(|cx| {
             let query = cx.new(|cx| InputState::new(window, cx).placeholder(tr("搜索项目文件…")));
+            let tree_focus = cx.focus_handle();
+            cx.on_focus_out(&tree_focus, window, |this: &mut FileBrowser, _, _, cx| {
+                this.cancel_tree_preview(cx);
+            })
+            .detach();
+            cx.observe_window_activation(window, |this: &mut FileBrowser, window, cx| {
+                if !window.is_window_active() {
+                    this.cancel_tree_preview(cx);
+                }
+            })
+            .detach();
             cx.subscribe(
                 &query,
                 |this: &mut FileBrowser, _, event: &InputEvent, cx| {
@@ -828,7 +869,7 @@ impl HiveApp {
                 root_focus: cx.focus_handle(),
                 browser_focus: cx.focus_handle(),
                 resize_focus: cx.focus_handle(),
-                tree_focus: cx.focus_handle(),
+                tree_focus,
                 tree_selected: None,
                 reveal: None,
                 reveal_missing: None,
@@ -843,6 +884,7 @@ impl HiveApp {
                 preview: None,
                 preview_generation: 0,
                 preview_task: None,
+                tree_preview: None,
                 expanded_preview: None,
                 git_generation: 0,
                 git_status: TreeGitStatus::Idle,
@@ -1088,6 +1130,7 @@ impl FileBrowser {
         self.dismissed = true;
         self.search_task = None;
         self.preview_task = None;
+        self.tree_preview = None;
         self.preview = None;
         self.reset_git_status();
     }
@@ -1117,6 +1160,7 @@ impl FileBrowser {
         self.search_scroll = ScrollHandle::new();
         self.search_task = None;
         self.preview_task = None;
+        self.tree_preview = None;
         self.preview = None;
         if self.scope.is_some() {
             // Scope changes can happen during the parent view update.
@@ -1262,6 +1306,7 @@ impl FileBrowser {
         if !self.current(cx) {
             return;
         }
+        self.cancel_tree_preview(cx);
         self.reveal = None;
         self.reveal_missing = None;
         let scope = self
@@ -1346,6 +1391,7 @@ impl FileBrowser {
     }
 
     fn load_search(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        self.cancel_tree_preview(cx);
         self.search_task = None;
         self.search = SearchPage::default();
         self.search_selected = 0;
@@ -1412,7 +1458,7 @@ impl FileBrowser {
         }
         if self.query.read(cx).value().trim().is_empty() {
             self.tree_focus.focus(window, cx);
-            self.move_tree_selection(delta, cx);
+            self.move_tree_cursor(delta, window, cx);
             return;
         }
         if !self.search.matches.is_empty() {
@@ -1460,6 +1506,7 @@ impl FileBrowser {
     }
 
     fn select_tree_item(&mut self, item: TreeItem, cx: &mut Context<Self>) {
+        self.cancel_tree_preview(cx);
         let index = self
             .tree_rows(cx)
             .iter()
@@ -1472,6 +1519,7 @@ impl FileBrowser {
     }
 
     fn activate_tree_item(&mut self, item: TreeItem, cx: &mut Context<Self>) {
+        self.cancel_tree_preview(cx);
         match item {
             TreeItem::Entry(path) if self.is_directory(&path) => self.toggle_directory(path, cx),
             TreeItem::Entry(path) => self.select(Match { path, line: None }, cx),
@@ -1487,21 +1535,112 @@ impl FileBrowser {
             self.move_tree_selection(1, cx);
         }
         if let Some(item) = self.tree_selected.clone() {
+            if item
+                .file_path(&self.directories)
+                .is_some_and(|path| self.tree_file_is_previewed(path))
+            {
+                // Keep an already started read, but make it an explicit choice so
+                // moving focus does not undo it.
+                self.tree_preview = None;
+                return;
+            }
             self.activate_tree_item(item, cx);
         }
     }
 
-    fn is_directory(&self, path: &str) -> bool {
-        let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
-        self.directories.get(parent).is_some_and(|folder| {
-            folder
-                .entries
-                .iter()
-                .any(|entry| entry.directory && entry.path == path)
+    fn tree_file_is_previewed(&self, path: &str) -> bool {
+        self.preview.as_ref().is_some_and(|preview| {
+            preview.selection.path == path
+                && preview.selection.line.is_none()
+                && preview.error.is_none()
         })
     }
 
-    fn tree_key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn cancel_tree_preview(&mut self, cx: &mut Context<Self>) {
+        if let Some(TreePreview::Reading { previous }) = self.tree_preview.take() {
+            self.preview_task = None;
+            self.preview_generation += 1;
+            self.preview = previous;
+            cx.notify();
+        }
+    }
+
+    fn move_tree_cursor(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_tree_selection(delta, cx);
+        self.queue_tree_preview(window, cx);
+    }
+
+    fn queue_tree_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.selected_tree_file().map(str::to_owned) else {
+            self.cancel_tree_preview(cx);
+            return;
+        };
+        if self.tree_file_is_previewed(&path)
+            && matches!(self.tree_preview, Some(TreePreview::Reading { .. }))
+        {
+            return;
+        }
+        self.cancel_tree_preview(cx);
+        if self.tree_file_is_previewed(&path) || self.reveal.is_some() {
+            return;
+        }
+        let scope_generation = self.scope_generation;
+        let task = cx.spawn_in(window, async move |this, cx| {
+            smol::Timer::after(TREE_PREVIEW_DELAY).await;
+            let _ = cx.update(|window, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    this.begin_tree_preview(path, scope_generation, window, cx);
+                });
+            });
+        });
+        self.tree_preview = Some(TreePreview::Waiting { _task: task });
+    }
+
+    fn begin_tree_preview(
+        &mut self,
+        path: String,
+        scope_generation: u64,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.tree_preview = None;
+        if self.scope_generation != scope_generation
+            || !self.current(cx)
+            || !window.is_window_active()
+            || !self.tree_focus.contains_focused(window, cx)
+            || self.reveal.is_some()
+            || !self.query.read(cx).value().trim().is_empty()
+            || self.selected_tree_file() != Some(path.as_str())
+            || self.tree_file_is_previewed(&path)
+            || (self.docked
+                && !self
+                    .app
+                    .upgrade()
+                    .is_some_and(|app| app.read(cx).can_dock_project_files(window)))
+        {
+            return;
+        }
+        let previous = self
+            .preview
+            .take()
+            .filter(|preview| !preview.loading)
+            .map(|mut preview| {
+                preview.editor_task = None;
+                preview
+            });
+        self.tree_preview = Some(TreePreview::Reading { previous });
+        self.read_preview(Match { path, line: None }, cx);
+    }
+
+    fn selected_tree_file(&self) -> Option<&str> {
+        self.tree_selected.as_ref()?.file_path(&self.directories)
+    }
+
+    fn is_directory(&self, path: &str) -> bool {
+        tree_entry(&self.directories, path).is_some_and(|entry| entry.directory)
+    }
+
+    fn tree_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let modifiers = event.keystroke.modifiers;
         if modifiers.control
             || modifiers.platform
@@ -1533,6 +1672,7 @@ impl FileBrowser {
                         .and_then(|folder| folder.entries.first())
                     {
                         self.select_tree_item(TreeItem::Entry(child.path.clone()), cx);
+                        self.queue_tree_preview(window, cx);
                     } else if self
                         .directories
                         .get(&path)
@@ -1550,6 +1690,11 @@ impl FileBrowser {
     }
 
     fn select(&mut self, selection: Match, cx: &mut Context<Self>) {
+        self.cancel_tree_preview(cx);
+        self.read_preview(selection, cx);
+    }
+
+    fn read_preview(&mut self, selection: Match, cx: &mut Context<Self>) {
         if !self.current(cx) {
             return;
         }
@@ -1587,6 +1732,18 @@ impl FileBrowser {
                     || !this.current(cx)
                 {
                     return;
+                }
+                if matches!(this.tree_preview, Some(TreePreview::Reading { .. })) {
+                    if this.selected_tree_file()
+                        != this
+                            .preview
+                            .as_ref()
+                            .map(|preview| preview.selection.path.as_str())
+                    {
+                        this.cancel_tree_preview(cx);
+                        return;
+                    }
+                    this.tree_preview = None;
                 }
                 let Some(preview) = this.preview.as_mut() else {
                     return;
@@ -2670,12 +2827,14 @@ impl Render for FileBrowser {
                             .border_1()
                             .border_color(gpui::transparent_black())
                             .rounded_md()
-                            .on_action(cx.listener(|this, _: &crate::NextSessionResult, _, cx| {
-                                this.move_tree_selection(1, cx)
-                            }))
                             .on_action(cx.listener(
-                                |this, _: &crate::PreviousSessionResult, _, cx| {
-                                    this.move_tree_selection(-1, cx)
+                                |this, _: &crate::NextSessionResult, window, cx| {
+                                    this.move_tree_cursor(1, window, cx)
+                                },
+                            ))
+                            .on_action(cx.listener(
+                                |this, _: &crate::PreviousSessionResult, window, cx| {
+                                    this.move_tree_cursor(-1, window, cx)
                                 },
                             ))
                             .on_action(cx.listener(
@@ -2882,8 +3041,8 @@ mod tests {
     use super::{
         Directory, DirectoryEntry, EditorOpenIdentity, FILE_TREE_STATUS_LIMIT, FileError,
         FilePreviewMode, FileReveal, FileTreeExpansions, MARKDOWN_MAX_BLOCK_BYTES,
-        MARKDOWN_MAX_BYTES, MARKDOWN_MAX_LINES, Match, RevealStep, Scope, TextPages, TreeRow,
-        TreeScope, TreeSource, dock_width, external_markdown_url, initial_markdown_mode,
+        MARKDOWN_MAX_BYTES, MARKDOWN_MAX_LINES, Match, RevealStep, Scope, TextPages, TreeItem,
+        TreeRow, TreeScope, TreeSource, dock_width, external_markdown_url, initial_markdown_mode,
         is_expand_preview_chord, is_markdown_file, json, px, step_preview,
         supports_markdown_preview, unrequested_expansions, visible_tree,
     };
@@ -2986,6 +3145,43 @@ mod tests {
             !expansions
                 .paths
                 .contains_key(&key("w", Some(&other_unknown)))
+        );
+    }
+
+    #[test]
+    fn keyboard_tree_preview_requires_an_existing_file_entry() {
+        let make_entry = |path: &str, directory| DirectoryEntry {
+            path: path.into(),
+            directory,
+        };
+        let directories = HashMap::from([
+            (
+                String::new(),
+                Directory {
+                    entries: vec![make_entry("docs", true), make_entry("README.md", false)],
+                    ..Directory::default()
+                },
+            ),
+            (
+                "docs".into(),
+                Directory {
+                    entries: vec![make_entry("docs/README.md", false)],
+                    ..Directory::default()
+                },
+            ),
+        ]);
+        let root_file = TreeItem::Entry("README.md".into());
+        let nested_file = TreeItem::Entry("docs/README.md".into());
+        assert_eq!(root_file.file_path(&directories), Some("README.md"));
+        assert_eq!(nested_file.file_path(&directories), Some("docs/README.md"));
+        assert_eq!(TreeItem::Entry("docs".into()).file_path(&directories), None);
+        assert_eq!(
+            TreeItem::Entry("gone/README.md".into()).file_path(&directories),
+            None
+        );
+        assert_eq!(
+            TreeItem::LoadMore("docs".into()).file_path(&directories),
+            None
         );
     }
 

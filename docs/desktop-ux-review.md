@@ -123,8 +123,21 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 打开包含标题和代码块的 Markdown，正文搜索跳到第 350 行。在展开阅读中切换排版与源码，关闭后保留原查询和命中。在 900 像素窄窗打开同名文件，排版和源码都来自所选工作树。另用单段接近 19 KiB 的样例复验，打开时直接进入源码。链接目标由单元测试覆盖，实际浏览器跳转未单独实测。证据在 `.artifacts/markdown-reader-qa`。
 - 217 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 MSVC 交叉类型检查、运行时构建和文件、图片、项目文件引用、Scratch 与工作区移除专项均通过。复制专项覆盖逐字节复制、并发重试、会话写入失败后的冷启动恢复，以及无 Agent 调用。运行时证据在 `.artifacts/draft-copy-runtime`。Windows 原生交互待实机复验。
 
+## 2026-11-21 第十批
+
+本轮从 Hive Desktop `170b004` 开始。参考默认分支为 T3 Code `068332c`、Cindy `4e41737`、Beluga `45a484b`，Hive 上游为 `18861b8`。
+
+- **把文件直接拖到侧栏会话。** 普通行和置顶行都可接收桌面文件。Hive 确认目标会话和项目后，按拖入顺序将文件追加到其草稿。目标原有文字和附件保留，使用原有数量与类型限制。在打开回包前切走会取消这次拖入，上传开始后切走仍保存到已确认的目标。拖入本身不发送消息。 [T3 Code 拖附件到对话](https://github.com/pingdotgg/t3code/blob/068332c603ce5ca40ad5a96a09cffa34ebd05dff/docs/user/thread-sidebar.md#L72-L75)
+- **按唤回时间查看暂缓事项。** 工作区和跨项目收件箱都把最早到期的提醒排在前面，最后显示无限期提醒。相同时间沿用原有优先级和更新顺序。跨项目收件箱保留正在操作的行，释放焦点或菜单后再应用新顺序。 [Cindy 暂缓排序](https://github.com/makecindy/cindy/blob/4e4173743fc2c3cee83d0c4ae2f3aae79a4f2df4/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L124-L128)
+- **用方向键连续预览文件。** 在文件树用上、下键移动后，停留 120 毫秒即预览选中文件，Return 仍立即打开。切出文件树、搜索或切换工作树时取消之前的预览任务。打开目录和错误重试仍由显式操作触发。 [Beluga 键盘预览](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L270-L283)
+
+- macOS 用独立 AppKit 测试窗把文本文件和 PNG 从操作系统拖到 Beta 会话，Alpha 当时处于前台。目标确认回包延迟四秒，首个上传在回包后发出。两份文件只写入 Beta，逐字节等于源文件。Alpha 草稿、Beta 已有文字和附件都保留。再次拖入并在目标回包前切回 Alpha，没有产生新上传。全程没有发送消息。证据在 `.artifacts/sidebar-drop-qa`。
+- macOS 跨项目收件箱按顺序显示 Atlas 较早提醒、Beacon 较晚提醒和 Beacon 无限期提醒。把 Beacon 较晚提醒改为 15 分钟后，移开指针才更新顺序。撤销后恢复原顺序和时间。两处收件箱共用的专项测试同时覆盖到期唤回。证据在 `.artifacts/snooze-order-qa`。
+- macOS 在项目文件树以 25 毫秒间隔连按三次向下键，后台只读取最终选中的文件。切到工作树后重复操作，后台只读取该工作树的文件，显示与项目根目录不同的内容。预览完成后按 Return 没有重复读取。证据在 `.artifacts/keyboard-debounce-qa`。
+- 220 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 MSVC 交叉类型检查、TypeScript 检查、编译后的文件和图片附件协议专项、跨项目复制草稿回归均通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **把文件直接拖到侧栏的一条对话。** 从桌面把文件拖到另一项目的会话行，核对它打开准确的接收会话并在草稿中挂载附件。用同名文件和已有草稿检查来源、目标、顺序和数量限制。 [T3 Code 拖附件到对话](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L72-L75)
-- **按唤回时间查看暂缓事项。** 两个收件箱的暂缓列表把最近到期的提醒排在前面，最后显示无限期提醒。用优先级与时间顺序相反的两个项目复验，随后改期、撤销并验证自动唤回。 [Cindy 暂缓排序](https://github.com/makecindy/cindy/blob/4e4173743fc2c3cee83d0c4ae2f3aae79a4f2df4/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L124-L128)
-- **用方向键连续预览文件。** 在文件树移动选中项，停下后显示当前文件，Return 可立即打开。用连续按键、项目与工作树同名文件、切出文件树验证及时取消旧读取。 [Beluga 键盘预览](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L270-L283)
+- **暂存当前写到一半的消息。** 在同一会话先收起草稿和附件，继续写另一条，稍后从编辑区取回。用两份草稿、冲突附件名和重开应用核对归属与恢复顺序。 [T3 Code 暂存草稿](https://github.com/pingdotgg/t3code/blob/068332c603ce5ca40ad5a96a09cffa34ebd05dff/docs/user/composer.md#L194-L203)
+- **第一次进收件箱时解释怎么用。** 从跨项目入口打开时，说明如何找到等自己回应的事项、暂缓和查看新事项。验证键盘关闭、同一机器重开后记住已读状态，以及仍能从收件箱重新打开帮助。 [Cindy 首次收件箱介绍](https://github.com/makecindy/cindy/blob/4e4173743fc2c3cee83d0c4ae2f3aae79a4f2df4/docs/product-rules/task-inbox.md#L8-L15)
+- **把正在预览的文件直接附到草稿。** 从文件预览点击引用，核对当前工作树的快照和当前草稿。用项目根目录和独立工作树里的两个同名文件，验证引用的实际字节与预览一致，文字和已有附件保留。 [Beluga 在聊天引用](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/FilesView.tsx#L95-L117)

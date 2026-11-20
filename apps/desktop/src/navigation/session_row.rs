@@ -270,6 +270,7 @@ impl HiveApp {
         };
         let archive_blocked = self.session_archive_blocked(&id);
         let menu_session = session.clone();
+        let drop_session = session.clone();
         let weak = cx.weak_entity();
         let pinning =
             self.session_pin_loading.contains(&id) || self.session_archive_loading.contains(&id);
@@ -326,11 +327,20 @@ impl HiveApp {
             app: weak,
         };
         h_flex()
+            .id(row_group.clone())
             .relative()
             .group(row_group.clone())
             .min_w_0()
             .w_full()
             .items_center()
+            .when(self.can_drop_files_on_session(session), |row| {
+                row.drag_over::<ExternalPaths>(|style, _, _, cx| {
+                    style.rounded_md().bg(Color::Attention.get(cx))
+                })
+                .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                    this.drop_files_on_session(drop_session.clone(), paths.paths().to_vec(), window, cx);
+                }))
+            })
             .child(
                 div().flex_1().min_w_0().child(
                     Button::new(SharedString::from(format!("{scope}-{id}")))

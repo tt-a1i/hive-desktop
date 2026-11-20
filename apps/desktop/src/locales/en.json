@@ -1726,6 +1726,7 @@
   "用户": "User",
   "用户范围": "User scope",
   "用户附件来源与投递内容不匹配。": "User attachment metadata does not match the delivered content.",
+  "附件返回的项目不匹配。": "The attachment belongs to a different project.",
   "用此 PR 内容填写表单（需重新预览）": "Fill from this PR (requires a new preview)",
   "用量": "Usage",
   "用量数据格式错误": "Invalid usage data",

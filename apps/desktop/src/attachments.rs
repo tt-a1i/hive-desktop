@@ -273,6 +273,7 @@ impl HiveApp {
             return;
         }
         self.attachments.loading.insert(key.clone());
+        let session = key.strip_prefix("session:").map(str::to_owned);
         let connection = self.connection_generation;
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -290,6 +291,9 @@ impl HiveApp {
                 match runtime.request(method, params).await.and_then(|value| {
                     serde_json::from_value::<StagedImage>(value).map_err(|error| error.to_string())
                 }) {
+                    Ok(item) if item.attachment.workspace_id != workspace => {
+                        errors.push("附件返回的项目不匹配。".into());
+                    }
                     Ok(item) => {
                         let image = match item.image {
                             Some(image) => prepare_preview(image.data).await.map(Some),
@@ -308,7 +312,11 @@ impl HiveApp {
                     return;
                 }
                 this.attachments.loading.remove(&key);
-                if !this.workspaces.iter().any(|item| item.id == workspace) {
+                if this.workspace_removing.as_ref() == Some(&workspace)
+                    || !this.workspaces.iter().any(|item| item.id == workspace)
+                    || session.as_ref().is_some_and(|id| this.removed_sessions.contains(id))
+                {
+                    cx.notify();
                     return;
                 }
                 let active = this.draft_target.as_ref() == Some(&key);
