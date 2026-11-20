@@ -91,10 +91,16 @@ impl HiveApp {
         let english_labels = english();
         let prefs = crate::diffs_settings::current(cx);
         let initial_mode = prefs.default_diff_mode.into_diff_mode();
+        let initial_inline = prefs.inline_diff.into_inline_unit();
         let initial_ignore_ws = prefs.ignore_whitespace;
         let collapse_multi = prefs.collapse_multi_file_diffs;
         let viewer = cx.new(|cx: &mut Context<ToolDiff>| {
-            let state = cx.new(|cx| DiffState::new([], cx).with_mode(initial_mode));
+            let state = cx.new(|cx| {
+                DiffState::new([], cx)
+                    .with_mode(initial_mode)
+                    .with_inline_unit(initial_inline)
+                    .with_inline_max_line_length(crate::diffs_settings::INLINE_DIFF_MAX_LINE_BYTES)
+            });
             let view = ToolDiff {
                 state,
                 document: None,
@@ -333,6 +339,28 @@ impl Render for ToolDiff {
                                         cx.notify();
                                     })),
                             )
+                            .child({
+                                let inline_mode = crate::diffs_settings::InlineDiffMode::from_inline_unit(
+                                    self.state.read(cx).inline_unit(),
+                                );
+                                Button::new("diff-inline-unit")
+                                    .custom(segment_tab_variant(cx))
+                                    .compact()
+                                    .h(px(26.))
+                                    .px_2p5()
+                                    .rounded_md()
+                                    .label(inline_mode.label())
+                                    .tooltip(tr("切换行内局部差异高亮粒度（词级 / 字符级 / 关闭）"))
+                                    .selected(!self.raw && inline_mode != crate::diffs_settings::InlineDiffMode::Off)
+                                    .disabled(!has_files || self.raw)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        let next = inline_mode.next();
+                                        this.state.update(cx, |s, cx| {
+                                            s.set_inline_unit(next.into_inline_unit(), cx);
+                                        });
+                                        cx.notify();
+                                    }))
+                            })
                             .child(
                                 Button::new("diff-ignore-ws")
                                     .custom(crate::palette::quiet_icon_variant(cx))

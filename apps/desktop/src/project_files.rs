@@ -254,7 +254,14 @@ impl FilePicker {
             })
             .unwrap_or(false);
         if accepted {
+            let composer_focus = self
+                .app
+                .upgrade()
+                .map(|app| app.read(cx).input.read(cx).focus_handle(cx));
             window.close_dialog(cx);
+            if let Some(focus) = composer_focus {
+                window.on_next_frame(move |window, cx| focus.focus(window, cx));
+            }
         } else {
             self.error = Some(FileError::Owned("当前草稿暂不能添加引用，请关闭后重试。"));
             cx.notify();
@@ -265,7 +272,7 @@ impl FilePicker {
         if modifiers.control
             || modifiers.platform
             || modifiers.alt
-            || modifiers.shift
+            || (modifiers.shift && event.keystroke.key.as_str() != "tab")
             || self.query.update(cx, |input, cx| {
                 input.marked_text_range(window, cx).is_some()
             })
@@ -273,15 +280,27 @@ impl FilePicker {
             return;
         }
         match event.keystroke.key.as_str() {
-            "up" | "down" if !self.page.paths.is_empty() => {
+            "up" | "down" | "tab" if !self.page.paths.is_empty() => {
                 let len = self.page.paths.len();
-                self.selected = if event.keystroke.key == "down" {
+                let forward = event.keystroke.key == "down"
+                    || (event.keystroke.key == "tab" && !modifiers.shift);
+                self.selected = if forward {
                     (self.selected + 1) % len
                 } else {
                     (self.selected + len - 1) % len
                 };
                 self.scroll.scroll_to_item(self.selected);
                 cx.notify();
+            }
+            "escape" => {
+                let composer_focus = self
+                    .app
+                    .upgrade()
+                    .map(|app| app.read(cx).input.read(cx).focus_handle(cx));
+                window.close_dialog(cx);
+                if let Some(focus) = composer_focus {
+                    window.on_next_frame(move |window, cx| focus.focus(window, cx));
+                }
             }
             "enter" => {
                 if let Some(path) = self.page.paths.get(self.selected).cloned() {

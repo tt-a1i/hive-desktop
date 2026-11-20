@@ -2238,5 +2238,11 @@
   "全部待命": "All idle",
   "待阅汇报": "Pending report",
   "进入会话": "Open session",
-  "已移除": "Removed"
+  "已移除": "Removed",
+  "词级高亮": "Word diff",
+  "字符高亮": "Char diff",
+  "关闭行内高亮": "Inline off",
+  "切换行内局部差异高亮粒度（词级 / 字符级 / 关闭）": "Cycle inline diff granularity (word / character / off)",
+  "行内差异高亮": "Inline diff highlight",
+  "在修改行内高亮局部词级或字符级变更，便于快速定位长行改动。": "Highlight word- or character-level changes inside modified lines for easier scanning."
 }

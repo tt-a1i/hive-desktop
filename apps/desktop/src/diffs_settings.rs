@@ -1,5 +1,8 @@
 use crate::language::tr;
-use gpui_kit::{App, BorrowAppContext, Global, component::diff::DiffMode};
+use gpui_kit::{
+    App, BorrowAppContext, Global,
+    component::diff::{DiffInlineUnit, DiffMode},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     fs, io,
@@ -8,6 +11,50 @@ use std::{
 
 const FILE: &str = "desktop-diffs.json";
 pub const MAX_BASE_LEN: usize = 120;
+pub const INLINE_DIFF_MAX_LINE_BYTES: usize = 1_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineDiffMode {
+    #[default]
+    Word,
+    Character,
+    Off,
+}
+
+impl InlineDiffMode {
+    pub fn into_inline_unit(self) -> Option<DiffInlineUnit> {
+        match self {
+            Self::Word => Some(DiffInlineUnit::Word),
+            Self::Character => Some(DiffInlineUnit::Character),
+            Self::Off => None,
+        }
+    }
+
+    pub fn from_inline_unit(unit: Option<DiffInlineUnit>) -> Self {
+        match unit {
+            Some(DiffInlineUnit::Character) => Self::Character,
+            Some(_) => Self::Word,
+            None => Self::Off,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Word => Self::Character,
+            Self::Character => Self::Off,
+            Self::Off => Self::Word,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Word => tr("词级高亮"),
+            Self::Character => tr("字符高亮"),
+            Self::Off => tr("关闭行内高亮"),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,6 +77,7 @@ impl PreferredDiffMode {
 #[serde(default)]
 pub struct DiffSettings {
     pub default_diff_mode: PreferredDiffMode,
+    pub inline_diff: InlineDiffMode,
     pub collapse_multi_file_diffs: bool,
     pub ignore_whitespace: bool,
     pub pr_default_draft: bool,
@@ -40,6 +88,7 @@ impl Default for DiffSettings {
     fn default() -> Self {
         Self {
             default_diff_mode: PreferredDiffMode::Unified,
+            inline_diff: InlineDiffMode::Word,
             collapse_multi_file_diffs: false,
             ignore_whitespace: false,
             pr_default_draft: true,
@@ -506,11 +555,15 @@ mod tests {
 
         let custom = DiffSettings {
             default_diff_mode: PreferredDiffMode::Split,
+            inline_diff: InlineDiffMode::Character,
             collapse_multi_file_diffs: true,
             ignore_whitespace: true,
             pr_default_draft: false,
             pr_default_base: "develop".to_owned(),
         };
+        assert_eq!(InlineDiffMode::Word.next(), InlineDiffMode::Character);
+        assert_eq!(InlineDiffMode::Character.next(), InlineDiffMode::Off);
+        assert_eq!(InlineDiffMode::Off.next(), InlineDiffMode::Word);
         save(root.path(), &custom).unwrap();
         assert_eq!(load(root.path()).unwrap(), custom);
 

@@ -113,7 +113,7 @@ impl HiveApp {
                     .icon(Glyph::X)
                     .accessibility_label(format!("{}: {}", tr("移除附件"), name))
                     .disabled(busy)
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         if let Some(items) = key
                             .as_ref()
                             .and_then(|key| this.attachments.drafts.get_mut(key))
@@ -122,6 +122,8 @@ impl HiveApp {
                         }
                         this.prune_draft_attachments(cx);
                         this.schedule_draft_save(cx);
+                        let focus = this.input.read(cx).focus_handle(cx);
+                        window.on_next_frame(move |window, cx| focus.focus(window, cx));
                         cx.notify();
                     })),
             )

@@ -101,8 +101,6 @@ public static class OpenDialogHelper {
             [void][OpenDialogHelper]::SendMessage($editHwnd, 0x000C, [IntPtr]::Zero, $Source)
         }
         Start-Sleep -Milliseconds 150
-        $editElem.SetFocus()
-        Start-Sleep -Milliseconds 150
         [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
         [void](Wait-Name 'Remove question-proof.txt')
         # Wait for the original question's saved draft and compare the exact

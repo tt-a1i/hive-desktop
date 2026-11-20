@@ -566,11 +566,13 @@ impl HiveApp {
                 files_scroll: ScrollHandle::new(),
                 file_patch_reader: None,
                 diff_state: cx.new(|cx| {
-                    DiffState::new([], cx).with_mode(
-                        crate::diffs_settings::current(cx)
-                            .default_diff_mode
-                            .into_diff_mode(),
-                    )
+                    let prefs = crate::diffs_settings::current(cx);
+                    DiffState::new([], cx)
+                        .with_mode(prefs.default_diff_mode.into_diff_mode())
+                        .with_inline_unit(prefs.inline_diff.into_inline_unit())
+                        .with_inline_max_line_length(
+                            crate::diffs_settings::INLINE_DIFF_MAX_LINE_BYTES,
+                        )
                 }),
                 diff_raw: false,
                 ignore_whitespace: crate::diffs_settings::current(cx).ignore_whitespace,
@@ -2426,7 +2428,25 @@ impl Render for GitWorkspace {
                                                                     }
                                                                     cx.notify();
                                                                 })),
-                                                        ),
+                                                        )
+                                                        .child({
+                                                            let inline_mode = crate::diffs_settings::InlineDiffMode::from_inline_unit(
+                                                                self.diff_state.read(cx).inline_unit(),
+                                                            );
+                                                            Button::new("git-diff-inline-unit")
+                                                                .custom(segment_variant(!self.diff_raw && self.diff_has_structured && inline_mode != crate::diffs_settings::InlineDiffMode::Off, cx))
+                                                                .compact().xsmall().h(px(20.)).px_2().rounded_sm()
+                                                                .label(inline_mode.label())
+                                                                .tooltip(tr("切换行内局部差异高亮粒度（词级 / 字符级 / 关闭）"))
+                                                                .disabled(self.diff_raw || !self.diff_has_structured)
+                                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                                    let next = inline_mode.next();
+                                                                    this.diff_state.update(cx, |s, cx| {
+                                                                        s.set_inline_unit(next.into_inline_unit(), cx);
+                                                                    });
+                                                                    cx.notify();
+                                                                }))
+                                                        }),
                                                 )
                                                 .child(
                                                     h_flex()

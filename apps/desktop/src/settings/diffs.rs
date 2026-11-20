@@ -195,6 +195,94 @@ impl HiveApp {
                                     h_flex()
                                         .w_full()
                                         .min_w_0()
+                                        .flex_wrap()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .child(
+                                            v_flex()
+                                                .flex_1()
+                                                .min_w(px(180.))
+                                                .gap_0p5()
+                                                .child(
+                                                    h_flex()
+                                                        .items_center()
+                                                        .gap_1p5()
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(13.))
+                                                                .font_weight(FontWeight::MEDIUM)
+                                                                .text_color(Color::Text.get(cx))
+                                                                .child(tr("行内差异高亮")),
+                                                        )
+                                                        .when_some(
+                                                            reset_bool_or_mode(
+                                                                "diffs-inline-reset",
+                                                                saved.inline_diff != defaults.inline_diff,
+                                                                |s, d| s.inline_diff = d.inline_diff,
+                                                            ),
+                                                            |row, btn| row.child(btn),
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(Color::Muted.get(cx))
+                                                        .child(tr("在修改行内高亮局部词级或字符级变更，便于快速定位长行改动。")),
+                                                ),
+                                        )
+                                        .child(
+                                            super::settings_segmented_bar(cx).children(
+                                                [
+                                                    (
+                                                        diffs_settings::InlineDiffMode::Word,
+                                                        "diffs-inline-word",
+                                                        "词级高亮",
+                                                    ),
+                                                    (
+                                                        diffs_settings::InlineDiffMode::Character,
+                                                        "diffs-inline-char",
+                                                        "字符高亮",
+                                                    ),
+                                                    (
+                                                        diffs_settings::InlineDiffMode::Off,
+                                                        "diffs-inline-off",
+                                                        "关闭行内高亮",
+                                                    ),
+                                                ]
+                                                .into_iter()
+                                                .map(|(mode, id, label)| {
+                                                    let active = saved.inline_diff == mode;
+                                                    Reveal::new(
+                                                        SharedString::from(format!("{id}-reveal")),
+                                                        &self.diffs_scroll,
+                                                        Button::new(id)
+                                                            .when(active, |b| b.outline())
+                                                            .when(!active, |b| b.ghost())
+                                                            .small()
+                                                            .h(px(26.))
+                                                            .px_2p5()
+                                                            .rounded_md()
+                                                            .label(tr(label))
+                                                            .accessibility_label(tr(label))
+                                                            .selected(active)
+                                                            .toggled(active)
+                                                            .on_click(move |_, _, cx| {
+                                                                let mut next = diffs_settings::current(cx);
+                                                                next.inline_diff = mode;
+                                                                diffs_settings::set(next, cx);
+                                                            }),
+                                                    )
+                                                }),
+                                            ),
+                                        ),
+                                ),
+                            )
+                            .child(
+                                super::settings_row(true, cx).child(
+                                    h_flex()
+                                        .w_full()
+                                        .min_w_0()
                                         .items_center()
                                         .justify_between()
                                         .gap_3()
