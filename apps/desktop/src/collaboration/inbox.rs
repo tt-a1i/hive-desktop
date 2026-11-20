@@ -1,5 +1,6 @@
 mod global;
 mod snoozes;
+pub(super) use global::GlobalInboxView;
 
 use super::read_dispatch;
 use crate::{

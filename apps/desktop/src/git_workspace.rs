@@ -1,4 +1,5 @@
 pub(crate) mod patch_reader;
+pub(crate) mod file_tree;
 mod remotes;
 mod review;
 use patch_reader::PatchReader;
@@ -514,6 +515,13 @@ pub(crate) struct GitWorkspace {
     ops_notice: Option<(bool, String)>,
 }
 impl HiveApp {
+    pub(crate) fn file_tree_git_busy(&self, cx: &App) -> bool {
+        self.git_workspace.as_ref().is_some_and(|workspace| {
+            let workspace = workspace.read(cx);
+            workspace.matches_app(self) && (workspace.busy(cx) || workspace.ops_busy)
+        })
+    }
+
     fn build_git_workspace(
         &self,
         in_drawer: bool,

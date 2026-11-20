@@ -4,6 +4,12 @@ use crate::app::HiveApp;
 use gpui_kit::{component::input::Enter, *};
 pub use preferences::{ComposerPreferences, SendMode, ToolActivity, restore};
 
+#[derive(Clone, Copy)]
+pub(crate) enum SendIntent {
+    Configured,
+    AlternateWhenBusy,
+}
+
 impl HiveApp {
     pub(crate) fn composer_enter(
         &mut self,
@@ -21,10 +27,15 @@ impl HiveApp {
         // Other fields keep their native Enter behavior.
         if action.secondary && !action.shift {
             cx.stop_propagation();
-            self.submit_composer_key(window, cx);
+            self.submit_composer_key(SendIntent::AlternateWhenBusy, window, cx);
         }
     }
-    pub(crate) fn submit_composer_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn submit_composer_key(
+        &mut self,
+        intent: SendIntent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.composer_can_submit {
             return;
         }
@@ -38,7 +49,7 @@ impl HiveApp {
                 }
                 return;
             }
-            self.send(window, cx);
+            self.send(intent, window, cx);
         }
     }
 }

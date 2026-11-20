@@ -42,9 +42,21 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS Diff 实窗从项目和工作树 A 分别定位同名文件，并通过 Enter 预览到各自不同的内容。定位工作树中的 `page-109.txt` 时，后台自动读完前 100 个条目再取下一页。聊天文件引用入口、改名／删除和窄窗交互未单独做实窗复验。证据在 `.artifacts/diff-reveal-qa/receipt.md`。
 - 184 项桌面 Rust 测试通过，1 项原有忽略。项目文件、项目文件引用和工作树文件引用的运行时检查通过。Windows x64 MSVC 通过交叉类型检查，原生窗口待复验。欢迎页、收件箱和 Diff 实窗使用隔离项目和历史，没有发起模型请求。
 
+## 2026-11-21 第四批
+
+本轮从 Hive Desktop `e5ff84a` 开始。T3 Code 默认分支为 `667d8a1`，Cindy 为 `48acd5f`，Beluga 为 `45a484b`。Hive 上游基线仍是 `18861b8`。
+
+- **临时切换本条消息的排队或插话。** 在当前回合运行时，macOS 按 `Cmd+Enter`，Windows 按 `Ctrl+Enter`，即可对这条消息使用与默认相反的方式。发送按钮沿用默认方式并提示快捷键。等待空闲设置仍会保留草稿。 [T3 Code 输入快捷键](https://github.com/pingdotgg/t3code/blob/667d8a120aa72e8c37795c9e391596acb141170b/docs/user/keybindings.md#L14-L24)
+- **返回收件箱时回到正在看的事项。** 筛到指定项目，滚动到后面的事项并打开，再打开收件箱。恢复项目、展开区段和此前在视野顶部的事项。列表重排时按事项身份定位。原事项消失时回到本项目的顶部，项目移除时回到全部项目。视图状态在当前应用会话中保留。 [Cindy 收件箱视图规则](https://github.com/makecindy/cindy/blob/48acd5fff52ffcd9892a8dc9759e8fe5fa31d706/docs/product-rules/task-inbox.md#L14-L23)
+- **直接从文件树看出当前工作树的改动。** 文件行标记新增、修改、改名或冲突，有改动后代的目录显示提示。文件面板打开、执行目录变化或手动刷新时重新读取。一次最多读取 500 条，有遗漏时提示。结果依据当前浏览范围，切换时清除上一工作树的标记。 [Beluga 文件树与改动](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L209-L224)
+
+- macOS 聊天实窗用受控的 Codex 协议替身验证两种默认发送设置以及等待空闲设置。插话只进当前回合，排队内容在释放后进入下一回合，普通 Return 和 Shift+Return 在修饰键发送模式下会换行。等待空闲期间草稿保留，空闲后发送一次。中文输入法候选选定及 Windows 实体键盘待复验。证据在 `.artifacts/composer-busy-native/receipt.md`。
+- macOS 收件箱实窗验证了 Beacon 项目筛选、打开派单及返回位置。关闭期间在列表前插入更晚的待处理问题，重开后仍看到同一条顶部事项，原派单按钮的垂直坐标保持一致。展开区段和原事项消失的分支未做实窗复验。证据在 `.artifacts/inbox-return-qa/receipt.md`。
+- macOS 文件树实窗验证项目目录及工作树 A、B 分别显示各自的新增文件，关闭或展开父目录时仍显示改动提示。工作树 A 的 `note.txt` 显示修改，B 的同名文件不显示修改。编辑和还原 A 的文件后重新读取，修改标记随之出现和消失。证据在 `.artifacts/tree-badges-qa/receipt.md`。
+- 189 项桌面 Rust 测试通过，1 项原有忽略。运行时 Git 读取、工作区绑定和消息队列的 RPC 检查通过。Windows x64 MSVC 通过交叉类型检查。
+
 ## 接下来优先检查
 
-- **发下一条消息时临时选择排队或插话。** 在有运行中回合的聊天打开输入区。当前发法取决于全局设置，同一次发送临时切换需要离开聊天去设置。补齐入口时验证现有发送快捷键、中文输入确认和不支持插话的后端。已用隔离 Codex 协议替身走通后台流程，确认插话进入当前回合、队列在下一回合执行。实窗夹具在 `.artifacts/composer-busy-native`。 [T3 Code 输入快捷键](https://github.com/pingdotgg/t3code/blob/ccc1feb15572c422fbdce26ba6077b91459cfd47/docs/user/keybindings.md#L13-L26)
-- **回到收件箱时恢复项目范围和位置。** 筛到成员较多的项目，向下滚动打开派单，再点收件箱。当前每次新建收件箱都从全部项目和顶部开始。恢复时以原项目和事项为准，项目删除后回到全部。 [Cindy 收件箱视图规则](https://github.com/makecindy/cindy/blob/cf58205bed0865c911ff052393d05d478d47c96b/docs/product-rules/task-inbox.md#L14-L23)
-- **浏览工作树时看出哪些路径有改动。** 在两个工作树分别修改不同的文件，打开各自文件面板并对照 Diff。当前文件树提供目录和文件的导航，查看工作树改动需转到 Diff。评估在树中显示文件改动与父目录提示，同时避免将另一个工作树的状态带过来。 [Beluga 文件树与改动](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L209-L224)
-- **有就绪 Agent 时从欢迎页先开一段临时会话。** 在空项目的首次启动环境配置一个可用 Agent。检查欢迎页的聊天入口与必须选择目录的现有约束，评估临时目录的可见性和保留规则。 [T3 Code 欢迎页](https://github.com/pingdotgg/t3code/blob/ccc1feb15572c422fbdce26ba6077b91459cfd47/docs/user/welcome-page.md#L1-L8)
+- **有就绪 Agent 时先开一段没有项目的会话。** 当前空白安装需要先选目录。T3 Code 从欢迎页进入空状态，再通过专用入口创建本机临时目录。用空项目和可用 Agent 验证 Hive 的首次发送、实际执行目录和冷启动恢复，并明确用户文件的保留规则。 [T3 Code 欢迎按钮](https://github.com/pingdotgg/t3code/blob/667d8a120aa72e8c37795c9e391596acb141170b/apps/web/src/components/onboarding/WelcomePage.tsx#L322-L335) · [T3 Code 空状态](https://github.com/pingdotgg/t3code/blob/667d8a120aa72e8c37795c9e391596acb141170b/apps/web/src/components/NoProjectsHero.tsx#L15-L54)
+- **从有改动的文件直接打开 Diff。** 在两个工作树中各改同名文件，从文件树的改动标记打开 Diff，验证选中的是当时的工作树和确切路径。当前可从 Diff 定位到文件树。 [Beluga 文件行操作](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L242-L252)
+- **收件箱入口提示有新的待处理事项。** 关闭收件箱，向另一项目送入需要用户答复的协作问题。检查入口能否提示新事项，打开后进入正确项目。当前必须先打开收件箱才会刷新列表。 [Cindy 收件箱入口行为](https://github.com/makecindy/cindy/blob/48acd5fff52ffcd9892a8dc9759e8fe5fa31d706/docs/product-rules/task-inbox.md#L3-L6)

@@ -29,6 +29,26 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
 use std::{collections::HashMap, time::Duration};
 
+#[derive(Clone, Default)]
+pub(in crate::collaboration) struct GlobalInboxView {
+    project_filter: Option<String>,
+    show_waiting: bool,
+    show_snoozed: bool,
+    reading_position: Option<ReadingPosition>,
+}
+
+#[derive(Clone)]
+struct ReadingPosition {
+    row: RowId,
+    viewport_offset: Pixels,
+}
+
+impl ReadingPosition {
+    fn item_index(&self, row_ids: &[Option<RowId>]) -> Option<usize> {
+        row_ids.iter().position(|id| id.as_ref() == Some(&self.row))
+    }
+}
+
 struct GlobalInbox {
     app: WeakEntity<HiveApp>,
     connection: u64,
@@ -38,6 +58,8 @@ struct GlobalInbox {
     show_snoozed: bool,
     placement: RowPlacement,
     row_focus: HashMap<RowId, (FocusHandle, [Subscription; 2])>,
+    row_ids: Vec<Option<RowId>>,
+    restore_position: Option<ReadingPosition>,
     dismissed: bool,
     scroll: ScrollHandle,
 }
@@ -113,17 +135,20 @@ impl HiveApp {
         }
         let parent = cx.entity();
         let connection = self.connection_generation;
-        let inbox = cx.new(|cx: &mut Context<GlobalInbox>| {
+        let saved = self.collaboration.inbox_view.clone();
+        let inbox = cx.new(move |cx: &mut Context<GlobalInbox>| {
             cx.observe(&parent, |_, _, cx| cx.notify()).detach();
             GlobalInbox {
                 app: parent.downgrade(),
                 connection,
                 projects: HashMap::new(),
-                project_filter: None,
-                show_waiting: false,
-                show_snoozed: false,
+                project_filter: saved.project_filter,
+                show_waiting: saved.show_waiting,
+                show_snoozed: saved.show_snoozed,
                 placement: RowPlacement::default(),
                 row_focus: HashMap::new(),
+                row_ids: Vec::new(),
+                restore_position: saved.reading_position,
                 dismissed: false,
                 scroll: ScrollHandle::new(),
             }
@@ -137,7 +162,7 @@ impl HiveApp {
                 .w(width)
                 .on_ok(|_, _, _| false)
                 .on_close(move |_, _, cx| {
-                    let _ = dismiss.update(cx, |inbox, _| inbox.dismissed = true);
+                    let _ = dismiss.update(cx, |inbox, cx| inbox.dismiss(cx));
                 })
                 .child(inbox.clone())
         });
@@ -190,6 +215,46 @@ impl HiveApp {
 }
 
 impl GlobalInbox {
+    fn reading_position(&self) -> Option<ReadingPosition> {
+        let offset = self.scroll.offset().y;
+        if offset >= px(0.) {
+            return None;
+        }
+        let viewport = self.scroll.bounds();
+        let last_visible = self.scroll.bottom_item();
+        self.row_ids
+            .iter()
+            .enumerate()
+            .skip(self.scroll.top_item())
+            .take_while(|(index, _)| *index <= last_visible)
+            .find_map(|(index, row)| {
+                let row = row.as_ref()?;
+                let bounds = self.scroll.bounds_for_item(index)?;
+                Some(ReadingPosition {
+                    row: row.clone(),
+                    viewport_offset: bounds.top() + offset - viewport.top(),
+                })
+            })
+    }
+
+    fn dismiss(&mut self, cx: &mut Context<Self>) {
+        if self.dismissed {
+            return;
+        }
+        self.dismissed = true;
+        let saved = GlobalInboxView {
+            project_filter: self.project_filter.clone(),
+            show_waiting: self.show_waiting,
+            show_snoozed: self.show_snoozed,
+            reading_position: self
+                .reading_position()
+                .or_else(|| self.restore_position.clone()),
+        };
+        if let Some(app) = self.app.upgrade() {
+            app.update(cx, |app, _| app.collaboration.inbox_view = saved);
+        }
+    }
+
     fn select_project(&mut self, project: Option<String>, cx: &mut Context<Self>) {
         let Some(app) = self.app.upgrade() else {
             return;
@@ -208,6 +273,7 @@ impl GlobalInbox {
             return;
         }
         self.project_filter = project;
+        self.restore_position = None;
         self.placement.clear();
         self.scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
@@ -406,7 +472,8 @@ impl Render for GlobalInbox {
         let ready = self.is_current(self.connection, cx);
         let removing = app.workspace_removing.as_deref();
         let selected = selected_project(&app.workspaces, removing, self.project_filter.as_deref());
-        if selected.is_none() && self.project_filter.take().is_some() {
+        if ready && selected.is_none() && self.project_filter.take().is_some() {
+            self.restore_position = None;
             self.placement.clear();
             self.scroll.set_offset(point(px(0.), px(0.)));
         }
@@ -444,12 +511,12 @@ impl Render for GlobalInbox {
             is_snoozed(entry, &self.projects[id].reminders, now)
         });
         let has_snoozed = !fresh.snoozed.is_empty();
+        let loading = projects
+            .iter()
+            .any(|project| !self.projects.contains_key(&project.id));
         let status = if !ready {
             Some("后台连接后将显示跨项目收件箱。")
-        } else if projects
-            .iter()
-            .any(|project| !self.projects.contains_key(&project.id))
-        {
+        } else if loading {
             Some("正在读取收件箱…")
         } else if fresh.attention.is_empty()
             && fresh.waiting.is_empty()
@@ -550,6 +617,7 @@ impl Render for GlobalInbox {
                 controls = controls.child(toggle_button(self.show_snoozed).on_click(cx.listener(
                     |this, _, _, cx| {
                         this.show_snoozed = !this.show_snoozed;
+                        this.restore_position = None;
                         this.placement.clear();
                         cx.notify();
                     },
@@ -561,12 +629,9 @@ impl Render for GlobalInbox {
             body.child(inbox_status(tr(status), cx))
         });
 
-        let mut list = v_flex()
-            .id("global-inbox-list")
-            .gap_2()
-            .track_scroll(&self.scroll)
-            .overflow_y_scroll()
-            .max_h((window.viewport_size().height - px(200.)).clamp(px(120.), px(600.)));
+        // The scroll handle indexes direct children. Keep rows and headings in
+        // the same sequence used to compute the saved reading position.
+        let mut items: Vec<(Option<RowId>, AnyElement)> = Vec::new();
         if ready {
             for workspace in &projects {
                 let Some(project) = self.projects.get(&workspace.id) else {
@@ -574,23 +639,29 @@ impl Render for GlobalInbox {
                 };
                 let title = display_project(workspace, &app.workspaces);
                 if let Some(error) = project.errors.first() {
-                    list = list.child(inbox_status(
-                        format!(
-                            "{title} · {} · {}",
-                            tr("无法刷新协作收件箱"),
-                            localize_owned_error(error)
+                    items.push((
+                        None,
+                        inbox_status(
+                            format!(
+                                "{title} · {} · {}",
+                                tr("无法刷新协作收件箱"),
+                                localize_owned_error(error)
+                            ),
+                            cx,
                         ),
-                        cx,
                     ));
                 }
                 if let Some((label, error)) = project.reminders.notice() {
-                    list = list.child(inbox_status(
-                        format!(
-                            "{title} · {} · {}",
-                            tr(label),
-                            localize_owned_error(&error.to_string())
+                    items.push((
+                        None,
+                        inbox_status(
+                            format!(
+                                "{title} · {} · {}",
+                                tr(label),
+                                localize_owned_error(&error.to_string())
+                            ),
+                            cx,
                         ),
-                        cx,
                     ));
                 }
             }
@@ -600,6 +671,7 @@ impl Render for GlobalInbox {
         let render_row = |(id, entry): (&str, Entry)| {
             let project = projects.iter().find(|project| project.id == id)?;
             let row_id = RowId::for_entry(id, &entry);
+            let layout_id = row_id.clone();
             let title = display_project(project, &app.workspaces);
             let reminders = &self.projects[id].reminders;
             let snoozed = is_snoozed(&entry, reminders, now);
@@ -626,7 +698,7 @@ impl Render for GlobalInbox {
                     {
                         return;
                     }
-                    this.dismissed = true;
+                    this.dismiss(cx);
                     window.close_dialog(cx);
                     app.update(cx, |app, cx| {
                         app.open_global_destination(
@@ -653,7 +725,7 @@ impl Render for GlobalInbox {
                     }
                 })),
             };
-            Some(inbox_row(
+            let row = inbox_row(
                 &id,
                 Some(title),
                 entry,
@@ -701,17 +773,21 @@ impl Render for GlobalInbox {
                         cx.notify();
                     }
                 },
-            ))
+            );
+            Some((Some(layout_id), row))
         };
         if !sections.attention.is_empty() {
-            list = list
-                .child(section_title(
+            items.push((
+                None,
+                section_title(
                     "global-inbox-attention",
                     tr("需要你关注"),
                     sections.attention.len(),
                     cx,
-                ))
-                .children(sections.attention.into_iter().filter_map(render_row));
+                )
+                .into_any_element(),
+            ));
+            items.extend(sections.attention.into_iter().filter_map(render_row));
         }
         if !sections.waiting.is_empty() {
             let count = sections.waiting.len();
@@ -720,36 +796,80 @@ impl Render for GlobalInbox {
             } else {
                 (Glyph::ChevronRight, tr("展开等待 Agent 的事项"))
             };
-            list = list.child(Reveal::new(
-                "global-inbox-waiting",
-                &self.scroll,
-                Button::new("toggle-waiting-inbox")
-                    .ghost()
-                    .compact()
-                    .xsmall()
-                    .icon(icon)
-                    .label(format!("{} ({count})", tr("等待 Agent")))
-                    .accessibility_label(format!("{action} ({count})"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_waiting = !this.show_waiting;
-                        this.placement.clear();
-                        cx.notify();
-                    })),
+            items.push((
+                None,
+                Reveal::new(
+                    "global-inbox-waiting",
+                    &self.scroll,
+                    Button::new("toggle-waiting-inbox")
+                        .ghost()
+                        .compact()
+                        .xsmall()
+                        .icon(icon)
+                        .label(format!("{} ({count})", tr("等待 Agent")))
+                        .accessibility_label(format!("{action} ({count})"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.show_waiting = !this.show_waiting;
+                            this.restore_position = None;
+                            this.placement.clear();
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
             ));
             if self.show_waiting {
-                list = list.children(sections.waiting.into_iter().filter_map(render_row));
+                items.extend(sections.waiting.into_iter().filter_map(render_row));
             }
         }
         if self.show_snoozed && has_snoozed {
-            list = list
-                .child(section_title(
+            items.push((
+                None,
+                section_title(
                     "global-inbox-snoozed",
                     tr("已暂缓事项"),
                     sections.snoozed.len(),
                     cx,
-                ))
-                .children(sections.snoozed.into_iter().filter_map(render_row));
+                )
+                .into_any_element(),
+            ));
+            items.extend(sections.snoozed.into_iter().filter_map(render_row));
         }
+        let (ids, elements): (Vec<_>, Vec<_>) = items.into_iter().unzip();
+        self.row_ids = ids;
+        let restore = if ready && !loading {
+            self.restore_position.take().and_then(|position| {
+                let index = position.item_index(&self.row_ids)?;
+                self.scroll.scroll_to_top_of_item(index);
+                Some((index, position.viewport_offset))
+            })
+        } else {
+            None
+        };
+        let list = v_flex()
+            .gap_2()
+            .when_some(restore, |list, (index, viewport_offset)| {
+                let scroll = self.scroll.clone();
+                list.on_children_prepainted(move |_, window, _| {
+                    let Some(bounds) = scroll.bounds_for_item(index) else {
+                        return;
+                    };
+                    let offset = (scroll.bounds().top() + viewport_offset - bounds.top())
+                        .clamp(-scroll.max_offset().y, px(0.));
+                    if offset != scroll.offset().y {
+                        let scroll = scroll.clone();
+                        window.on_next_frame(move |window, _| {
+                            scroll.set_offset(point(px(0.), offset));
+                            window.refresh();
+                        });
+                    }
+                })
+            })
+            .id("global-inbox-list")
+            .track_scroll(&self.scroll)
+            .overflow_y_scroll()
+            .max_h((window.viewport_size().height - px(200.)).clamp(px(120.), px(600.)))
+            .children(elements)
+            .on_scroll(cx.listener(|this, _, _, _| this.restore_position = None));
         body.child(list)
     }
 }
@@ -757,10 +877,12 @@ impl Render for GlobalInbox {
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionCenter, Destination, Entry, InboxSections, display_project, selected_project,
+        ActionCenter, Destination, Entry, InboxSections, ReadingPosition, RowId, display_project,
+        selected_project,
     };
     use crate::collaboration::inbox::Priority;
     use crate::protocol::Workspace;
+    use gpui_kit::px;
     use serde_json::json;
 
     fn workspace(id: &str, path: &str) -> Workspace {
@@ -793,6 +915,31 @@ mod tests {
         assert!(selected_project(&projects, Some("left"), Some("left")).is_none());
         assert!(selected_project(&projects, None, Some("right")).is_none());
         assert!(selected_project(&projects, None, None).is_none());
+    }
+
+    #[test]
+    fn reading_position_follows_the_exact_row_after_insertions() {
+        let entry = Entry {
+            label: "",
+            subject: "question".into(),
+            target: Destination::Dispatch("dispatch".into()),
+            snooze_key: Some("message:question".into()),
+            wake: None,
+            priority: Priority::NeedsUser,
+            updated_at: 1,
+        };
+        let anchor = RowId::for_entry("beacon", &entry);
+        let atlas = RowId::for_entry("atlas", &entry);
+        let saved = ReadingPosition {
+            row: anchor.clone(),
+            viewport_offset: px(-8.),
+        };
+        assert_eq!(saved.item_index(&[None, Some(anchor.clone())]), Some(1));
+        assert_eq!(
+            saved.item_index(&[None, Some(atlas.clone()), None, Some(anchor)]),
+            Some(3)
+        );
+        assert_eq!(saved.item_index(&[None, Some(atlas)]), None);
     }
 
     #[test]

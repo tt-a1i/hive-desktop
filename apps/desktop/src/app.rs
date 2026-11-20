@@ -663,7 +663,7 @@ impl HiveApp {
                     && cx.global::<crate::composer::ComposerPreferences>().settings.mode
                         == crate::composer::SendMode::Enter =>
                 {
-                    this.submit_composer_key(window, cx)
+                    this.submit_composer_key(crate::composer::SendIntent::Configured, window, cx)
                 }
                 InputEvent::Change => {
                     this.schedule_draft_save(cx);

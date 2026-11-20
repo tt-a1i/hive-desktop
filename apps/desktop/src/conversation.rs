@@ -1,5 +1,7 @@
 use crate::{
     app::{DeliveryCard, HiveApp, Message, ToolOutputWindow, ToolPresentation},
+    composer::SendIntent,
+    general::BusySendMode,
     protocol::*,
 };
 use gpui_kit::*;
@@ -41,7 +43,7 @@ impl HiveApp {
         release_conversation_images(images, cx);
     }
 
-    pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn send(&mut self, intent: SendIntent, window: &mut Window, cx: &mut Context<Self>) {
         if self.conversation_is_read_only() || !self.conversation_ready || !self.workspace_writes_allowed() {
             return;
         }
@@ -58,13 +60,13 @@ impl HiveApp {
         let attachment_key = format!("session:{id}");
         let refs = self.attachments.refs(Some(&attachment_key));
         if self.session.as_ref().is_some_and(|s| matches!(s.backend, Backend::Acp)) && refs.iter().any(|item| item.is_image()) { self.error = Some("当前 ACP 不支持图片，请移除图片后发送。".into()); cx.notify(); return; }
+        let was_busy = self.busy.contains(&id);
+        let configured = crate::general::current(cx).busy_send_mode;
         if (text.trim().is_empty() && refs.is_empty())
             || !self.attachments.ready(Some(&attachment_key))
             || self.inflight_inputs.contains_key(&id)
-            || (!self.busy.contains(&id) && self.pending.get(&id).copied().unwrap_or(0) > 0)
-            || (self.busy.contains(&id)
-                && crate::general::current(cx).busy_send_mode
-                    == crate::general::BusySendMode::BlockUntilIdle)
+            || (!was_busy && self.pending.get(&id).copied().unwrap_or(0) > 0)
+            || (was_busy && configured == BusySendMode::BlockUntilIdle)
             || self.loading
             || !self.connected
         {
@@ -76,11 +78,15 @@ impl HiveApp {
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
-        let busy_mode = match crate::general::current(cx).busy_send_mode {
-            crate::general::BusySendMode::SteerWhenSupported => "steer",
+        let follow_up = if was_busy && matches!(intent, SendIntent::AlternateWhenBusy) {
+            configured.alternate().unwrap_or(configured)
+        } else {
+            configured
+        };
+        let busy_mode = match follow_up {
+            BusySendMode::SteerWhenSupported => "steer",
             _ => "queue",
         };
-        let was_busy = self.busy.contains(&id);
         self.busy.insert(id.clone());
         self.inflight_inputs.insert(id.clone(), text.clone());
         self.drafts.remove(&format!("session:{id}"));

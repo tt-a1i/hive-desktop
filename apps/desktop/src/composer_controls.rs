@@ -1,4 +1,7 @@
-use crate::{app::HiveApp, language::tr, palette, protocol::Backend};
+use crate::{
+    app::HiveApp, composer::SendIntent, general::BusySendMode, language::tr, palette,
+    protocol::Backend,
+};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
@@ -18,6 +21,24 @@ pub(crate) fn backend_glyph(backend: Backend) -> Glyph {
         Backend::PiRpc => Glyph::SquareTerminal,
         Backend::Acp => Glyph::SquareTerminal,
     }
+}
+
+fn busy_send_hint(mode: BusySendMode) -> SharedString {
+    let (default, alternate) = match mode {
+        BusySendMode::Queue => (
+            tr("加入队列，当前回复结束后按顺序处理"),
+            tr("仅本条尝试插话，不可用时排队"),
+        ),
+        BusySendMode::SteerWhenSupported => (
+            tr("优先向当前回合发送插话引导；不支持时自动按顺序排队"),
+            tr("仅本条排队"),
+        ),
+        BusySendMode::BlockUntilIdle => {
+            return tr("Agent 正在运行中；当前设置为等待空闲后再发送").into();
+        }
+    };
+    let shortcut = if cfg!(target_os = "macos") { "⌘Enter" } else { "Ctrl+Enter" };
+    format!("{default}\n{shortcut} · {alternate}").into()
 }
 
 impl HiveApp {
@@ -200,14 +221,14 @@ impl HiveApp {
                     .when(!can_resume, |actions| {
                         let busy_mode = crate::general::current(cx).busy_send_mode;
                         let blocked_while_running = running
-                            && busy_mode == crate::general::BusySendMode::BlockUntilIdle;
+                            && busy_mode == BusySendMode::BlockUntilIdle;
                         let busy_badge = if !running {
                             None
                         } else {
                             match busy_mode {
-                                crate::general::BusySendMode::Queue => Some(tr("排队")),
-                                crate::general::BusySendMode::SteerWhenSupported => Some(tr("插话")),
-                                crate::general::BusySendMode::BlockUntilIdle => None,
+                                BusySendMode::Queue => Some(tr("排队")),
+                                BusySendMode::SteerWhenSupported => Some(tr("插话")),
+                                BusySendMode::BlockUntilIdle => None,
                             }
                         };
                         actions.child(
@@ -229,43 +250,32 @@ impl HiveApp {
                                     tr("Agent 正在运行中；当前设置为等待空闲后再发送")
                                 } else if running {
                                     match busy_mode {
-                                        crate::general::BusySendMode::SteerWhenSupported => {
+                                        BusySendMode::SteerWhenSupported => {
                                             tr("发送插话引导")
                                         }
-                                        crate::general::BusySendMode::Queue => tr("加入消息队列"),
-                                        crate::general::BusySendMode::BlockUntilIdle => tr("发送消息"),
+                                        BusySendMode::Queue => tr("加入消息队列"),
+                                        BusySendMode::BlockUntilIdle => tr("发送消息"),
                                     }
                                 } else {
                                     tr("发送消息")
                                 })
                                 .tooltip(if self.workspace.is_none() {
                                     tr("选择项目文件夹并发送").into()
-                                } else if blocked_while_running {
-                                    tr("Agent 正在运行中；当前设置为等待空闲后再发送").into()
                                 } else if running {
-                                    match busy_mode {
-                                        crate::general::BusySendMode::SteerWhenSupported => {
-                                            tr("优先向当前回合发送插话引导；不支持时自动按顺序排队").into()
-                                        }
-                                        crate::general::BusySendMode::Queue => {
-                                            tr("加入队列，当前回复结束后按顺序处理").into()
-                                        }
-                                        crate::general::BusySendMode::BlockUntilIdle => {
-                                            tr("Agent 正在运行中；当前设置为等待空闲后再发送").into()
-                                        }
-                                    }
+                                    busy_send_hint(busy_mode)
                                 } else {
                                     cx.global::<crate::composer::ComposerPreferences>()
                                         .settings
                                         .mode
                                         .hint()
+                                        .into()
                                 })
                                 .disabled(!can_send)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     if this.workspace.is_none() {
                                         this.choose_workspace_folder(window, cx);
                                     } else {
-                                        this.send(window, cx);
+                                        this.send(SendIntent::Configured, window, cx);
                                     }
                                 })),
                         )

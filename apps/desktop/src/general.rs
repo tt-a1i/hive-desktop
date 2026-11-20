@@ -37,6 +37,16 @@ pub enum BusySendMode {
     BlockUntilIdle,
 }
 
+impl BusySendMode {
+    pub(crate) fn alternate(self) -> Option<Self> {
+        match self {
+            Self::Queue => Some(Self::SteerWhenSupported),
+            Self::SteerWhenSupported => Some(Self::Queue),
+            Self::BlockUntilIdle => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QuitConfirmation {

@@ -1,6 +1,7 @@
 use super::FileError;
 use crate::{
     app::HiveApp,
+    git_workspace::file_tree::{ChangeMark, FileTreeChanges},
     language::tr,
     palette::{self, Color},
     text_reading::{self, TextPages},
@@ -30,6 +31,7 @@ use std::{
 };
 
 const PAGE_SIZE: usize = 100;
+const GIT_STATUS_LIMIT: usize = 500;
 const DOCK_WIDTH: f32 = 320.;
 const CHAT_MIN_WIDTH: f32 = 600.;
 const DOCK_WIDTH_STEP: f32 = 24.;
@@ -161,6 +163,27 @@ struct Preview {
     text: Option<TextPages>,
     error: Option<FileError>,
     scroll: ScrollHandle,
+}
+
+#[derive(Default)]
+enum TreeGitStatus {
+    #[default]
+    Idle,
+    Busy,
+    Ready(FileTreeChanges),
+    NotRepository,
+    Failed(String),
+}
+
+fn git_mark_appearance(mark: ChangeMark) -> (&'static str, &'static str, Color) {
+    match mark {
+        ChangeMark::Added => ("A", "Git：已添加", Color::Success),
+        ChangeMark::Deleted => ("D", "Git：已删除", Color::Error),
+        ChangeMark::Renamed => ("R", "Git：已重命名", Color::Secondary),
+        ChangeMark::Conflicted => ("U", "Git：有冲突", Color::Error),
+        ChangeMark::Modified => ("M", "Git：已修改", Color::Accent),
+        ChangeMark::Descendant => ("•", "包含 Git 改动", Color::Accent),
+    }
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -359,6 +382,9 @@ pub(crate) struct FileBrowser {
     search_task: Option<Task<()>>,
     preview: Option<Preview>,
     preview_task: Option<Task<()>>,
+    git_generation: u64,
+    git_status: TreeGitStatus,
+    git_task: Option<Task<()>>,
 }
 
 impl HiveApp {
@@ -549,6 +575,9 @@ impl HiveApp {
                 search_task: None,
                 preview: None,
                 preview_task: None,
+                git_generation: 0,
+                git_status: TreeGitStatus::Idle,
+                git_task: None,
             };
             browser.set_scope(Some(scope), Some(runtime), cx);
             browser.reveal = reveal;
@@ -791,6 +820,7 @@ impl FileBrowser {
         self.search_task = None;
         self.preview_task = None;
         self.preview = None;
+        self.reset_git_status();
     }
 
     fn set_scope(
@@ -799,6 +829,9 @@ impl FileBrowser {
         runtime: Option<Arc<Runtime>>,
         cx: &mut Context<Self>,
     ) {
+        if self.scope != scope {
+            self.reset_git_status();
+        }
         self.scope = scope;
         self.runtime = runtime;
         self.scope_generation += 1;
@@ -825,10 +858,67 @@ impl FileBrowser {
                     if this.scope_generation == generation {
                         this.load_directory(String::new(), cx);
                         this.load_search(false, cx);
+                        if matches!(this.git_status, TreeGitStatus::Idle) {
+                            this.load_git_status(cx);
+                        }
                     }
                 });
             });
         }
+    }
+
+    fn reset_git_status(&mut self) {
+        self.git_generation += 1;
+        self.git_status = TreeGitStatus::Idle;
+        self.git_task = None;
+    }
+
+    fn git_busy(&self, cx: &App) -> bool {
+        self.app
+            .upgrade()
+            .is_some_and(|app| app.read(cx).file_tree_git_busy(cx))
+    }
+
+    fn load_git_status(&mut self, cx: &mut Context<Self>) {
+        if self.git_task.is_some() || !self.current(cx) {
+            return;
+        }
+        self.reset_git_status();
+        if self.git_busy(cx) {
+            self.git_status = TreeGitStatus::Busy;
+            cx.notify();
+            return;
+        }
+        let scope = self.scope.as_ref().expect("current file scope").clone();
+        let params = scope.params(json!({"offset":0,"limit":GIT_STATUS_LIMIT}));
+        let runtime = self.runtime.clone().expect("current file runtime");
+        let generation = self.git_generation;
+        self.git_task = Some(cx.spawn(async move |this, cx| {
+            let result = runtime
+                .request("git.status", params)
+                .await
+                .and_then(FileTreeChanges::from_wire);
+            let _ = this.update(cx, |this, cx| {
+                if this.git_generation != generation || this.scope.as_ref() != Some(&scope) {
+                    return;
+                }
+                this.git_task = None;
+                if !this.current(cx) {
+                    return;
+                }
+                this.git_status = if this.git_busy(cx) {
+                    TreeGitStatus::Busy
+                } else {
+                    match result {
+                        Ok(Some(changes)) => TreeGitStatus::Ready(changes),
+                        Ok(None) => TreeGitStatus::NotRepository,
+                        Err(error) => TreeGitStatus::Failed(error),
+                    }
+                };
+                cx.notify();
+            });
+        }));
+        cx.notify();
     }
 
     fn load_directory(&mut self, path: String, cx: &mut Context<Self>) {
@@ -1295,7 +1385,18 @@ impl FileBrowser {
         visible_tree(&self.directories, self.expanded_paths(cx))
     }
 
+    fn git_mark(&self, path: &str, directory: bool) -> Option<(&'static str, &'static str, Color)> {
+        match &self.git_status {
+            TreeGitStatus::Ready(changes) => changes.mark(path, directory).map(git_mark_appearance),
+            _ => None,
+        }
+    }
+
     fn tree_row(&self, row: &TreeRow<'_>, cx: &Context<Self>) -> AnyElement {
+        let mark = match row {
+            TreeRow::Entry(entry, _) => self.git_mark(&entry.path, entry.directory),
+            _ => None,
+        };
         let (id, item, label, title, depth, enabled, icon, expanded) = match row {
             TreeRow::Entry(entry, depth) => {
                 let path = entry.path.clone();
@@ -1355,7 +1456,10 @@ impl FileBrowser {
         div()
             .id(SharedString::from(id))
             .role(Role::TreeItem)
-            .aria_label(label.clone())
+            .aria_label(mark.map_or_else(
+                || label.clone(),
+                |(_, description, _)| format!("{label} · {}", tr(description)),
+            ))
             .aria_level(depth + 1)
             .aria_selected(selected)
             .when(selected, |row| row.aria_active_descendant())
@@ -1370,11 +1474,23 @@ impl FileBrowser {
                     .min_w_0()
                     .justify_start()
                     .pl(px(8. + depth.min(12) as f32 * 12.))
-                    .tooltip(title)
+                    .tooltip(mark.map_or(title.clone(), |(_, description, _)| {
+                        format!("{title} · {}", tr(description))
+                    }))
                     .selected(selected)
                     .disabled(!enabled)
                     .when_some(icon, |row, icon| row.icon(icon))
-                    .child(div().min_w_0().truncate().child(label)),
+                    .child(div().min_w_0().truncate().child(label))
+                    .when_some(mark, |button, (marker, _, color)| {
+                        button.child(
+                            div()
+                                .ml_auto()
+                                .flex_shrink_0()
+                                .text_xs()
+                                .text_color(color.get(cx))
+                                .child(marker),
+                        )
+                    }),
             )
             .when(enabled, |row| {
                 row.on_click(cx.listener(move |this, _, window, cx| {
@@ -1568,6 +1684,18 @@ impl Render for FileBrowser {
                     .child(label),
             );
         }
+        if self.git_busy(cx) {
+            if !matches!(self.git_status, TreeGitStatus::Busy) {
+                self.reset_git_status();
+                self.git_status = TreeGitStatus::Busy;
+            }
+        } else if matches!(self.git_status, TreeGitStatus::Busy) {
+            self.git_status = TreeGitStatus::Idle;
+            let browser = cx.weak_entity();
+            cx.defer(move |cx| {
+                let _ = browser.update(cx, |browser, cx| browser.load_git_status(cx));
+            });
+        }
         let searching = !self.query.read(cx).value().trim().is_empty();
         let rows = if searching {
             self.search_rows(cx)
@@ -1742,6 +1870,24 @@ impl Render for FileBrowser {
                     .child(format!("{} {}", tr("当前文件树中找不到此文件。"), path)),
             )
         });
+        let git_notice = match &self.git_status {
+            TreeGitStatus::Ready(changes) if changes.partial => {
+                Some("仅显示此次读取到的部分 Git 改动。")
+            }
+            TreeGitStatus::Busy => Some("正在处理 Git 操作，完成后可刷新状态。"),
+            TreeGitStatus::Failed(_) => Some("Git 改动暂不可用。"),
+            _ => None,
+        };
+        view = view.when_some(git_notice, |view, notice| {
+            view.child(
+                div()
+                    .id("file-tree-git-status")
+                    .role(Role::Status)
+                    .text_xs()
+                    .text_color(Color::Muted.get(cx))
+                    .child(tr(notice)),
+            )
+        });
         view.child(
             h_flex()
                 .gap_1()
@@ -1786,7 +1932,28 @@ impl Render for FileBrowser {
                                 this.load_search(false, cx);
                             }))
                     }),
-                )),
+                ))
+                .when(
+                    !matches!(self.git_status, TreeGitStatus::NotRepository),
+                    |view| {
+                        let tooltip = match &self.git_status {
+                            TreeGitStatus::Failed(error) => error.as_str(),
+                            _ => tr("刷新 Git 状态"),
+                        };
+                        view.child(
+                            Button::new("file-tree-refresh-git-status")
+                                .custom(palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .size(px(26.))
+                                .icon(Glyph::RefreshCw)
+                                .tooltip(tooltip.to_owned())
+                                .accessibility_label(tr("刷新 Git 状态"))
+                                .disabled(self.git_task.is_some())
+                                .on_click(cx.listener(|this, _, _, cx| this.load_git_status(cx))),
+                        )
+                    },
+                ),
         )
         .child(panels)
     }
@@ -1795,8 +1962,9 @@ impl Render for FileBrowser {
 #[cfg(test)]
 mod tests {
     use super::{
-        Directory, DirectoryEntry, FileError, FileReveal, FileTreeExpansions, RevealStep, TreeRow,
-        TreeScope, TreeSource, dock_width, json, px, unrequested_expansions, visible_tree,
+        Directory, DirectoryEntry, FileError, FileReveal, FileTreeExpansions, GIT_STATUS_LIMIT,
+        RevealStep, Scope, TreeRow, TreeScope, TreeSource, dock_width, json, px,
+        unrequested_expansions, visible_tree,
     };
     use std::collections::{HashMap, HashSet};
 
@@ -1861,6 +2029,42 @@ mod tests {
                 .paths
                 .contains_key(&key("w", Some(&other_unknown)))
         );
+    }
+
+    #[test]
+    fn git_status_uses_the_exact_worktree_session_and_scope() {
+        let project = Scope {
+            tree: TreeScope {
+                workspace: "workspace".into(),
+                source: TreeSource::Directory("/project".into()),
+            },
+            session: None,
+            connection: 1,
+            open_request: 2,
+        };
+        let worktree = Scope {
+            tree: TreeScope {
+                workspace: "workspace".into(),
+                source: TreeSource::Directory("/worktree".into()),
+            },
+            session: Some("worktree-session".into()),
+            ..project.clone()
+        };
+        let scan = || json!({"offset":0,"limit":GIT_STATUS_LIMIT});
+        assert_eq!(
+            worktree.params(scan()),
+            json!({"offset":0,"limit":500,"workspaceId":"workspace","sessionId":"worktree-session"})
+        );
+        assert_eq!(
+            project.params(scan()),
+            json!({"offset":0,"limit":500,"workspaceId":"workspace"})
+        );
+        let reopened = Scope {
+            open_request: 3,
+            ..worktree.clone()
+        };
+        assert!(worktree != reopened);
+        assert!(worktree != project);
     }
 
     #[test]
