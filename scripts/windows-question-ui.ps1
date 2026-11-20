@@ -42,18 +42,31 @@ try {
         # The owned common dialog is included under the application's UIA
         # tree on Windows; it need not appear among desktop root children.
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        $field = $null
+        $fieldPattern = $null
         do {
-            $fields = @(All-Controls | Where-Object {
+            $candidates = @(All-Controls | Where-Object {
                 $_.Current.ProcessId -eq $AppProcessId -and
-                $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
+                ($_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -or
+                 $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::ComboBox) -and
                 ($_.Current.AutomationId -eq '1148' -or $_.Current.Name -ceq 'File name:')
             })
-            if ($fields.Count -eq 1) { break }
+            $preferred = @($candidates | Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit })
+            if ($preferred.Count -eq 0) { $preferred = $candidates }
+            foreach ($cand in $preferred) {
+                $vp = $null
+                if ($cand.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp)) {
+                    $field = $cand
+                    $fieldPattern = $vp
+                    break
+                }
+            }
+            if ($null -ne $field) { break }
             Start-Sleep -Milliseconds 150
         } while ([DateTime]::UtcNow -lt $deadline)
-        if ($fields.Count -ne 1) { throw "Native file chooser filename field unavailable: $($fields.Count)" }
-        $fields[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Source)
-        $fields[0].SetFocus()
+        if ($null -eq $field) { throw "Native file chooser filename field unavailable: $($candidates.Count)" }
+        $fieldPattern.SetValue($Source)
+        $field.SetFocus()
         [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
         [void](Wait-Name 'Remove question-proof.txt')
         # Wait for the original question's saved draft and compare the exact

@@ -51,8 +51,15 @@ function Assert-Draft {
     } 'independent composer draft')
     $result.stages.draftPreserved=$true
 }
+function Get-FileSha256Hex([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+        return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '')
+    } finally { $sha.Dispose() }
+}
 function Assert-LegacyThreadPaused {
-    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $LegacyNativePath).Hash
+    $hash = Get-FileSha256Hex $LegacyNativePath
     $queries = @(Get-Content -LiteralPath $LegacyQueriesPath | Where-Object { $_.Trim() })
     if ($hash -ine $LegacyNativeHash -or $queries.Count -ne 1) {
         throw 'The legacy fixture sent a turn or changed native history before explicit continuation'
@@ -100,12 +107,12 @@ function Invoke-LegacyRetry {
     $approve = Wait-Name 'Approve resend (may duplicate)'
     $result.stages.duplicateWarning=$warning
     if ($Phase -eq 'select') {
-        $spoolBefore = (Get-FileHash -Algorithm SHA256 -LiteralPath $SpoolPath).Hash
+        $spoolBefore = Get-FileSha256Hex $SpoolPath
         Save-NativeWindow (Join-Path $EvidenceDirectory 'windows-queued-legacy-retry-confirm.png')
         Invoke-Control (Wait-Name 'Cancel resend')
         [void](Wait-Name 'Review resend…')
         if (@(All-Controls | Where-Object { $_.Current.Name -eq 'Approve resend (may duplicate)' }).Count -or
-            (Get-FileHash -Algorithm SHA256 -LiteralPath $SpoolPath).Hash -cne $spoolBefore) {
+            (Get-FileSha256Hex $SpoolPath) -cne $spoolBefore) {
             throw 'Cancel changed the queue or kept the confirmation visible'
         }
         $result.stages.cancelPreservedSpool=$true

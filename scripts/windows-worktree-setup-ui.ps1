@@ -8,6 +8,31 @@
     [Parameter(Mandatory)][string]$EvidenceDirectory
 )
 . (Join-Path $PSScriptRoot 'windows-native-ui-common.ps1')
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class SetupFixturePointer {
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, int data, UIntPtr extra);
+}
+'@
+function Click-Control($Control) {
+    $inv = $null
+    if ($Control.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$inv)) {
+        Invoke-Control $Control
+        return
+    }
+    $bounds = $Control.Current.BoundingRectangle
+    $x = [int]($bounds.X + $bounds.Width / 2)
+    $y = [int]($bounds.Y + $bounds.Height / 2)
+    if ($Control.Current.IsOffscreen -or $bounds.IsEmpty -or
+        -not $root.Current.BoundingRectangle.Contains([double]$x, [double]$y)) {
+        throw "Control outside window: $($Control.Current.Name)"
+    }
+    if (-not [SetupFixturePointer]::SetCursorPos($x, $y)) { throw 'Could not position pointer.' }
+    [SetupFixturePointer]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+    [SetupFixturePointer]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+}
 $result = [ordered]@{ status = 'failed'; phase = $Phase; checks = @(); processes = @(); controls = @(); error = $null }
 $root = $null
 
@@ -102,9 +127,9 @@ try {
     Wait-Draft
 
     if ($Phase -eq 'create') {
-        Invoke-Control (Wait-Name 'New conversation: choose an Agent')
-        Invoke-Control (Wait-Name 'New isolated worktree conversation…')
-        Invoke-Control (Wait-Name 'Built-in Pi')
+        Click-Control (Wait-Name 'New conversation: choose an Agent')
+        Click-Control (Wait-Name 'New isolated worktree conversation…')
+        Click-Control (Wait-Name 'Built-in Pi')
         [void](Wait-Name 'Skip setup this time: no')
         Invoke-Control (Wait-SetupButton 'Create isolated worktree conversation')
         [void](Wait-Setup 'Running')

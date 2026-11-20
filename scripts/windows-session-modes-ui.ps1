@@ -90,7 +90,10 @@ function Assert-Codex([string]$Mode, [string]$Permission) {
     [void](Wait-Name "Conversation mode. $Mode")
     [void](Wait-Name "Codex access permissions. $Permission")
     Assert-NoNames '^ACP access permissions|^Connect ACP to choose a mode$'
-    [void](Wait-Name 'Stored Codex mode history 49A')
+    [void](Wait-Control {
+        param($c)
+        ([string]$c.Current.Name).TrimEnd("`r", "`n") -ceq 'Stored Codex mode history 49A'
+    } 'Stored Codex mode history 49A')
     Assert-Draft 'Unsent Codex mode draft 49B'
 }
 
@@ -100,7 +103,7 @@ function Assert-Pi {
     Assert-NoNames '^Conversation mode\.|^(Codex|ACP) access permissions|^Connect ACP to choose a mode$'
     Click-ModeControl (Wait-Name $modelPicker)
     [void](Wait-Name 'This backend does not support conversation modes.')
-    Assert-NoNames '^Conversation mode[:.]|^(Codex|ACP) access permissions|^Connect ACP to choose a mode$|^Stored Codex mode history 49A$'
+    Assert-NoNames '^Conversation mode[:.]|^(Codex|ACP) access permissions|^Connect ACP to choose a mode$|^Stored Codex mode history 49A[\r\n]*$'
     [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
     $result.checks += 'Pi reports no native mode and shows no permission control or Codex history'
 }
@@ -146,7 +149,7 @@ try {
     }
     [void](Wait-Name 'Conversation mode. Active now: Peer Plan')
     [void](Wait-Name 'ACP access permissions. Active now: Peer Write')
-    Assert-NoNames '^Codex access permissions|^Stored Codex mode history 49A$'
+    Assert-NoNames '^Codex access permissions|^Stored Codex mode history 49A[\r\n]*$'
     $result.checks += 'ACP shows distinct peer-confirmed collaboration and permission options'
 
     Open-Conversation 'Codex' $codexTitle
