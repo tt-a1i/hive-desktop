@@ -221,15 +221,16 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'member.worktrees': return chats.memberWorktrees(text(params, 'workspaceId'), text(params, 'memberId'));
     case 'team.members': {
       const workspace = text(params, 'workspaceId');
-      const members = await hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspace)}/team`) as { id: string }[];
+      const members = await hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspace)}/team`) as { id: string; status?: string }[];
       return members.map(member => {
+        const desktop_activity = chats.describeMemberActivity(workspace, member.id, member.status);
         const launch = runtime.agents.peekAgentLaunchConfig(workspace, member.id);
-        if (!launch || !structuredCommand(launch.command)) return member;
+        if (!launch || !structuredCommand(launch.command)) return {...member, desktop_activity};
         try {
           const parsed = parseStructuredLaunch(launch);
           const profile = parsed.profile.kind === 'explicit' ? parsed.profile.ref : {id: parsed.profile.id, revision: 1};
-          return {...member, desktop_profile: profile, ...(parsed.model && {desktop_model: parsed.model})};
-        } catch (error) { return {...member, desktop_launch_error: error instanceof Error ? error.message : String(error)}; }
+          return {...member, desktop_activity, desktop_profile: profile, ...(parsed.model && {desktop_model: parsed.model})};
+        } catch (error) { return {...member, desktop_activity, desktop_launch_error: error instanceof Error ? error.message : String(error)}; }
 
       });
     }

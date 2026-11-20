@@ -564,20 +564,31 @@ impl HiveApp {
                                                     .iter()
                                                     .find(|session| session.agent_id.as_ref() == Some(&id))
                                                     .map(|s| s.id.clone());
-                                                let workload_dot = match member.status.as_str() {
-                                                    "working" => Color::Accent.get(cx),
-                                                    "idle" if member.pending_task_count > 0 => {
-                                                        crate::chrome::attention_dot(cx)
-                                                    }
-                                                    "idle" => Color::Success.get(cx),
-                                                    _ => Color::Muted.get(cx),
+                                                let live_state = member.live_state();
+                                                let workload_dot = if live_state == "idle" && member.pending_task_count > 0 {
+                                                    crate::chrome::attention_dot(cx)
+                                                } else {
+                                                    crate::collaboration::cockpit::live_state_dot(live_state, cx)
                                                 };
-                                                let workload_fg = if member.status == "stopped" {
+                                                let workload_fg = if live_state == "stopped" {
                                                     Color::Muted.get(cx)
+                                                } else if live_state == "error" {
+                                                    Color::Error.get(cx)
                                                 } else {
                                                     Color::Secondary.get(cx)
                                                 };
                                                 let workload_label = member.workload_label();
+                                                let activity_summary = member.activity_summary();
+                                                let worktree_branch = member
+                                                    .desktop_activity
+                                                    .as_ref()
+                                                    .and_then(|a| a.worktree_branch.as_deref())
+                                                    .filter(|b| !b.is_empty())
+                                                    .map(str::to_owned);
+                                                let has_pending_report = member
+                                                    .desktop_activity
+                                                    .as_ref()
+                                                    .is_some_and(|a| a.pending_report_count > 0);
                                                 let worktree_member = id.clone();
                                                 let worktree_workspace = workspace.clone();
                                                 let history_member = id.clone();
@@ -709,6 +720,47 @@ impl HiveApp {
                                                                             )
                                                                             .child(workload_label),
                                                                     )
+                                                                    .when_some(worktree_branch, |view, branch| {
+                                                                        view.child(
+                                                                            div()
+                                                                                .px_2()
+                                                                                .py(px(2.))
+                                                                                .rounded_md()
+                                                                                .bg(Color::Inset.get(cx))
+                                                                                .border_1()
+                                                                                .border_color(Color::Divider.get(cx))
+                                                                                .text_size(px(11.))
+                                                                                .text_color(Color::Muted.get(cx))
+                                                                                .child(format!("worktree · {branch}")),
+                                                                        )
+                                                                    })
+                                                                    .when(has_pending_report, |view| {
+                                                                        view.child(
+                                                                            div()
+                                                                                .px_2()
+                                                                                .py(px(2.))
+                                                                                .rounded_md()
+                                                                                .bg(crate::chrome::attention_dot(cx).opacity(0.14))
+                                                                                .text_size(px(11.))
+                                                                                .font_weight(FontWeight::MEDIUM)
+                                                                                .text_color(crate::chrome::attention_dot(cx))
+                                                                                .child(tr("待阅汇报").to_owned()),
+                                                                        )
+                                                                    })
+                                                                    .when_some(activity_summary, |view, line| {
+                                                                        view.child(
+                                                                            div()
+                                                                                .max_w(px(320.))
+                                                                                .truncate()
+                                                                                .text_size(px(11.5))
+                                                                                .text_color(if live_state == "error" {
+                                                                                    Color::Error.get(cx)
+                                                                                } else {
+                                                                                    Color::Muted.get(cx)
+                                                                                })
+                                                                                .child(line),
+                                                                        )
+                                                                    })
                                                                     .when_some(session_id, |view, session_id| {
                                                                         view.child(
                                                                             Button::new(("member-chat", i))

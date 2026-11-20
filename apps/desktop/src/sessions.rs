@@ -766,6 +766,49 @@ impl HiveApp {
         self.show_session(id, cx);
     }
 
+    pub(crate) fn lead_session_id(&self) -> Option<String> {
+        let workspace = self.workspace.as_deref()?;
+        let orchestrator = format!("{workspace}:orchestrator");
+        self.sessions
+            .iter()
+            .find(|s| !s.archived && s.agent_id.as_deref() == Some(orchestrator.as_str()))
+            .or_else(|| {
+                self.sessions
+                    .iter()
+                    .find(|s| s.agent_id.as_deref() == Some(orchestrator.as_str()))
+            })
+            .map(|s| s.id.clone())
+    }
+
+    pub(crate) fn member_session_id(&self, agent_id: &str) -> Option<String> {
+        if let Some(member) = self.members.iter().find(|m| m.id == agent_id) {
+            if let Some(id) = member
+                .desktop_activity
+                .as_ref()
+                .and_then(|a| a.session_id.as_ref())
+            {
+                if self.sessions.iter().any(|s| &s.id == id) {
+                    return Some(id.clone());
+                }
+            }
+        }
+        self.sessions
+            .iter()
+            .find(|s| !s.archived && s.agent_id.as_deref() == Some(agent_id))
+            .or_else(|| {
+                self.sessions
+                    .iter()
+                    .find(|s| !s.archived && s.origin_agent_id.as_deref() == Some(agent_id))
+            })
+            .or_else(|| {
+                self.sessions.iter().find(|s| {
+                    s.agent_id.as_deref() == Some(agent_id)
+                        || s.origin_agent_id.as_deref() == Some(agent_id)
+                })
+            })
+            .map(|s| s.id.clone())
+    }
+
     pub(crate) fn open_member_session(
         &mut self,
         id: String,
@@ -777,12 +820,14 @@ impl HiveApp {
             return;
         }
         if self.collaboration.visible {
-            let Some(dispatch) = &self.collaboration.selected else {
-                return;
-            };
             self.conversation_sources.clear();
-            self.conversation_sources
-                .push(ConversationSource::Dispatch(dispatch.id.clone()));
+            if let Some(dispatch) = &self.collaboration.selected {
+                self.conversation_sources
+                    .push(ConversationSource::Dispatch(dispatch.id.clone()));
+            } else if let Some(lead_id) = self.lead_session_id().filter(|lead| lead != &id) {
+                self.conversation_sources
+                    .push(ConversationSource::Session(lead_id));
+            }
             self.close_collaboration();
         } else if self.workflows.visible {
             self.conversation_sources.clear();

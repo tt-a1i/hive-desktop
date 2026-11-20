@@ -62,10 +62,44 @@ import type { HiveAgentRuntime, WorkspaceSummary } from './hive-runtime-contract
 import type { StructuredSessionPort, StructuredSessionHandle } from './structured-runtime.js';
 import { createTeamTool, createTeamCommand } from './team-tool.js';
 
+export interface MemberDesktopActivity {
+  sessionId?: string;
+  runtimeState: 'idle' | 'working' | 'waiting_interaction' | 'queued' | 'error' | 'stopped';
+  activityKind?: 'tool' | 'thinking' | 'responding' | 'interaction' | 'queued' | 'error';
+  activeTool?: string;
+  activeTarget?: string;
+  pendingInteractionCount: number;
+  queuedInputCount: number;
+  pendingReportCount: number;
+  deliveryFailureMessage?: string;
+  worktreeBranch?: string;
+  worktreePath?: string;
+  worktreeRemoved?: boolean;
+}
+
+function extractToolTarget(args: unknown): string | undefined {
+  if (!args || typeof args !== 'object') return undefined;
+  const obj = args as Record<string, unknown>;
+  for (const key of ['path', 'file_path', 'filePath', 'file', 'target', 'command', 'cmd', 'pattern', 'query', 'url']) {
+    const val = obj[key];
+    if (typeof val === 'string' && val.trim()) {
+      const firstLine = val.trim().split(/\r?\n/, 1)[0] ?? '';
+      return firstLine.length > 72 ? `${firstLine.slice(0, 69)}…` : firstLine;
+    }
+  }
+  if (Array.isArray(obj.args) && obj.args.length > 0) {
+    const joined = obj.args.filter((v): v is string => typeof v === 'string').join(' ').trim();
+    if (joined) return joined.length > 72 ? `${joined.slice(0, 69)}…` : joined;
+  }
+  return undefined;
+}
+
 interface LiveChat {
   handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
   executionPath: string;
   browseOnly: boolean;
+  activeTool?: { toolCallId: string; toolName: string; target?: string | undefined } | undefined;
+  activePhase?: 'thinking' | 'responding' | undefined;
   failure?: Error; lastErrorMessage?: string; reasoningFailure?: Error; modeChanging?: boolean; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
 }
 type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; pendingUserInputs: DeliveryQueue['pendingUserInputs']; deliveryFailure?: import('./chat-index.js').DeliveryFailure | undefined; completedReportId?: string; handoffDelivery?: HandoffDelivery };
@@ -939,9 +973,84 @@ export class Chats implements StructuredSessionPort {
       archived: !!record.archived, pinned: !!record.pinned, updatedAt: record.updatedAt });
   }
   private event(id: string, event: PiEvent | QueueState | NavigationEvent) {
+    const live = this.live.get(id);
+    if (live) {
+      if (event.type === 'tool_start') {
+        live.activeTool = { toolCallId: event.toolCallId, toolName: event.toolName, target: extractToolTarget(event.args) };
+        live.activePhase = undefined;
+      } else if (event.type === 'tool_end') {
+        if (live.activeTool?.toolCallId === event.toolCallId) live.activeTool = undefined;
+      } else if (event.type === 'assistant_delta') {
+        if (!live.activeTool) live.activePhase = event.kind === 'thinking' ? 'thinking' : 'responding';
+      } else if (event.type === 'settled' || event.type === 'error') {
+        live.activeTool = undefined;
+        live.activePhase = undefined;
+      }
+    }
     const sequence = (this.sequences.get(id) ?? 0) + 1;
     this.sequences.set(id, sequence);
     this.emit({ ...event, sessionId: id, sequence });
+  }
+  describeMemberActivity(workspaceId: string, memberId: string, hiveStatus?: string): MemberDesktopActivity {
+    const all = this.index.list(workspaceId);
+    const direct = all.filter(r => r.agentId === memberId && !r.archived);
+    const origin = direct.length ? direct : all.filter(r => r.originAgentId === memberId && !r.archived);
+    const candidates = origin.length ? origin : all.filter(r => r.agentId === memberId || r.originAgentId === memberId);
+    candidates.sort((a, b) => {
+      const aLive = this.live.has(a.id) ? 1 : 0;
+      const bLive = this.live.has(b.id) ? 1 : 0;
+      if (aLive !== bLive) return bLive - aLive;
+      return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+    });
+    const record = candidates[0];
+    const live = record ? this.live.get(record.id) : undefined;
+    const pendingInteractionCount = live?.handle.interactions?.().length ?? 0;
+    const queuedInputCount = live ? live.queue.pendingUserInputs.length : (record ? DeliveryQueue.persistedCount(this.queueDir, record.id) : 0);
+    const pendingReportCount = live?.queue.pendingReports.length ?? 0;
+    const failure = record ? (live ? this.deliveryFailure(record.id, live.queue) : record.lastDeliveryFailure) : undefined;
+    const worktree = record?.execution?.kind === 'worktree' ? record.execution : undefined;
+    const worktreeRemoved = worktree ? Boolean((worktree as { removed?: unknown }).removed) : false;
+    let runtimeState: MemberDesktopActivity['runtimeState'] = 'idle';
+    let activityKind: MemberDesktopActivity['activityKind'];
+    let activeTool: string | undefined;
+    let activeTarget: string | undefined;
+    if (pendingInteractionCount > 0) {
+      runtimeState = 'waiting_interaction';
+      activityKind = 'interaction';
+    } else if (failure) {
+      runtimeState = 'error';
+      activityKind = 'error';
+    } else if (live?.queue.busy) {
+      runtimeState = 'working';
+      if (live.activeTool) {
+        activityKind = 'tool';
+        activeTool = live.activeTool.toolName;
+        activeTarget = live.activeTool.target;
+      } else {
+        activityKind = live.activePhase ?? 'thinking';
+      }
+    } else if (queuedInputCount > 0) {
+      runtimeState = 'queued';
+      activityKind = 'queued';
+    } else if (hiveStatus === 'working') {
+      runtimeState = 'working';
+    } else if (hiveStatus === 'stopped') {
+      runtimeState = 'stopped';
+    }
+    return {
+      ...(record && { sessionId: record.id }),
+      runtimeState,
+      ...(activityKind && { activityKind }),
+      ...(activeTool && { activeTool }),
+      ...(activeTarget && { activeTarget }),
+      pendingInteractionCount,
+      queuedInputCount,
+      pendingReportCount,
+      ...(failure?.message && { deliveryFailureMessage: failure.message }),
+      ...(worktree?.branch && { worktreeBranch: worktree.branch }),
+      ...(worktree?.path && { worktreePath: worktree.path }),
+      ...(worktreeRemoved && { worktreeRemoved: true }),
+    };
   }
   private async workspace(id: string): Promise<WorkspaceSummary> {
     const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];

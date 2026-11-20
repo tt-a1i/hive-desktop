@@ -2226,5 +2226,17 @@
   "页面空白或无法操作时，可从已保存的快照重开。": "If the page is blank or unresponsive, reopen its saved snapshot.",
   "重开将重置页面内未保存的输入和交互状态。": "Reopening resets unsaved input and interaction state in this page.",
   "确认重置并重开": "Reset and reopen",
-  "已从快照重开；页面状态已重置。": "Reopened saved snapshot; page state has been reset."
+  "已从快照重开；页面状态已重置。": "Reopened saved snapshot; page state has been reset.",
+  "思考与工具执行中": "Thinking & running tools",
+  "等待交互或审批": "Waiting for input or approval",
+  "队列待发": "Queued",
+  "异常停止": "Stopped with error",
+  "正在思考…": "Thinking…",
+  "正在生成回复…": "Generating response…",
+  "投递或运行异常，需核对": "Delivery or execution error; review needed",
+  "团队实时态势": "Live team status",
+  "全部待命": "All idle",
+  "待阅汇报": "Pending report",
+  "进入会话": "Open session",
+  "已移除": "Removed"
 }

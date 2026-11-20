@@ -777,6 +777,8 @@ impl HiveApp {
                             .w_full()
                             .max_w(px(760.))
                             .mx_auto()
+                            .gap_4()
+                            .child(self.render_team_cockpit(cx))
                             .child(self.render_tasks(detail_scroll, cx)),
                     ),
             )
@@ -972,8 +974,9 @@ impl HiveApp {
                                     ),
                             ))
                             .when(narrow_overview, |list| {
-                                list.child(div().id("collaboration-inline-tasks").pt_3()
-                                    .child(self.render_tasks(left_scroll, cx)))
+                                list.child(div().id("collaboration-inline-cockpit").pt_2().child(self.render_team_cockpit(cx)))
+                                    .child(div().id("collaboration-inline-tasks").pt_3()
+                                        .child(self.render_tasks(left_scroll, cx)))
                             }),
                     ),
             ));

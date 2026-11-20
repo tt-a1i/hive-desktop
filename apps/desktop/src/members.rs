@@ -23,12 +23,66 @@ impl Member {
         crate::roles::role_label(&self.role)
     }
     pub fn status_label(&self) -> &str {
-        match self.status.as_str() {
-            "idle" => tr("待命"),
-            "working" => tr("工作中"),
+        match self.live_state() {
+            "working" => tr("思考与工具执行中"),
+            "waiting_interaction" => tr("等待交互或审批"),
+            "queued" => tr("队列待发"),
+            "error" => tr("异常停止"),
             "stopped" => tr("已停止"),
+            "idle" => tr("待命"),
             other => other,
         }
+    }
+    pub fn live_state(&self) -> &str {
+        if let Some(activity) = &self.desktop_activity {
+            if !activity.runtime_state.is_empty() {
+                return activity.runtime_state.as_str();
+            }
+        }
+        self.status.as_str()
+    }
+    pub fn activity_summary(&self) -> Option<String> {
+        let activity = self.desktop_activity.as_ref()?;
+        match activity.activity_kind.as_deref() {
+            Some("tool") => {
+                let tool = activity.active_tool.as_deref().unwrap_or("tool");
+                if let Some(target) = activity.active_target.as_deref().filter(|t| !t.is_empty()) {
+                    Some(format!("{tool} · {target}"))
+                } else if english() {
+                    Some(format!("Running tool: {tool}"))
+                } else {
+                    Some(format!("正在运行工具：{tool}"))
+                }
+            }
+            Some("thinking") => Some(tr("正在思考…").to_owned()),
+            Some("responding") => Some(tr("正在生成回复…").to_owned()),
+            Some("interaction") => {
+                let n = activity.pending_interaction_count.max(1);
+                Some(if english() {
+                    format!("Waiting for user response ({n})")
+                } else {
+                    format!("等待用户交互或审批（{n}）")
+                })
+            }
+            Some("queued") => {
+                let n = activity.queued_input_count.max(1);
+                Some(if english() {
+                    format!("{n} queued {}", if n == 1 { "message" } else { "messages" })
+                } else {
+                    format!("{n} 条队列消息待发送")
+                })
+            }
+            Some("error") => activity
+                .delivery_failure_message
+                .as_deref()
+                .filter(|m| !m.trim().is_empty())
+                .map(|m| m.chars().take(80).collect())
+                .or_else(|| Some(tr("投递或运行异常，需核对").to_owned())),
+            _ => None,
+        }
+    }
+    pub fn is_lead(&self) -> bool {
+        self.role == "orchestrator" || self.id.ends_with(":orchestrator")
     }
     pub fn workload_label(&self) -> String {
         if self.pending_task_count == 0 { return self.status_label().to_owned(); }

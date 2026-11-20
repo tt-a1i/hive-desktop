@@ -144,6 +144,33 @@ impl Backend {
         }
     }
 }
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberDesktopActivity {
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub runtime_state: String,
+    #[serde(default)]
+    pub activity_kind: Option<String>,
+    #[serde(default)]
+    pub active_tool: Option<String>,
+    #[serde(default)]
+    pub active_target: Option<String>,
+    #[serde(default)]
+    pub pending_interaction_count: u64,
+    #[serde(default)]
+    pub queued_input_count: u64,
+    #[serde(default)]
+    pub pending_report_count: u64,
+    #[serde(default)]
+    pub delivery_failure_message: Option<String>,
+    #[serde(default)]
+    pub worktree_branch: Option<String>,
+    #[serde(default)]
+    pub worktree_removed: bool,
+}
+
 #[derive(Clone, Deserialize)]
 pub struct Member {
     pub id: String,
@@ -160,6 +187,8 @@ pub struct Member {
     pub desktop_profile: Option<ProfileRef>,
     #[serde(default)]
     pub desktop_launch_error: Option<String>,
+    #[serde(default)]
+    pub desktop_activity: Option<MemberDesktopActivity>,
 }
 
 #[derive(Deserialize)]

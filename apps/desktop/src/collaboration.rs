@@ -1,5 +1,6 @@
 mod view;
 mod cards;
+pub(crate) mod cockpit;
 mod live;
 mod tasks;
 mod empty;
