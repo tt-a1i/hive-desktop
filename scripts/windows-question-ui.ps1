@@ -100,18 +100,10 @@ public static class OpenDialogHelper {
         } else {
             [void][OpenDialogHelper]::SendMessage($editHwnd, 0x000C, [IntPtr]::Zero, $Source)
         }
-        Start-Sleep -Milliseconds 200
-        $dialogElem = [System.Windows.Automation.AutomationElement]::FromHandle($dialogHwnd)
-        $okCond = New-Object System.Windows.Automation.PropertyCondition(
-            [System.Windows.Automation.AutomationElement]::NameProperty,
-            'Select images, documents or other files'
-        )
-        $okElem = $dialogElem.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $okCond)
-        if ($null -ne $okElem) {
-            $okElem.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-        } else {
-            [void][OpenDialogHelper]::PostMessage($dialogHwnd, 0x0111, [IntPtr]1, [IntPtr]::Zero)
-        }
+        Start-Sleep -Milliseconds 150
+        $editElem.SetFocus()
+        Start-Sleep -Milliseconds 150
+        [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
         [void](Wait-Name 'Remove question-proof.txt')
         # Wait for the original question's saved draft and compare the exact
         # private bytes before moving the source and submitting the answer.
