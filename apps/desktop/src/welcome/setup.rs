@@ -222,8 +222,16 @@ impl HiveApp {
                             .as_ref()
                             .is_none_or(|command| entry.executable.as_ref() == Some(command))
                 });
+            let display_name = if profile.id == format!("default-{backend}")
+                && profile.current_revision == 1
+            {
+                crate::agent_profiles::localized_profile_label(&profile.id, &profile.label)
+                    .to_owned()
+            } else {
+                self.profile_label(&reference)
+            };
             choices.push(AgentChoice {
-                name: self.profile_label(&reference),
+                name: display_name,
                 reference,
                 backend,
                 detected,
@@ -452,6 +460,7 @@ impl HiveApp {
             .as_ref()
             .or(self.error.as_ref())
             .map(ErrorNotice::text);
+        let show_inbox = !self.workspaces.is_empty() || self.has_new_global_inbox_items(cx);
         v_flex()
             .flex_1()
             .min_h_0()
@@ -468,13 +477,14 @@ impl HiveApp {
                     .flex_1()
                     .min_h_0()
                     .px_5()
-                    .pb_6()
+                    .pb_10()
                     .child(
                         v_flex()
                             .w_full()
                             .max_w(px(632.))
                             .mx_auto()
-                            .gap_4()
+                            .gap_3p5()
+                            .pb_4()
                             .child(
                                 h_flex()
                                     .justify_between()
@@ -482,11 +492,12 @@ impl HiveApp {
                                     .gap_3()
                                     .child(
                                         v_flex()
+                                            .flex_1()
                                             .min_w_0()
                                             .gap_1()
                                             .child(
                                                 div()
-                                                    .text_size(px(27.))
+                                                    .text_size(px(26.))
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     .child(tr("欢迎使用 Hive Desktop")),
                                             )
@@ -499,17 +510,28 @@ impl HiveApp {
                                                     )),
                                             ),
                                     )
-                                    .child(self.global_inbox_button("welcome-global-inbox", cx))
                                     .child(
-                                        Button::new("welcome-settings")
-                                            .ghost()
-                                            .small()
-                                            .icon(Glyph::Settings)
-                                            .label(tr("设置"))
-                                            .disabled(busy)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.open_settings(window, cx)
-                                            })),
+                                        h_flex()
+                                            .flex_shrink_0()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .when(show_inbox, |row| {
+                                                row.child(self.global_inbox_button(
+                                                    "welcome-global-inbox",
+                                                    cx,
+                                                ))
+                                            })
+                                            .child(
+                                                Button::new("welcome-settings")
+                                                    .ghost()
+                                                    .small()
+                                                    .icon(Glyph::Settings)
+                                                    .label(tr("设置"))
+                                                    .disabled(busy)
+                                                    .on_click(cx.listener(|this, _, window, cx| {
+                                                        this.open_settings(window, cx)
+                                                    })),
+                                            ),
                                     ),
                             )
                             .child({
@@ -624,8 +646,12 @@ impl HiveApp {
                             .gap_2()
                             .child(
                                 Button::new("welcome-sharing")
-                                    .ghost()
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
                                     .small()
+                                    .h(px(28.))
+                                    .px_2()
+                                    .rounded_md()
                                     .label(tr("连接其他设备"))
                                     .disabled(busy)
                                     .on_click(cx.listener(|this, _, window, cx| {
@@ -691,55 +717,76 @@ impl HiveApp {
         let owner = cx.weak_entity();
         h_flex()
             .w_full()
-            .gap_2()
+            .px_3p5()
+            .py_2p5()
+            .rounded_xl()
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .bg(Color::Card.get(cx))
+            .justify_between()
             .items_center()
+            .gap_3()
             .flex_wrap()
             .child(
-                Button::new("welcome-agent-choice")
-                    .outline()
-                    .small()
-                    .label(title)
-                    .icon(Glyph::ChevronDown)
-                    .disabled(busy || !self.connected || self.profiles.loading || agents.is_empty())
-                    .accessibility_label(tr("为新会话选择 Agent"))
-                    .dropdown_menu(move |mut menu, _, _| {
-                        for choice in &agents {
-                            let reference = choice.reference.clone();
-                            let owner = owner.clone();
-                            let name = if choice.detected {
-                                choice.name.clone()
-                            } else {
-                                format!("{} · {}", choice.name, tr("配置未验证"))
-                            };
-                            menu = menu.item(
-                                PopupMenuItem::new(name)
-                                    .checked(selected.as_ref() == Some(&reference))
-                                    .on_click(move |_, _, cx| {
-                                        let _ = owner.update(cx, |app, cx| {
-                                            if app.showing_welcome_guide && !app.welcome_busy() {
-                                                app.welcome_setup.preferred_agent =
-                                                    Some(reference.clone());
-                                                cx.notify();
-                                            }
-                                        });
-                                    }),
-                            );
-                        }
-                        menu
-                    }),
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(Color::Text.get(cx))
+                    .child(tr("默认对话 Agent")),
             )
-            .when(
-                !self.profiles.loading && self.profiles.error.is_some(),
-                |row| {
-                    row.child(
-                        Button::new("retry-welcome-profiles")
-                            .ghost()
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Button::new("welcome-agent-choice")
+                            .outline()
                             .small()
-                            .label(tr("重新读取 Agent 配置"))
-                            .disabled(busy || !self.connected)
-                            .on_click(cx.listener(|this, _, _, cx| this.load_profiles(cx))),
+                            .label(title)
+                            .icon(Glyph::ChevronDown)
+                            .disabled(
+                                busy || !self.connected || self.profiles.loading || agents.is_empty(),
+                            )
+                            .accessibility_label(tr("为新会话选择 Agent"))
+                            .dropdown_menu(move |mut menu, _, _| {
+                                for choice in &agents {
+                                    let reference = choice.reference.clone();
+                                    let owner = owner.clone();
+                                    let name = if choice.detected {
+                                        choice.name.clone()
+                                    } else {
+                                        format!("{} · {}", choice.name, tr("配置未验证"))
+                                    };
+                                    menu = menu.item(
+                                        PopupMenuItem::new(name)
+                                            .checked(selected.as_ref() == Some(&reference))
+                                            .on_click(move |_, _, cx| {
+                                                let _ = owner.update(cx, |app, cx| {
+                                                    if app.showing_welcome_guide && !app.welcome_busy() {
+                                                        app.welcome_setup.preferred_agent =
+                                                            Some(reference.clone());
+                                                        cx.notify();
+                                                    }
+                                                });
+                                            }),
+                                    );
+                                }
+                                menu
+                            }),
                     )
-                },
+                    .when(
+                        !self.profiles.loading && self.profiles.error.is_some(),
+                        |row| {
+                            row.child(
+                                Button::new("retry-welcome-profiles")
+                                    .ghost()
+                                    .small()
+                                    .label(tr("重新读取 Agent 配置"))
+                                    .disabled(busy || !self.connected)
+                                    .on_click(cx.listener(|this, _, _, cx| this.load_profiles(cx))),
+                            )
+                        },
+                    ),
             )
     }
 

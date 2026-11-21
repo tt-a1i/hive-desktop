@@ -359,8 +359,6 @@ impl HiveApp {
                                     .py_1p5()
                                     .rounded_lg()
                                     .bg(Color::Inset.get(cx))
-                                    .border_1()
-                                    .border_color(Color::Divider.get(cx))
                                     .child(
                                         h_flex()
                                             .flex_1()
@@ -401,7 +399,10 @@ impl HiveApp {
                                                                     .bg(Color::Card.get(cx))
                                                                     .text_size(px(10.))
                                                                     .text_color(dot_color)
-                                                                    .child(d.state.clone()),
+                                                                    .child(
+                                                                        super::dispatch_state(&d.state)
+                                                                            .to_owned(),
+                                                                    ),
                                                             )
                                                             .when(!d.artifacts.is_empty(), |row| {
                                                                 row.child(
@@ -781,8 +782,6 @@ impl HiveApp {
             .py(px(2.))
             .rounded_md()
             .bg(Color::Inset.get(cx))
-            .border_1()
-            .border_color(Color::Divider.get(cx))
             .text_size(px(11.))
             .font_weight(FontWeight::MEDIUM)
             .text_color(Color::Secondary.get(cx))
@@ -822,13 +821,12 @@ impl HiveApp {
             .py_2p5()
             .rounded_lg()
             .bg(Color::Inset.get(cx))
-            .border_1()
-            .border_color(if highlight_report || state == "waiting_interaction" {
-                crate::chrome::attention_dot(cx).opacity(0.55)
-            } else if state == "error" {
-                Color::Error.get(cx).opacity(0.55)
-            } else {
-                Color::Divider.get(cx)
+            .when(highlight_report || state == "waiting_interaction", |row| {
+                row.border_1()
+                    .border_color(crate::chrome::attention_dot(cx).opacity(0.55))
+            })
+            .when(state == "error", |row| {
+                row.border_1().border_color(Color::Error.get(cx).opacity(0.55))
             })
             .hover(|style| style.bg(Color::Card.get(cx)))
             .child(
@@ -842,12 +840,6 @@ impl HiveApp {
                         Color::AccentSoft.get(cx)
                     } else {
                         Color::Card.get(cx)
-                    })
-                    .border_1()
-                    .border_color(if is_lead {
-                        Color::Accent.get(cx).opacity(0.28)
-                    } else {
-                        Color::Divider.get(cx)
                     })
                     .text_size(px(10.5))
                     .font_weight(FontWeight::SEMIBOLD)
@@ -884,8 +876,6 @@ impl HiveApp {
                                     .py(px(1.))
                                     .rounded_sm()
                                     .bg(Color::Card.get(cx))
-                                    .border_1()
-                                    .border_color(Color::Divider.get(cx))
                                     .text_size(px(10.5))
                                     .text_color(if member.is_lead() {
                                         Color::Accent.get(cx)
@@ -915,8 +905,6 @@ impl HiveApp {
                                         .py(px(1.))
                                         .rounded_sm()
                                         .bg(Color::Card.get(cx))
-                                        .border_1()
-                                        .border_color(Color::Divider.get(cx))
                                         .text_size(px(10.5))
                                         .text_color(Color::Muted.get(cx))
                                         .child(if worktree_removed {

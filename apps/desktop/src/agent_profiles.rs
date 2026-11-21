@@ -57,7 +57,7 @@ struct MutationProfile {
     #[serde(rename = "ref")]
     reference: ProfileRef,
 }
-fn localized_profile_label<'a>(id: &str, label: &'a str) -> &'a str {
+pub(crate) fn localized_profile_label<'a>(id: &str, label: &'a str) -> &'a str {
     match (id, label) {
         ("default-pi", "Built-in Pi") => tr("内置 Pi"),
         ("default-pi-rpc", "External Pi") => tr("外部 Pi"),

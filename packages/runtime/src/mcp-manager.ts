@@ -220,28 +220,46 @@ function extractTargetFromCodexToml(filePath: string, name: string, cwd?: string
   if (!existsSync(filePath)) return undefined;
   try {
     const text = readFileSync(filePath, 'utf8');
-    let inTarget = false;
+    let sectionMode: 'none' | 'server' | 'env' | 'headers' = 'none';
     let command: string | undefined;
     let url: string | undefined;
     let args: string[] | undefined;
+    const env: Record<string, string> = {};
+    const headers: Record<string, string> = {};
     for (const rawLine of text.split(/\r?\n/)) {
       const line = rawLine.trim();
       if (!line || line.startsWith('#')) continue;
-      const section = line.match(/^\[mcp_servers\.([^\]]+)\]$/);
-      if (section) {
-        const secName = section[1]!.trim().replace(/^["']|["']$/g, '');
-        inTarget = secName === name;
+      const headerMatch = line.match(/^\[([^\]]+)\]$/);
+      if (headerMatch) {
+        const inner = headerMatch[1]!.trim();
+        const serverSection = inner.match(/^mcp_servers\.(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_-]+))$/);
+        if (serverSection) {
+          const secName = serverSection[1] ?? serverSection[2] ?? serverSection[3]!;
+          sectionMode = secName === name ? 'server' : 'none';
+          continue;
+        }
+        const subSection = inner.match(/^mcp_servers\.(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_-]+))\.(env|headers)$/);
+        if (subSection) {
+          const secName = subSection[1] ?? subSection[2] ?? subSection[3]!;
+          sectionMode = secName === name ? (subSection[4] as 'env' | 'headers') : 'none';
+          continue;
+        }
+        sectionMode = 'none';
         continue;
       }
-      if (line.startsWith('[')) {
-        inTarget = false;
-        continue;
-      }
-      if (!inTarget) continue;
+      if (sectionMode === 'none') continue;
       const eq = line.indexOf('=');
       if (eq < 0) continue;
-      const key = line.slice(0, eq).trim();
+      const key = line.slice(0, eq).trim().replace(/^["']|["']$/g, '');
       const val = line.slice(eq + 1).trim();
+      if (sectionMode === 'env') {
+        if (key) env[key] = val.replace(/^["']|["']$/g, '');
+        continue;
+      }
+      if (sectionMode === 'headers') {
+        if (key) headers[key] = val.replace(/^["']|["']$/g, '');
+        continue;
+      }
       if (key === 'command') {
         command = val.replace(/^["']|["']$/g, '');
       } else if (key === 'url') {
@@ -260,6 +278,8 @@ function extractTargetFromCodexToml(filePath: string, name: string, cwd?: string
       ...(command && { command }),
       ...(args && { args }),
       ...(url && { url }),
+      ...(Object.keys(env).length > 0 && { env }),
+      ...(Object.keys(headers).length > 0 && { headers }),
       ...(cwd && { cwd }),
     };
   } catch {

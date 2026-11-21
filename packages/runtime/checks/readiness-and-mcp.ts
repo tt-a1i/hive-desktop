@@ -28,10 +28,14 @@ try {
   writeFileSync(join(codexDir, 'config.toml'), [
     '[mcp_servers.context7]',
     'url = "https://mcp.context7.com/mcp#v2" # trailing comment',
+    '[mcp_servers.context7.headers]',
+    'Authorization = "Bearer test-token"',
     '',
     '[mcp_servers.local_db]',
     'command = "/usr/local/bin/db-mcp"',
     'enabled = false',
+    '[mcp_servers.local_db.env]',
+    'DB_PASS = "secret"',
   ].join('\n'));
 
   // Project-level MCP configs
@@ -99,6 +103,10 @@ try {
   const localDb = report.mcpResources.find(r => r.name === 'local_db');
   assert.equal(localDb?.status, 'disabled');
   assert.equal(localDb?.detail, 'db-mcp');
+  assert.equal(
+    report.mcpResources.some(r => r.name.endsWith('.env') || r.name.endsWith('.headers')),
+    false,
+  );
 
   const claudeErr = report.mcpResources.find(r => r.source === 'claude' && r.status === 'error');
   assert.ok(claudeErr?.error);

@@ -150,7 +150,10 @@ function parseCodexMcpToml(
     if (header) {
       flush();
       const section = header[1]!.trim();
-      const mcpMatch = section.match(/^mcp_servers\.(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))$/);
+      // Only match top-level [mcp_servers.<name>] tables; nested subtables like
+      // [mcp_servers.<name>.env] or [mcp_servers.<name>.headers] belong to the server
+      // config rather than declaring separate MCP servers.
+      const mcpMatch = section.match(/^mcp_servers\.(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_-]+))$/);
       if (mcpMatch) {
         current = { name: mcpMatch[1] ?? mcpMatch[2] ?? mcpMatch[3]! };
       }

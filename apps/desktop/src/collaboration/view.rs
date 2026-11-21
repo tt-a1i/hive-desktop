@@ -155,9 +155,9 @@ impl HiveApp {
                 .custom(palette::quiet_icon_variant(cx))
                 .compact()
                 .xsmall()
-                .h(px(28.))
-                .w(px(28.))
-                .rounded_lg()
+                .h(px(26.))
+                .w(px(26.))
+                .rounded_md()
                 .icon(Glyph::RefreshCw)
                 .tooltip(tr("刷新详情"))
                 .accessibility_label(tr("刷新详情"))
@@ -165,13 +165,12 @@ impl HiveApp {
                 .on_click(cx.listener(|this, _, _, cx| this.refresh_dispatch(cx)))
         } else {
             Button::new("refresh-collaboration")
-                .track_focus(&self.collaboration.navigation_focus)
                 .custom(palette::quiet_icon_variant(cx))
                 .compact()
                 .xsmall()
-                .h(px(28.))
-                .w(px(28.))
-                .rounded_lg()
+                .h(px(26.))
+                .w(px(26.))
+                .rounded_md()
                 .icon(Glyph::RefreshCw)
                 .tooltip(tr("刷新"))
                 .accessibility_label(tr("刷新"))
@@ -902,12 +901,10 @@ impl HiveApp {
                         left_scroll,
                         h_flex()
                             .flex_wrap()
-                            .gap_1()
-                            .p_1()
+                            .gap_0p5()
+                            .p_0p5()
                             .rounded_lg()
                             .bg(Color::Inset.get(cx))
-                            .border_1()
-                            .border_color(Color::Divider.get(cx))
                             .children(
                                 [
                                     ("all", tr("全部")),
@@ -919,13 +916,16 @@ impl HiveApp {
                                 .into_iter()
                                 .enumerate()
                                 .map(|(i, (filter, label))| {
+                                    let active = self.collaboration.filter == filter;
                                     Button::new(("dispatch-filter", i))
+                                        .custom(palette::segment_variant(active, cx))
                                         .compact()
                                         .xsmall()
                                         .h(px(24.))
+                                        .px_2()
                                         .rounded_md()
                                         .label(label)
-                                        .selected(self.collaboration.filter == filter)
+                                        .selected(active)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.collaboration.filter = filter;
                                             this.collaboration.offset = 0;
@@ -1002,69 +1002,78 @@ impl HiveApp {
                                     .enumerate()
                                     .map(|(i, dispatch)| self.render_dispatch_card(i, dispatch, cx)),
                             )
-                            .child(Reveal::new(
-                                "dispatch-pagination-reveal",
-                                left_scroll,
-                                h_flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap_2()
-                                    .pt_1()
-                                    .child(
-                                        Button::new("dispatch-prev")
-                                            .outline()
-                                            .compact()
-                                            .xsmall()
-                                            .h(px(26.))
-                                            .rounded_md()
-                                            .label(tr("上一页"))
-                                            .disabled(
-                                                !self.connected
-                                                    || self.collaboration.offset == 0
-                                                    || self.collaboration.list_loading,
+                            .when(
+                                self.collaboration.offset > 0
+                                    || self.collaboration.dispatches.len() > PAGE,
+                                |list| {
+                                    list.child(Reveal::new(
+                                        "dispatch-pagination-reveal",
+                                        left_scroll,
+                                        h_flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_2()
+                                            .pt_1()
+                                            .child(
+                                                Button::new("dispatch-prev")
+                                                    .outline()
+                                                    .compact()
+                                                    .xsmall()
+                                                    .h(px(26.))
+                                                    .rounded_md()
+                                                    .label(tr("上一页"))
+                                                    .disabled(
+                                                        !self.connected
+                                                            || self.collaboration.offset == 0
+                                                            || self.collaboration.list_loading,
+                                                    )
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.collaboration.offset = this
+                                                            .collaboration
+                                                            .offset
+                                                            .saturating_sub(PAGE);
+                                                        this.load_dispatches(cx);
+                                                    })),
                                             )
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.collaboration.offset =
-                                                    this.collaboration.offset.saturating_sub(PAGE);
-                                                this.load_dispatches(cx);
-                                            })),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(Color::Muted.get(cx))
-                                            .child(if english() {
-                                                format!(
-                                                    "Page {}",
-                                                    self.collaboration.offset / PAGE + 1
-                                                )
-                                            } else {
-                                                format!(
-                                                    "第 {} 页",
-                                                    self.collaboration.offset / PAGE + 1
-                                                )
-                                            }),
-                                    )
-                                    .child(
-                                        Button::new("dispatch-next")
-                                            .outline()
-                                            .compact()
-                                            .xsmall()
-                                            .h(px(26.))
-                                            .rounded_md()
-                                            .label(tr("下一页"))
-                                            .disabled(
-                                                !self.connected
-                                                    || self.collaboration.dispatches.len() <= PAGE
-                                                    || self.collaboration.list_loading
-                                                    || self.collaboration.offset >= 100_000,
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(Color::Muted.get(cx))
+                                                    .child(if english() {
+                                                        format!(
+                                                            "Page {}",
+                                                            self.collaboration.offset / PAGE + 1
+                                                        )
+                                                    } else {
+                                                        format!(
+                                                            "第 {} 页",
+                                                            self.collaboration.offset / PAGE + 1
+                                                        )
+                                                    }),
                                             )
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.collaboration.offset += PAGE;
-                                                this.load_dispatches(cx);
-                                            })),
-                                    ),
-                            ))
+                                            .child(
+                                                Button::new("dispatch-next")
+                                                    .outline()
+                                                    .compact()
+                                                    .xsmall()
+                                                    .h(px(26.))
+                                                    .rounded_md()
+                                                    .label(tr("下一页"))
+                                                    .disabled(
+                                                        !self.connected
+                                                            || self.collaboration.dispatches.len()
+                                                                <= PAGE
+                                                            || self.collaboration.list_loading
+                                                            || self.collaboration.offset >= 100_000,
+                                                    )
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.collaboration.offset += PAGE;
+                                                        this.load_dispatches(cx);
+                                                    })),
+                                            ),
+                                    ))
+                                },
+                            )
                             .when(narrow_overview, |list| {
                                 list.child(div().id("collaboration-inline-cockpit").pt_2().child(self.render_team_cockpit(cx)))
                                     .child(div().id("collaboration-inline-tasks").pt_3()
@@ -1074,6 +1083,10 @@ impl HiveApp {
             ));
 
         v_flex()
+            .when(selected.is_none(), |view| {
+                view.track_focus(&self.collaboration.navigation_focus)
+                    .tab_stop(false)
+            })
             .flex_1()
             .min_w_0()
             .min_h_0()

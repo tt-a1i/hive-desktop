@@ -627,7 +627,7 @@ mod tests {
 }
 
 impl HiveApp {
-    pub(super) fn has_new_global_inbox_items(&self, cx: &App) -> bool {
+    pub(crate) fn has_new_global_inbox_items(&self, cx: &App) -> bool {
         let badge = &self.collaboration.inbox_badge;
         if !self.connected
             || self.restarting

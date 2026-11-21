@@ -311,15 +311,6 @@ impl Render for Editor {
                     },
                 ))
                 .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_sm()
-                        .text_color(Color::Muted.get(cx))
-                        .child(tr(
-                            "录制单个 Command 或 Ctrl 组合键。保存后立即生效，无需重启应用；文字编辑与退出快捷键保持系统默认。",
-                        )),
-                )
-                .child(
                     h_flex()
                         .flex_shrink_0()
                         .items_center()

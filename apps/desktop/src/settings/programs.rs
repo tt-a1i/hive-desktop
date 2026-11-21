@@ -940,15 +940,26 @@ impl HiveApp {
             .when_some(self.mcp_form.as_ref(), |view, form| {
                 let is_stdio = form.transport == "stdio";
                 let editing = form.editing_name.is_some();
+                let labeled_field = |label_key: &'static str, input: gpui_kit::component::input::Input, cx: &App| {
+                    v_flex()
+                        .w_full()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(Color::Secondary.get(cx))
+                                .child(tr(label_key)),
+                        )
+                        .child(input.small())
+                };
                 view.child(
                     v_flex()
                         .w_full()
-                        .gap_2()
+                        .gap_2p5()
                         .p_3()
                         .rounded_lg()
                         .bg(Color::Inset.get(cx))
-                        .border_1()
-                        .border_color(Color::Divider.get(cx))
                         .child(
                             h_flex()
                                 .w_full()
@@ -969,57 +980,89 @@ impl HiveApp {
                                 .child(
                                     h_flex()
                                         .items_center()
-                                        .gap_1()
+                                        .gap_0p5()
+                                        .p_0p5()
+                                        .rounded_lg()
+                                        .bg(Color::Surface.get(cx))
+                                        .border_1()
+                                        .border_color(Color::Divider.get(cx))
                                         .child(
                                             Button::new("mcp-form-transport-stdio")
-                                                .custom(crate::palette::subtle_icon_variant(cx))
+                                                .custom(crate::palette::segment_variant(is_stdio, cx))
                                                 .compact()
                                                 .xsmall()
                                                 .h(px(22.))
-                                                .px_2()
-                                                .rounded_sm()
+                                                .px_2p5()
+                                                .rounded_md()
                                                 .label("stdio")
-                                                .disabled(form.saving || is_stdio)
+                                                .selected(is_stdio)
+                                                .disabled(form.saving)
                                                 .on_click(cx.listener(|this, _, _, cx| {
-                                                    if let Some(f) = this.mcp_form.as_mut() {
+                                                    if let Some(f) = this.mcp_form.as_mut()
+                                                        && f.transport != "stdio"
+                                                    {
                                                         f.transport = "stdio";
+                                                        cx.notify();
                                                     }
-                                                    cx.notify();
                                                 })),
                                         )
                                         .child(
                                             Button::new("mcp-form-transport-http")
-                                                .custom(crate::palette::subtle_icon_variant(cx))
+                                                .custom(crate::palette::segment_variant(!is_stdio, cx))
                                                 .compact()
                                                 .xsmall()
                                                 .h(px(22.))
-                                                .px_2()
-                                                .rounded_sm()
+                                                .px_2p5()
+                                                .rounded_md()
                                                 .label("HTTP / SSE")
-                                                .disabled(form.saving || !is_stdio)
+                                                .selected(!is_stdio)
+                                                .disabled(form.saving)
                                                 .on_click(cx.listener(|this, _, _, cx| {
-                                                    if let Some(f) = this.mcp_form.as_mut() {
+                                                    if let Some(f) = this.mcp_form.as_mut()
+                                                        && f.transport != "http"
+                                                    {
                                                         f.transport = "http";
+                                                        cx.notify();
                                                     }
-                                                    cx.notify();
                                                 })),
                                         ),
                                 ),
                         )
-                        .child(gpui_kit::component::input::Input::new(&form.name).small())
+                        .child(labeled_field(
+                            "服务名称",
+                            gpui_kit::component::input::Input::new(&form.name),
+                            cx,
+                        ))
                         .when(is_stdio, |col| {
-                            col.child(gpui_kit::component::input::Input::new(&form.command).small())
-                                .child(gpui_kit::component::input::Input::new(&form.args).small())
+                            col.child(labeled_field(
+                                "启动命令",
+                                gpui_kit::component::input::Input::new(&form.command),
+                                cx,
+                            ))
+                            .child(labeled_field(
+                                "命令行参数",
+                                gpui_kit::component::input::Input::new(&form.args),
+                                cx,
+                            ))
                         })
                         .when(!is_stdio, |col| {
-                            col.child(gpui_kit::component::input::Input::new(&form.url).small())
+                            col.child(labeled_field(
+                                "服务地址 (URL)",
+                                gpui_kit::component::input::Input::new(&form.url),
+                                cx,
+                            ))
                         })
-                        .child(gpui_kit::component::input::Input::new(&form.env).small())
+                        .child(labeled_field(
+                            "环境变量（可选，脱敏）",
+                            gpui_kit::component::input::Input::new(&form.env),
+                            cx,
+                        ))
                         .child(
                             h_flex()
                                 .w_full()
                                 .justify_end()
                                 .gap_1p5()
+                                .pt_0p5()
                                 .child(
                                     Button::new("mcp-form-cancel")
                                         .custom(crate::palette::subtle_icon_variant(cx))
@@ -1097,6 +1140,15 @@ impl HiveApp {
                                 "acp" => "ACP",
                                 other => other,
                             };
+                            let detail_line = b.config_error.clone().or_else(|| {
+                                let localized = crate::language::localize_owned_error(&b.remediation_key);
+                                let trimmed = localized.trim();
+                                (!trimmed.is_empty()
+                                    && trimmed != tr("已就绪")
+                                    && trimmed != "已就绪"
+                                    && trimmed != "Ready")
+                                    .then_some(localized)
+                            });
                             h_flex()
                                 .id(("readiness-backend", i))
                                 .w_full()
@@ -1104,12 +1156,10 @@ impl HiveApp {
                                 .items_center()
                                 .justify_between()
                                 .gap_2()
-                                .px_2p5()
-                                .py_1p5()
+                                .px_3()
+                                .py_2()
                                 .rounded_lg()
                                 .bg(Color::Inset.get(cx))
-                                .border_1()
-                                .border_color(Color::Divider.get(cx))
                                 .child(
                                     v_flex()
                                         .flex_1()
@@ -1135,8 +1185,6 @@ impl HiveApp {
                                                         .py(px(1.))
                                                         .rounded_full()
                                                         .bg(Color::Card.get(cx))
-                                                        .border_1()
-                                                        .border_color(Color::Divider.get(cx))
                                                         .text_size(px(10.5))
                                                         .font_weight(FontWeight::MEDIUM)
                                                         .text_color(badge_color)
@@ -1158,21 +1206,19 @@ impl HiveApp {
                                                     )
                                                 }),
                                         )
-                                        .child(
-                                            div()
-                                                .text_size(px(11.))
-                                                .text_color(if b.config_error.is_some() {
-                                                    Color::Error.get(cx)
-                                                } else {
-                                                    Color::Muted.get(cx)
-                                                })
-                                                .truncate()
-                                                .child(
-                                                    b.config_error
-                                                        .clone()
-                                                        .unwrap_or_else(|| crate::language::localize_owned_error(&b.remediation_key)),
-                                                ),
-                                        ),
+                                        .when_some(detail_line, |col, line| {
+                                            col.child(
+                                                div()
+                                                    .text_size(px(11.))
+                                                    .text_color(if b.config_error.is_some() {
+                                                        Color::Error.get(cx)
+                                                    } else {
+                                                        Color::Muted.get(cx)
+                                                    })
+                                                    .truncate()
+                                                    .child(line),
+                                            )
+                                        }),
                                 )
                         })),
                 )
@@ -1221,15 +1267,12 @@ impl HiveApp {
                                 .items_center()
                                 .justify_between()
                                 .gap_2()
-                                .px_2p5()
-                                .py_1()
-                                .rounded_md()
+                                .px_3()
+                                .py_1p5()
+                                .rounded_lg()
                                 .bg(Color::Inset.get(cx))
-                                .border_1()
-                                .border_color(if res.status == "error" {
-                                    Color::Error.get(cx).opacity(0.4)
-                                } else {
-                                    Color::Divider.get(cx)
+                                .when(res.status == "error", |row| {
+                                    row.border_1().border_color(Color::Error.get(cx).opacity(0.4))
                                 })
                                 .child(
                                     v_flex()
@@ -1603,12 +1646,10 @@ impl HiveApp {
                                 .items_center()
                                 .justify_between()
                                 .gap_2()
-                                .px_2p5()
+                                .px_3()
                                 .py_1p5()
                                 .rounded_lg()
                                 .bg(Color::Inset.get(cx))
-                                .border_1()
-                                .border_color(Color::Divider.get(cx))
                                 .child(
                                     v_flex()
                                         .flex_1()
@@ -1774,8 +1815,6 @@ impl HiveApp {
                                 .py_1p5()
                                 .rounded_lg()
                                 .bg(Color::Inset.get(cx))
-                                .border_1()
-                                .border_color(Color::Divider.get(cx))
                                 .gap_0p5()
                                 .child(
                                     div()

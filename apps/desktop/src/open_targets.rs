@@ -553,8 +553,13 @@ impl HiveApp {
                     .rounded_lg()
                     .child(
                         h_flex()
+                            .items_center()
                             .gap_1p5()
-                            .child(app_icon(target, app, px(16.)))
+                            .child(
+                                Icon::new(target.fallback_icon())
+                                    .size(px(13.5))
+                                    .text_color(crate::palette::Color::Muted.get(cx)),
+                            )
                             .child(target_label),
                     )
                     .tooltip(tooltip.clone())

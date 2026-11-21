@@ -230,7 +230,7 @@ impl HiveApp {
         let dark = Theme::global(cx).is_dark();
 
         items.push(PaletteItem {
-            group: "操作",
+            group: "常用操作",
             title: tr("新建会话").to_owned(),
             subtitle: Some(tr("有多个项目时先选择项目").to_owned()),
             keywords: "new chat session thread 新建 会话".into(),
@@ -238,79 +238,7 @@ impl HiveApp {
             action: PaletteAction::NewSession,
         });
         items.push(PaletteItem {
-            group: "操作",
-            title: tr("打开会话引用").to_owned(),
-            subtitle: None,
-            keywords: "open conversation thread link reference 打开 会话 引用".into(),
-            icon: Glyph::Link,
-            action: PaletteAction::OpenConversationReference,
-        });
-        if self.viewing_conversation() && !self.showing_welcome_guide {
-            use crate::keybindings::Target;
-            for (target, forward) in [
-                (Target::FocusNextWorkspaceArea, true),
-                (Target::FocusPreviousWorkspaceArea, false),
-            ] {
-                items.push(PaletteItem {
-                    group: "操作",
-                    title: target.label().to_owned(),
-                    subtitle: Some(target.description().to_owned()),
-                    keywords: "focus workspace area panel keyboard f6 焦点 工作区 区域".into(),
-                    icon: Glyph::Columns2,
-                    action: PaletteAction::FocusWorkspaceArea { forward },
-                });
-            }
-        }
-        items.push(PaletteItem {
-            group: "操作",
-            title: tr("打开或收起侧栏").to_owned(),
-            subtitle: None,
-            keywords: "sidebar navigation toggle 侧栏 导航".into(),
-            icon: Glyph::PanelLeft,
-            action: PaletteAction::ToggleSidebar,
-        });
-        items.push(PaletteItem {
-            group: "操作",
-            title: tr("工作区终端").to_owned(),
-            subtitle: Some(tr("打开或切换项目终端抽屉").to_owned()),
-            keywords: "terminal shell pty 终端".into(),
-            icon: Glyph::Terminal,
-            action: PaletteAction::ToggleTerminal,
-        });
-        items.push(PaletteItem {
-            group: "操作",
-            title: tr("Git 变更与 Diff").to_owned(),
-            subtitle: Some(tr("查看当前工作区或工作树差异与提交").to_owned()),
-            keywords: "git diff commit status pr 差异 提交".into(),
-            icon: Glyph::GitBranch,
-            action: PaletteAction::OpenGit,
-        });
-        items.push(PaletteItem {
-            group: "操作",
-            title: tr("协作概览").to_owned(),
-            subtitle: Some(tr("查看团队实时态势驾驶舱与派单").to_owned()),
-            keywords: "collaboration cockpit dispatch team 协作 驾驶舱 派单".into(),
-            icon: Glyph::Network,
-            action: PaletteAction::OpenCollaboration,
-        });
-        items.push(PaletteItem {
-            group: "操作",
-            title: tr("团队成员").to_owned(),
-            subtitle: Some(tr("管理主控与 Worker 成员配置").to_owned()),
-            keywords: "team members worker lead 团队 成员".into(),
-            icon: Glyph::Users,
-            action: PaletteAction::OpenMembers,
-        });
-        items.push(PaletteItem {
-            group: "操作",
-            title: tr("工作流").to_owned(),
-            subtitle: None,
-            keywords: "workflows schedule cron 工作流 定时".into(),
-            icon: Glyph::Workflow,
-            action: PaletteAction::OpenWorkflows,
-        });
-        items.push(PaletteItem {
-            group: "操作",
+            group: "常用操作",
             title: tr("跨项目收件箱").to_owned(),
             subtitle: Some(tr("统一处理未读会话、待回复问题、汇报与失败工作流").to_owned()),
             keywords: "inbox unread triage notifications 收件箱 未读 汇报".into(),
@@ -318,7 +246,47 @@ impl HiveApp {
             action: PaletteAction::OpenInbox,
         });
         items.push(PaletteItem {
-            group: "操作",
+            group: "常用操作",
+            title: tr("Git 变更与 Diff").to_owned(),
+            subtitle: Some(tr("查看当前工作区或工作树差异与提交").to_owned()),
+            keywords: "git diff commit status pr 差异 提交".into(),
+            icon: Glyph::GitBranch,
+            action: PaletteAction::OpenGit,
+        });
+        items.push(PaletteItem {
+            group: "常用操作",
+            title: tr("工作区终端").to_owned(),
+            subtitle: Some(tr("打开或切换项目终端抽屉").to_owned()),
+            keywords: "terminal shell pty 终端".into(),
+            icon: Glyph::Terminal,
+            action: PaletteAction::ToggleTerminal,
+        });
+        items.push(PaletteItem {
+            group: "常用操作",
+            title: tr("协作概览").to_owned(),
+            subtitle: Some(tr("查看团队实时态势驾驶舱与派单").to_owned()),
+            keywords: "collaboration cockpit dispatch team 协作 驾驶舱 派单".into(),
+            icon: Glyph::Network,
+            action: PaletteAction::OpenCollaboration,
+        });
+        items.push(PaletteItem {
+            group: "常用操作",
+            title: tr("团队成员").to_owned(),
+            subtitle: Some(tr("管理主控与 Worker 成员配置").to_owned()),
+            keywords: "team members worker lead 团队 成员".into(),
+            icon: Glyph::Users,
+            action: PaletteAction::OpenMembers,
+        });
+        items.push(PaletteItem {
+            group: "常用操作",
+            title: tr("工作流").to_owned(),
+            subtitle: None,
+            keywords: "workflows schedule cron 工作流 定时".into(),
+            icon: Glyph::Workflow,
+            action: PaletteAction::OpenWorkflows,
+        });
+        items.push(PaletteItem {
+            group: "常用操作",
             title: tr("新建无项目临时对话（Scratch）").to_owned(),
             subtitle: Some(tr("无需打开文件夹，直接开启临时对话").to_owned()),
             keywords: "scratch temp chat quick 临时 对话 无项目".into(),
@@ -326,7 +294,23 @@ impl HiveApp {
             action: PaletteAction::NewScratch,
         });
         items.push(PaletteItem {
-            group: "操作",
+            group: "常用操作",
+            title: tr("打开会话引用").to_owned(),
+            subtitle: None,
+            keywords: "open conversation thread link reference 打开 会话 引用".into(),
+            icon: Glyph::Link,
+            action: PaletteAction::OpenConversationReference,
+        });
+        items.push(PaletteItem {
+            group: "常用操作",
+            title: tr("打开或收起侧栏").to_owned(),
+            subtitle: None,
+            keywords: "sidebar navigation toggle 侧栏 导航".into(),
+            icon: Glyph::PanelLeft,
+            action: PaletteAction::ToggleSidebar,
+        });
+        items.push(PaletteItem {
+            group: "常用操作",
             title: tr("快捷键与效率速查").to_owned(),
             subtitle: Some(tr("查看当前生效的全部键盘快捷键与输入框技巧").to_owned()),
             keywords: "shortcuts keybindings help cheat sheet 快捷键 速查 帮助".into(),
@@ -334,15 +318,7 @@ impl HiveApp {
             action: PaletteAction::OpenShortcutsGuide,
         });
         items.push(PaletteItem {
-            group: "操作",
-            title: tr("重新打开首次引导").to_owned(),
-            subtitle: Some(tr("检查本机 Agent 环境、导入或选择起始项目").to_owned()),
-            keywords: "welcome onboarding setup guide 引导 新手 向导".into(),
-            icon: Glyph::Compass,
-            action: PaletteAction::OpenWelcomeGuide,
-        });
-        items.push(PaletteItem {
-            group: "操作",
+            group: "常用操作",
             title: if dark {
                 tr("切换为浅色主题").to_owned()
             } else {
@@ -353,6 +329,30 @@ impl HiveApp {
             icon: if dark { Glyph::Sun } else { Glyph::Moon },
             action: PaletteAction::ToggleTheme,
         });
+        items.push(PaletteItem {
+            group: "常用操作",
+            title: tr("重新打开首次引导").to_owned(),
+            subtitle: Some(tr("检查本机 Agent 环境、导入或选择起始项目").to_owned()),
+            keywords: "welcome onboarding setup guide 引导 新手 向导".into(),
+            icon: Glyph::Compass,
+            action: PaletteAction::OpenWelcomeGuide,
+        });
+        if self.viewing_conversation() && !self.showing_welcome_guide {
+            use crate::keybindings::Target;
+            for (target, forward) in [
+                (Target::FocusNextWorkspaceArea, true),
+                (Target::FocusPreviousWorkspaceArea, false),
+            ] {
+                items.push(PaletteItem {
+                    group: "常用操作",
+                    title: target.label().to_owned(),
+                    subtitle: Some(target.description().to_owned()),
+                    keywords: "focus workspace area panel keyboard f6 焦点 工作区 区域".into(),
+                    icon: Glyph::Columns2,
+                    action: PaletteAction::FocusWorkspaceArea { forward },
+                });
+            }
+        }
 
         for session in self.sessions.iter().filter(|s| !s.archived).take(24) {
             let title = self.session_title(session);
@@ -367,7 +367,7 @@ impl HiveApp {
                 None => Some(tr(session.backend.label()).to_owned()),
             };
             items.push(PaletteItem {
-                group: "会话",
+                group: "近期会话",
                 title: title.to_owned(),
                 subtitle,
                 keywords: format!("session thread {title} {} {}", session.backend.wire(), branch.unwrap_or("")),
@@ -381,7 +381,7 @@ impl HiveApp {
                 continue;
             }
             items.push(PaletteItem {
-                group: "项目",
+                group: "切换项目",
                 title: workspace.name.clone(),
                 subtitle: Some(workspace.path.clone()),
                 keywords: format!("project workspace {} {}", workspace.name, workspace.path),
@@ -601,15 +601,20 @@ impl Render for CommandPalette {
                 div()
                     .id("command-palette-list")
                     .w_full()
-                    .max_h(px(360.))
+                    .max_h(px(372.))
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
                     .vertical_scrollbar(&self.scroll)
-                    .child(
+                    .child({
+                        let is_empty = filtered.is_empty();
+                        let show_headers = self.kind == PaletteKind::Commands;
+                        let mut prev_group: Option<&'static str> = None;
                         v_flex()
                             .w_full()
                             .gap_1()
-                            .when(filtered.is_empty(), |col| {
+                            .pb_2()
+                            .pr_1()
+                            .when(is_empty, |col| {
                                 col.child(
                                     div()
                                         .py_6()
@@ -621,12 +626,31 @@ impl Render for CommandPalette {
                             })
                             .children(filtered.into_iter().enumerate().map(|(ix, item)| {
                                 let is_sel = ix == selected;
+                                let section_header = if show_headers && prev_group != Some(item.group) {
+                                    prev_group = Some(item.group);
+                                    Some(item.group)
+                                } else {
+                                    None
+                                };
                                 let action = item.action.clone();
                                 let accessible_name = match &item.subtitle {
                                     Some(detail) => format!("{} · {detail}", item.title),
                                     None => item.title.clone(),
                                 };
-                                Button::new(("palette-item", ix))
+                                let chord = match &item.action {
+                                    PaletteAction::NewSession => crate::keybindings::chord_label(crate::keybindings::Target::NewSession, cx),
+                                    PaletteAction::ToggleSidebar => crate::keybindings::chord_label(crate::keybindings::Target::ToggleSidebar, cx),
+                                    PaletteAction::ToggleTerminal => crate::keybindings::chord_label(crate::keybindings::Target::ToggleTerminal, cx),
+                                    PaletteAction::OpenGit => crate::keybindings::chord_label(crate::keybindings::Target::OpenGitWorkspace, cx),
+                                    PaletteAction::FocusWorkspaceArea { forward: true } => {
+                                        crate::keybindings::chord_label(crate::keybindings::Target::FocusNextWorkspaceArea, cx)
+                                    }
+                                    PaletteAction::FocusWorkspaceArea { forward: false } => {
+                                        crate::keybindings::chord_label(crate::keybindings::Target::FocusPreviousWorkspaceArea, cx)
+                                    }
+                                    _ => None,
+                                };
+                                let button = Button::new(("palette-item", ix))
                                     .custom(palette::sidebar_item_variant(is_sel, cx))
                                     .accessibility_label(accessible_name)
                                     .selected(is_sel)
@@ -688,50 +712,45 @@ impl Render for CommandPalette {
                                                             }),
                                                     ),
                                             )
-                                            .child({
-                                                let chord = match &item.action {
-                                                    PaletteAction::NewSession => crate::keybindings::chord_label(crate::keybindings::Target::NewSession, cx),
-                                                    PaletteAction::ToggleSidebar => crate::keybindings::chord_label(crate::keybindings::Target::ToggleSidebar, cx),
-                                                    PaletteAction::ToggleTerminal => crate::keybindings::chord_label(crate::keybindings::Target::ToggleTerminal, cx),
-                                                    PaletteAction::OpenGit => crate::keybindings::chord_label(crate::keybindings::Target::OpenGitWorkspace, cx),
-                                                    _ => None,
-                                                };
-                                                h_flex()
-                                                    .flex_shrink_0()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .when_some(chord, |row, kbd| {
-                                                        row.child(
-                                                            div()
-                                                                .px_1p5()
-                                                                .py(px(1.))
-                                                                .rounded_sm()
-                                                                .bg(Color::Inset.get(cx))
-                                                                .border_1()
-                                                                .border_color(Color::Divider.get(cx))
-                                                                .font_family(Theme::global(cx).mono_font_family.clone())
-                                                                .text_size(px(10.))
-                                                                .text_color(Color::Secondary.get(cx))
-                                                                .child(kbd),
-                                                        )
-                                                    })
-                                                    .child(
-                                                        div()
-                                                            .px_1p5()
-                                                            .py(px(1.))
-                                                            .rounded_sm()
-                                                            .bg(Color::Inset.get(cx))
-                                                            .text_size(px(10.5))
-                                                            .text_color(Color::Muted.get(cx))
-                                                            .child(tr(item.group).to_owned()),
-                                                    )
+                                            .when_some(chord, |row, kbd| {
+                                                row.child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .px_1p5()
+                                                        .py(px(1.))
+                                                        .rounded_sm()
+                                                        .bg(Color::Inset.get(cx))
+                                                        .border_1()
+                                                        .border_color(Color::Divider.get(cx))
+                                                        .font_family(Theme::global(cx).mono_font_family.clone())
+                                                        .text_size(px(10.))
+                                                        .text_color(Color::Secondary.get(cx))
+                                                        .child(kbd),
+                                                )
                                             }),
                                     )
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.execute(action.clone(), window, cx);
-                                    }))
-                            })),
-                    ),
+                                    }));
+                                v_flex()
+                                    .w_full()
+                                    .gap_0p5()
+                                    .when_some(section_header, |col, group| {
+                                        col.child(
+                                            div()
+                                                .px_2()
+                                                .when(ix > 0, |d| d.pt_2())
+                                                .when(ix == 0, |d| d.pt_0p5())
+                                                .pb_0p5()
+                                                .text_size(px(11.))
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(tr(group).to_owned()),
+                                        )
+                                    })
+                                    .child(button)
+                            }))
+                    }),
             )
             .child(
                 h_flex()

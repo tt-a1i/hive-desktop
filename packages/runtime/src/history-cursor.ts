@@ -251,7 +251,7 @@ export function boundOversizedToolOutput<T>(message: T, maxChars = MAX_PAGED_TOO
       const omitted = item.text.length - head.length;
       return {
         ...item,
-        text: `${head}\n… [已截断 ${omitted} 字符以保持流畅；可按字节窗口继续加载或导出完整 Markdown]`,
+        text: `${head}\n… [已截断 ${omitted} 字符以保持流畅；可点击下方继续加载或导出完整记录]`,
         truncatedChars: omitted,
         totalBytes,
         loadedBytes,

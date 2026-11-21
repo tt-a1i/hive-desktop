@@ -193,12 +193,13 @@ impl HiveApp {
         };
         chrome::drag_bar(id, window, cx)
             .w_full()
-            .gap_1p5()
+            .gap_1()
             .when(in_sidebar, |bar| {
-                bar.px_1().when(inset > px(0.), |b| b.pl(inset - px(4.)))
+                bar.px_1p5().when(inset > px(0.), |b| b.pl(inset - px(4.)))
             })
             .when(!in_sidebar, |bar| {
                 bar.px_3()
+                    .gap_1p5()
                     .border_b_1()
                     .border_color(Color::Divider.get(cx))
                     .when(inset > px(0.), |b| b.pl(inset + px(8.)))
@@ -225,10 +226,9 @@ impl HiveApp {
             )
             .child(
                 div()
-                    .when(!in_sidebar, |view| view.flex_1())
-                    .min_w_0()
+                    .when(in_sidebar, |view| view.flex_shrink_0())
+                    .when(!in_sidebar, |view| view.flex_1().min_w_0().truncate())
                     .px_0p5()
-                    .truncate()
                     .text_sm()
                     .font_weight(if in_sidebar {
                         FontWeight::BOLD
@@ -287,7 +287,7 @@ impl HiveApp {
                         ),
                 )
             })
-            .child(self.global_search_button(cx))
+            .when(!in_sidebar, |view| view.child(self.global_search_button(cx)))
             .child(self.command_palette_button(cx))
             .when(!self.connected && self.runtime.is_some(), |view| {
                 view.child(
@@ -392,6 +392,9 @@ impl HiveApp {
                 .h(px(26.))
                 .w(px(26.))
                 .rounded_md()
+        })
+        .when(id == "collaboration-new-orchestrator", |button| {
+            button.small().w_full()
         })
         .when(id == "home-agent", |button| {
             button
@@ -1231,12 +1234,12 @@ impl HiveApp {
                 h_flex()
                     .flex_shrink_0()
                     .w_full()
-                    .h(px(34.))
+                    .h(px(36.))
                     .items_center()
                     .border_t_1()
                     .border_color(Color::Divider.get(cx))
-                    .px_0p5()
-                    .gap_0p5()
+                    .px_2()
+                    .gap_1()
                     .child(
                         Button::new("open-settings")
                             .custom(palette::quiet_icon_variant(cx))

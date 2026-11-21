@@ -466,8 +466,11 @@ pub fn dispatch_state(value: &str) -> &str {
     match value {
         "queued" => tr("排队中"),
         "submitted" => tr("已提交"),
+        "running" | "in_progress" => tr("执行中"),
         "reported" => tr("已汇报"),
-        "cancelled" => tr("已取消"),
+        "completed" | "done" => tr("已完成"),
+        "failed" | "error" => tr("失败"),
+        "cancelled" | "canceled" => tr("已取消"),
         _ => value,
     }
 }

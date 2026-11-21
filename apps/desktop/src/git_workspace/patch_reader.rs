@@ -41,16 +41,38 @@ impl PatchReader {
         reader: fn(&mut T) -> Option<&mut Self>,
         cx: &Context<T>,
     ) -> impl IntoElement {
+        self.view_with_wrap(id, region, false, reader, cx)
+    }
+
+    pub fn view_with_wrap<T: 'static>(
+        &self,
+        id: &'static str,
+        region: Stateful<Div>,
+        nowrap: bool,
+        reader: fn(&mut T) -> Option<&mut Self>,
+        cx: &Context<T>,
+    ) -> impl IntoElement {
         let page = self.text.page;
         let count = self.text.count();
         let group_id = ElementId::from(id);
+        let text_el = text_reading::selectable_text(
+            format!("{id}-{page}"),
+            self.text.visible.clone(),
+        );
+        let body: AnyElement = if nowrap {
+            h_flex()
+                .w_full()
+                .min_w_0()
+                .items_start()
+                .child(div().flex_none().whitespace_nowrap().child(text_el))
+                .into_any_element()
+        } else {
+            text_el.into_any_element()
+        };
         v_flex()
             .min_w_0()
             .gap_1()
-            .child(region.child(text_reading::selectable_text(
-                format!("{id}-{page}"),
-                self.text.visible.clone(),
-            )))
+            .child(region.child(body))
             .when(count > 1, |view| {
                 let label = format!("{} {} / {count}", tr("补丁页"), page + 1);
                 view.child(

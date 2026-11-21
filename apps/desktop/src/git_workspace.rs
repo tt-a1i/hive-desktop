@@ -17,7 +17,7 @@ use crate::{
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
-        button::{Button, ButtonCustomVariant, ButtonVariants},
+        button::{Button, ButtonVariants},
         checkbox::Checkbox,
         diff::{
             Diff, DiffChangeIndicator, DiffFile, DiffHoverHighlight, DiffHunkSeparator,
@@ -2811,21 +2811,7 @@ impl Render for GitWorkspace {
         let current = self.current(cx);
         let diff_find_bar = self.render_diff_find(cx);
         let diff_find_decoration = self.diff_find_decoration(cx);
-        let segment_variant = |active: bool, cx: &App| {
-            ButtonCustomVariant::new(cx)
-                .color(if active {
-                    Color::Card.get(cx).into()
-                } else {
-                    gpui::rgba(0).into()
-                })
-                .foreground(if active {
-                    Color::Text.get(cx).into()
-                } else {
-                    Color::Secondary.get(cx).into()
-                })
-                .hover(Color::Card.get(cx).opacity(0.65).into())
-                .active(Color::Card.get(cx).into())
-        };
+        let segment_variant = crate::palette::segment_variant;
 
         let branch_badge = self.status.as_ref().map(|status| {
             (
@@ -2844,201 +2830,231 @@ impl Render for GitWorkspace {
         let app_expand = self.app.clone();
         let app_close = self.app.clone();
 
-        let header = h_flex()
-            .w_full()
+        let identity_row = h_flex()
+            .flex_1()
             .min_w_0()
-            .flex_shrink_0()
             .items_center()
-            .justify_between()
             .gap_2()
-            .px_3()
-            .py_2()
-            .when(self.in_drawer, |bar| {
-                bar.bg(Color::Sidebar.get(cx))
-                    .border_b_1()
-                    .border_color(Color::Divider.get(cx))
-            })
             .child(
-                h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Icon::new(Glyph::GitBranch)
-                            .size(px(14.))
-                            .text_color(Color::Muted.get(cx))
-                            .flex_shrink_0(),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(Color::Text.get(cx))
-                            .child(self.project_name.clone()),
-                    )
-                    .when_some(branch_badge, |row, (branch, details)| {
-                        row.child(
-                            div()
-                                .id("git-workspace-identity")
-                                .max_w(px(140.))
-                                .truncate()
-                                .px_2()
-                                .py(px(1.))
-                                .rounded_full()
-                                .bg(Color::Inset.get(cx))
-                                .border_1()
-                                .border_color(Color::Divider.get(cx))
-                                .text_xs()
-                                .text_color(Color::Secondary.get(cx))
-                                .child(branch)
-                                .tooltip(move |window, cx| {
-                                    Tooltip::new(details.clone()).build(window, cx)
-                                }),
-                        )
-                    }),
+                Icon::new(Glyph::GitBranch)
+                    .size(px(14.))
+                    .text_color(Color::Muted.get(cx))
+                    .flex_shrink_0(),
             )
             .child(
-                h_flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_0p5()
-                            .p_0p5()
-                            .rounded_lg()
-                            .bg(Color::Inset.get(cx))
-                            .border_1()
-                            .border_color(Color::Divider.get(cx))
-                            .child(
-                                Button::new("git-local-panel")
-                                    .custom(segment_variant(!self.show_remotes && !self.show_history, cx))
-                                    .compact()
-                                    .xsmall()
-                                    .h(px(22.))
-                                    .px_2()
-                                    .rounded_md()
-                                    .label(if total_changes > 0 {
-                                        format!("{} ({total_changes})", tr("变更"))
-                                    } else {
-                                        tr("变更").to_owned()
-                                    })
-                                    .selected(!self.show_remotes && !self.show_history)
-                                    .disabled(busy)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if this.busy(cx) {
-                                            return;
-                                        }
-                                        this.show_remotes = false;
-                                        this.show_history = false;
-                                        this.refresh(cx);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("git-history-panel")
-                                    .custom(segment_variant(self.show_history, cx))
-                                    .compact()
-                                    .xsmall()
-                                    .h(px(22.))
-                                    .px_2()
-                                    .rounded_md()
-                                    .label(tr("提交历史"))
-                                    .selected(self.show_history)
-                                    .disabled(busy || self.preview_mock)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if this.busy(cx) {
-                                            return;
-                                        }
-                                        this.show_remotes = false;
-                                        this.show_history = true;
-                                        this.load_commit_log(cx);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("git-remotes-panel")
-                                    .custom(segment_variant(self.show_remotes, cx))
-                                    .compact()
-                                    .xsmall()
-                                    .h(px(22.))
-                                    .px_2()
-                                    .rounded_md()
-                                    .label(tr("远端与 PR"))
-                                    .selected(self.show_remotes)
-                                    .disabled(busy || self.remotes.is_none())
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if this.busy(cx) {
-                                            return;
-                                        }
-                                        this.show_remotes = true;
-                                        this.show_history = false;
-                                        this.reload_diff_on_open = false;
-                                        this.clear_file_diff(cx);
-                                        this.hide_commit_patch();
-                                        if let Some(remotes) = &this.remotes {
-                                            remotes.update(cx, |remote, cx| remote.activate(cx));
-                                        }
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .child(
-                        Button::new("refresh-git-workspace")
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(Color::Text.get(cx))
+                    .child(self.project_name.clone()),
+            )
+            .when_some(branch_badge, |row, (branch, details)| {
+                row.child(
+                    div()
+                        .id("git-workspace-identity")
+                        .min_w_0()
+                        .max_w(px(if self.in_drawer { 190. } else { 220. }))
+                        .truncate()
+                        .px_2()
+                        .py(px(1.))
+                        .rounded_full()
+                        .bg(Color::Inset.get(cx))
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
+                        .text_xs()
+                        .text_color(Color::Secondary.get(cx))
+                        .child(branch)
+                        .tooltip(move |window, cx| Tooltip::new(details.clone()).build(window, cx)),
+                )
+            });
+
+        let tabs_bar = h_flex()
+            .when(self.in_drawer, |row| row.w_full())
+            .gap_0p5()
+            .p_0p5()
+            .rounded_lg()
+            .bg(Color::Inset.get(cx))
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .child(
+                Button::new("git-local-panel")
+                    .custom(segment_variant(!self.show_remotes && !self.show_history, cx))
+                    .compact()
+                    .xsmall()
+                    .when(self.in_drawer, |btn| btn.flex_1())
+                    .h(px(24.))
+                    .px_2()
+                    .rounded_md()
+                    .label(if total_changes > 0 {
+                        format!("{} ({total_changes})", tr("变更"))
+                    } else {
+                        tr("变更").to_owned()
+                    })
+                    .selected(!self.show_remotes && !self.show_history)
+                    .disabled(busy)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if this.busy(cx) {
+                            return;
+                        }
+                        this.show_remotes = false;
+                        this.show_history = false;
+                        this.refresh(cx);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("git-history-panel")
+                    .custom(segment_variant(self.show_history, cx))
+                    .compact()
+                    .xsmall()
+                    .when(self.in_drawer, |btn| btn.flex_1())
+                    .h(px(24.))
+                    .px_2()
+                    .rounded_md()
+                    .label(tr("提交历史"))
+                    .selected(self.show_history)
+                    .disabled(busy || self.preview_mock)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if this.busy(cx) {
+                            return;
+                        }
+                        this.show_remotes = false;
+                        this.show_history = true;
+                        this.load_commit_log(cx);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("git-remotes-panel")
+                    .custom(segment_variant(self.show_remotes, cx))
+                    .compact()
+                    .xsmall()
+                    .when(self.in_drawer, |btn| btn.flex_1())
+                    .h(px(24.))
+                    .px_2()
+                    .rounded_md()
+                    .label(tr("远端与 PR"))
+                    .selected(self.show_remotes)
+                    .disabled(busy || self.remotes.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if this.busy(cx) {
+                            return;
+                        }
+                        this.show_remotes = true;
+                        this.show_history = false;
+                        this.reload_diff_on_open = false;
+                        this.clear_file_diff(cx);
+                        this.hide_commit_patch();
+                        if let Some(remotes) = &this.remotes {
+                            remotes.update(cx, |remote, cx| remote.activate(cx));
+                        }
+                        cx.notify();
+                    })),
+            );
+
+        let window_actions = h_flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap_1()
+            .child(
+                Button::new("refresh-git-workspace")
+                    .custom(crate::palette::quiet_icon_variant(cx))
+                    .compact()
+                    .xsmall()
+                    .h(px(24.))
+                    .w(px(24.))
+                    .rounded_md()
+                    .icon(Glyph::RefreshCw)
+                    .tooltip(tr("刷新 Git 状态"))
+                    .accessibility_label(tr("刷新 Git 状态"))
+                    .disabled(!current || self.status_loading || self.index_busy || self.preview_mock)
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+            )
+            .when(self.in_drawer, |row| {
+                row.when(!self.preview_mock, |row| {
+                    row.child(
+                        Button::new("git-drawer-expand")
                             .custom(crate::palette::quiet_icon_variant(cx))
                             .compact()
                             .xsmall()
                             .h(px(24.))
                             .w(px(24.))
                             .rounded_md()
-                            .icon(Glyph::RefreshCw)
-                            .tooltip(tr("刷新 Git 状态"))
-                            .accessibility_label(tr("刷新 Git 状态"))
-                            .disabled(!current || self.status_loading || self.index_busy || self.preview_mock)
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                            .icon(Glyph::Maximize2)
+                            .tooltip(tr("在弹窗中展开"))
+                            .accessibility_label(tr("在弹窗中展开"))
+                            .on_click(move |_, window, cx| {
+                                let _ = app_expand.update(cx, |this, cx| {
+                                    this.open_git_workspace_modal(window, cx);
+                                });
+                            }),
                     )
-                    .when(self.in_drawer, |row| {
-                        row.when(!self.preview_mock, |row| {
-                            row.child(
-                                Button::new("git-drawer-expand")
-                                    .custom(crate::palette::quiet_icon_variant(cx))
-                                    .compact()
-                                    .xsmall()
-                                    .h(px(24.))
-                                    .w(px(24.))
-                                    .rounded_md()
-                                    .icon(Glyph::Maximize2)
-                                    .tooltip(tr("在弹窗中展开"))
-                                    .accessibility_label(tr("在弹窗中展开"))
-                                    .on_click(move |_, window, cx| {
-                                        let _ = app_expand.update(cx, |this, cx| {
-                                            this.open_git_workspace_modal(window, cx);
-                                        });
-                                    }),
-                            )
-                        })
-                        .child(
-                            Button::new("git-drawer-close")
-                                .custom(crate::palette::quiet_icon_variant(cx))
-                                .compact()
-                                .xsmall()
-                                .h(px(24.))
-                                .w(px(24.))
-                                .rounded_md()
-                                .icon(Glyph::X)
-                                .tooltip(tr("关闭 Git 面板"))
-                                .accessibility_label(tr("关闭 Git 面板"))
-                                .on_click(move |_, _, cx| {
-                                    let _ = app_close.update(cx, |this, cx| {
-                                        this.close_git_workspace(cx);
-                                    });
-                                }),
-                        )
-                    }),
-            );
+                })
+                .child(
+                    Button::new("git-drawer-close")
+                        .custom(crate::palette::quiet_icon_variant(cx))
+                        .compact()
+                        .xsmall()
+                        .h(px(24.))
+                        .w(px(24.))
+                        .rounded_md()
+                        .icon(Glyph::X)
+                        .tooltip(tr("关闭 Git 面板"))
+                        .accessibility_label(tr("关闭 Git 面板"))
+                        .on_click(move |_, _, cx| {
+                            let _ = app_close.update(cx, |this, cx| {
+                                this.close_git_workspace(cx);
+                            });
+                        }),
+                )
+            });
+
+        let header: AnyElement = if self.in_drawer {
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .flex_shrink_0()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .bg(Color::Sidebar.get(cx))
+                .border_b_1()
+                .border_color(Color::Divider.get(cx))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .child(identity_row)
+                        .child(window_actions),
+                )
+                .child(tabs_bar)
+                .into_any_element()
+        } else {
+            h_flex()
+                .w_full()
+                .min_w_0()
+                .flex_shrink_0()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .child(identity_row)
+                .child(
+                    h_flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap_1p5()
+                        .child(tabs_bar)
+                        .child(window_actions),
+                )
+                .into_any_element()
+        };
 
         let body: AnyElement = if self.show_remotes {
             if let Some(remotes) = &self.remotes {
@@ -3118,6 +3134,13 @@ impl Render for GitWorkspace {
                     let selected_can_stage = selected_change.as_ref().is_some_and(|c| c.has_unstaged());
                     let selected_can_unstage = selected_change.as_ref().is_some_and(|c| c.has_staged());
                     let has_any_staged = status.can_preview_commit();
+                    let fitted_list_height = if change_rows.0.is_empty() {
+                        px(44.)
+                    } else if self.in_drawer {
+                        px((change_rows.0.len() as f32 * 30. + 10.).clamp(44., 164.))
+                    } else {
+                        list_height
+                    };
 
                     view.when(self.grouping_save_failed, |view| {
                         view.child(
@@ -3246,7 +3269,7 @@ impl Render for GitWorkspace {
                                     ),
                             )
                             .child(
-                                div().h(list_height).flex().min_h_0().child(Viewport::new(
+                                div().h(fitted_list_height).flex().min_h_0().child(Viewport::new(
                                     "git-files-viewport",
                                     &self.files_scroll,
                                     v_flex()
@@ -3781,85 +3804,156 @@ impl Render for GitWorkspace {
                             .border_1()
                             .border_color(Color::Divider.get(cx))
                             .overflow_hidden()
-                            .child(
-                                h_flex()
-                                    .flex_wrap()
+                            .child({
+                                let diff_file_title = h_flex()
+                                    .when(!self.in_drawer, |row| row.flex_1())
+                                    .min_w_0()
                                     .items_center()
-                                    .justify_between()
-                                    .gap_2()
-                                    .px_3()
-                                    .py_1p5()
-                                    .bg(Color::Inset.get(cx))
-                                    .border_b_1()
-                                    .border_color(Color::Divider.get(cx))
+                                    .gap_1p5()
                                     .child(
-                                        h_flex()
+                                        Icon::new(if self.show_current_file {
+                                            Glyph::FileText
+                                        } else {
+                                            Glyph::FileDiff
+                                        })
+                                        .size(px(13.))
+                                        .text_color(Color::Muted.get(cx))
+                                        .flex_shrink_0(),
+                                    )
+                                    .child(
+                                        div()
                                             .flex_1()
                                             .min_w_0()
-                                            .items_center()
-                                            .gap_1p5()
-                                            .child(Icon::new(if self.show_current_file { Glyph::FileText } else { Glyph::FileDiff }).size(px(13.)).text_color(Color::Muted.get(cx)).flex_shrink_0())
+                                            .truncate()
+                                            .text_xs()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(Color::Text.get(cx))
                                             .child(
-                                                div()
-                                                    .min_w_0()
-                                                    .truncate()
-                                                    .text_xs()
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(Color::Text.get(cx))
-                                                    .child(
-                                                        selected_change
-                                                            .as_ref()
-                                                            .map(|c| c.path.clone())
-                                                            .unwrap_or_else(|| tr("文件差异").to_owned()),
-                                                    ),
+                                                selected_change
+                                                    .as_ref()
+                                                    .map(|c| c.path.clone())
+                                                    .unwrap_or_else(|| tr("文件差异").to_owned()),
                                             ),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .gap_0p5()
-                                            .p_0p5()
-                                            .rounded_md()
-                                            .bg(Color::Card.get(cx))
-                                            .border_1()
-                                            .border_color(Color::Divider.get(cx))
-                                            .children([(false, "git-view-diff", "差异视图"), (true, "git-view-current-file", "当前文件")].into_iter().map(|(show, id, label)| {
-                                                Button::new(id)
-                                                    .custom(segment_variant(self.show_current_file == show, cx))
-                                                    .compact().xsmall().h(px(20.)).px_1p5().rounded_sm()
-                                                    .label(tr(label))
-                                                    .selected(self.show_current_file == show)
-                                                    .disabled(!current || self.status_loading || selected_change.is_none()
-                                                        || (show && (self.preview_mock || self.current_file_path().is_none())))
-                                                    .on_click(cx.listener(move |this, _, _, cx| this.set_current_file_view(show, cx)))
-                                            })),
-                                    )
-                                    .when(!self.show_current_file, |header| header.child(
-                                        h_flex()
-                                            .gap_0p5()
-                                            .p_0p5()
-                                            .rounded_md()
-                                            .bg(Color::Card.get(cx))
-                                            .border_1()
-                                            .border_color(Color::Divider.get(cx))
-                                            .children([(Comparison::Unstaged, "未暂存"), (Comparison::Staged, "已暂存"), (Comparison::HeadWorktree, "全部")].into_iter().map(|(comparison, short)| {
-                                                Button::new(comparison.wire())
-                                                    .custom(segment_variant(self.comparison == comparison, cx))
-                                                    .compact()
-                                                    .xsmall()
-                                                    .h(px(20.))
-                                                    .px_1p5()
-                                                    .rounded_sm()
-                                                    .label(tr(short))
-                                                    .tooltip(comparison.label())
-                                                    .selected(self.comparison == comparison)
-                                                    .disabled(!current || selected_change.is_none() || self.status_loading || self.preview_mock)
-                                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                                        this.comparison = comparison;
-                                                        this.load_diff(cx);
-                                                    }))
-                                            })),
-                                    )),
-                            )
+                                    );
+                                let view_switcher = h_flex()
+                                    .gap_0p5()
+                                    .p_0p5()
+                                    .rounded_md()
+                                    .bg(Color::Card.get(cx))
+                                    .border_1()
+                                    .border_color(Color::Divider.get(cx))
+                                    .children(
+                                        [
+                                            (false, "git-view-diff", "差异视图"),
+                                            (true, "git-view-current-file", "当前文件"),
+                                        ]
+                                        .into_iter()
+                                        .map(|(show, id, label)| {
+                                            Button::new(id)
+                                                .custom(segment_variant(
+                                                    self.show_current_file == show,
+                                                    cx,
+                                                ))
+                                                .compact()
+                                                .xsmall()
+                                                .h(px(20.))
+                                                .px_1p5()
+                                                .rounded_sm()
+                                                .label(tr(label))
+                                                .selected(self.show_current_file == show)
+                                                .disabled(
+                                                    !current
+                                                        || self.status_loading
+                                                        || selected_change.is_none()
+                                                        || (show
+                                                            && (self.preview_mock
+                                                                || self.current_file_path().is_none())),
+                                                )
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.set_current_file_view(show, cx)
+                                                }))
+                                        }),
+                                    );
+                                let diff_controls = h_flex()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .when(self.in_drawer, |row| row.w_full().justify_between())
+                                    .child(view_switcher)
+                                    .when(!self.show_current_file, |header| {
+                                        header.child(
+                                            h_flex()
+                                                .gap_0p5()
+                                                .p_0p5()
+                                                .rounded_md()
+                                                .bg(Color::Card.get(cx))
+                                                .border_1()
+                                                .border_color(Color::Divider.get(cx))
+                                                .children(
+                                                    [
+                                                        (Comparison::Unstaged, "未暂存"),
+                                                        (Comparison::Staged, "已暂存"),
+                                                        (Comparison::HeadWorktree, "全部"),
+                                                    ]
+                                                    .into_iter()
+                                                    .map(|(comparison, short)| {
+                                                        Button::new(comparison.wire())
+                                                            .custom(segment_variant(
+                                                                self.comparison == comparison,
+                                                                cx,
+                                                            ))
+                                                            .compact()
+                                                            .xsmall()
+                                                            .h(px(20.))
+                                                            .px_1p5()
+                                                            .rounded_sm()
+                                                            .label(tr(short))
+                                                            .tooltip(comparison.label())
+                                                            .selected(self.comparison == comparison)
+                                                            .disabled(
+                                                                !current
+                                                                    || selected_change.is_none()
+                                                                    || self.status_loading
+                                                                    || self.preview_mock,
+                                                            )
+                                                            .on_click(cx.listener(
+                                                                move |this, _, _, cx| {
+                                                                    this.comparison = comparison;
+                                                                    this.load_diff(cx);
+                                                                },
+                                                            ))
+                                                    }),
+                                                ),
+                                        )
+                                    });
+                                if self.in_drawer {
+                                    v_flex()
+                                        .w_full()
+                                        .gap_1p5()
+                                        .px_3()
+                                        .py_2()
+                                        .bg(Color::Inset.get(cx))
+                                        .border_b_1()
+                                        .border_color(Color::Divider.get(cx))
+                                        .child(diff_file_title)
+                                        .child(diff_controls)
+                                        .into_any_element()
+                                } else {
+                                    h_flex()
+                                        .flex_wrap()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_2()
+                                        .px_3()
+                                        .py_1p5()
+                                        .bg(Color::Inset.get(cx))
+                                        .border_b_1()
+                                        .border_color(Color::Divider.get(cx))
+                                        .child(diff_file_title)
+                                        .child(diff_controls)
+                                        .into_any_element()
+                                }
+                            })
                             .when(self.show_current_file && current, |col| {
                                 col.child(div().p_2().child(self.render_current_file(diff_height, cx)))
                             })
@@ -4097,18 +4191,24 @@ impl Render for GitWorkspace {
                                             };
                                             PatchReader::new(text)
                                         });
-                                        let region = crate::text_reading::region(
+                                        let region = crate::text_reading::source_region(
                                             "git-raw-patch-region".into(),
                                             tr("Git 原始字节补丁").to_owned(),
                                             &reader.scroll,
                                             diff_height,
+                                            code_wrap,
                                             cx,
                                         )
+                                        .border_0()
+                                        .rounded_none()
+                                        .px_3()
+                                        .py_2p5()
                                         .font_family(Theme::global(cx).mono_font_family.clone())
                                         .text_size(px(code_size))
                                         .line_height(px((code_size * 1.55).round()))
+                                        .when(!code_wrap, |v| v.whitespace_nowrap())
                                         .when(code_wrap, |v| v.whitespace_normal());
-                                        reader.view("git-raw-patch", region, |this| this.file_patch_reader.as_mut(), cx)
+                                        reader.view_with_wrap("git-raw-patch", region, !code_wrap, |this| this.file_patch_reader.as_mut(), cx)
                                         .into_any_element()
                                     })
                                 })

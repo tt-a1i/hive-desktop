@@ -692,10 +692,6 @@ impl HiveApp {
                                                                             .gap_1p5()
                                                                             .rounded_md()
                                                                             .bg(Color::Inset.get(cx))
-                                                                            .border_1()
-                                                                            .border_color(
-                                                                                Color::Divider.get(cx),
-                                                                            )
                                                                             .px_2()
                                                                             .py(px(2.))
                                                                             .text_size(px(11.))
@@ -718,8 +714,6 @@ impl HiveApp {
                                                                                 .py(px(2.))
                                                                                 .rounded_md()
                                                                                 .bg(Color::Inset.get(cx))
-                                                                                .border_1()
-                                                                                .border_color(Color::Divider.get(cx))
                                                                                 .text_size(px(11.))
                                                                                 .text_color(Color::Muted.get(cx))
                                                                                 .child(format!("worktree · {branch}")),
@@ -785,15 +779,17 @@ impl HiveApp {
                                                                                 )),
                                                                         )
                                                                     })
-                                                                    .child(
-                                                                        Button::new(("member-new-worktree", i))
-                                                                            .outline().compact().xsmall().h(px(26.)).rounded_md()
-                                                                            .label(tr("新建独立会话"))
-                                                                            .disabled(!self.connected || self.member_loading || backend.is_none())
-                                                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                                                this.open_member_worktree(worktree_workspace.clone(), worktree_member.clone(), false, window, cx);
-                                                                            })),
-                                                                    )
+                                                                    .when(backend.is_some(), |view| {
+                                                                        view.child(
+                                                                            Button::new(("member-new-worktree", i))
+                                                                                .outline().compact().xsmall().h(px(26.)).rounded_md()
+                                                                                .label(tr("新建独立会话"))
+                                                                                .disabled(!self.connected || self.member_loading)
+                                                                                .on_click(cx.listener(move |this, _, window, cx| {
+                                                                                    this.open_member_worktree(worktree_workspace.clone(), worktree_member.clone(), false, window, cx);
+                                                                                })),
+                                                                        )
+                                                                    })
                                                                     .child(
                                                                         Button::new(("member-worktree-history", i))
                                                                             .outline().compact().xsmall().h(px(26.)).rounded_md()
@@ -909,10 +905,33 @@ impl HiveApp {
                                                     })
                                                     .when(!running && backend.is_none(), |view| {
                                                         view.child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(Color::Muted.get(cx))
-                                                                .child(tr("此成员的后端未配置或不受支持")),
+                                                            h_flex()
+                                                                .flex_wrap()
+                                                                .items_center()
+                                                                .gap_2()
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .text_color(crate::chrome::attention_dot(cx))
+                                                                        .child(tr("此成员的后端未配置或不受支持")),
+                                                                )
+                                                                .child(
+                                                                    Button::new(("member-configure-backend", i))
+                                                                        .custom(palette::quiet_icon_variant(cx))
+                                                                        .compact()
+                                                                        .xsmall()
+                                                                        .h(px(22.))
+                                                                        .px_1p5()
+                                                                        .rounded_sm()
+                                                                        .label(tr("去配置 →"))
+                                                                        .on_click(cx.listener(|this, _, window, cx| {
+                                                                            this.select_settings_section(
+                                                                                crate::app::SettingsSection::Programs,
+                                                                                window,
+                                                                                cx,
+                                                                            );
+                                                                        })),
+                                                                ),
                                                         )
                                                     })
                                                     .when(running, |view| {

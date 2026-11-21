@@ -91,10 +91,15 @@ impl HiveApp {
             .as_ref()
             .and_then(|r| r.backends.iter().find(|b| b.backend == backend))
     }
-    /// Returns true if built-in Pi has saved credentials or any external Agent
-    /// executable has been verified available on this machine.
+    /// Returns true if readiness reports any local backend ready with credentials,
+    /// built-in Pi has saved credentials, or any external Agent executable is verified.
     pub(crate) fn has_any_ready_agent(&self, cx: &Context<Self>) -> bool {
-        self.pi_accounts.local_check_state() == Some(true)
+        self.readiness.as_ref().is_some_and(|report| {
+            report
+                .backends
+                .iter()
+                .any(|entry| entry.level == "ready" && entry.credential_state == "present")
+        }) || self.pi_accounts.local_check_state() == Some(true)
             || ["codex", "claude", "pi"]
                 .into_iter()
                 .any(|backend| self.program_local_check_state(backend, cx) == Some(true))
@@ -242,6 +247,13 @@ impl HiveApp {
                         "claude" => Some(self.program_setup_status("claude", cx)),
                         "pi-rpc" => Some(self.program_setup_status("pi", cx)),
                         _ => None,
+                    })
+                    .filter(|text| {
+                        let trimmed = text.trim();
+                        !trimmed.is_empty()
+                            && trimmed != tr("已就绪")
+                            && trimmed != "已就绪"
+                            && trimmed != "Ready"
                     });
                 let role_tagline = match backend {
                     "pi" => tr("开箱即用，免装外部 CLI"),

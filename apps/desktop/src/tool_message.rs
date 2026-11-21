@@ -301,6 +301,8 @@ impl HiveApp {
                             .gap_1()
                             .when_some(copy_text, |row, text| {
                                 let text = text.to_owned();
+                                let copy_key = format!("tool-loaded:{id}:{block_index}");
+                                let copied = self.is_copied(&copy_key);
                                 row.child(
                                     Button::new("tool-output-copy-loaded")
                                         .custom(crate::palette::subtle_icon_variant(cx))
@@ -309,13 +311,15 @@ impl HiveApp {
                                         .h(px(22.))
                                         .px_2()
                                         .rounded_sm()
-                                        .label(tr("复制已加载内容"))
+                                        .icon(if copied { Glyph::Check } else { Glyph::Copy })
+                                        .label(if copied { tr("已复制") } else { tr("复制已加载内容") })
                                         .accessibility_label(tr("复制已加载内容"))
-                                        .on_click(move |_, _, cx| {
+                                        .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.write_to_clipboard(ClipboardItem::new_string(
                                                 text.clone(),
                                             ));
-                                        }),
+                                            this.mark_copied(copy_key.clone(), cx);
+                                        })),
                                 )
                             })
                             .when(window.has_more, |row| {
@@ -623,7 +627,33 @@ impl HiveApp {
                 let paths = input
                     .map(|value| crate::file_viewer::tool_paths(&tool.name, value))
                     .unwrap_or_default();
-                let has_header_bar = !paths.is_empty() || diff_available || !details.is_empty();
+                let has_args = args.is_some();
+                let has_header_bar = !paths.is_empty() || diff_available;
+                // Avoid duplicate copy buttons when a byte-windowed output footer already
+                // provides "复制已加载内容" for output-only tool cards.
+                let show_top_copy = !details.is_empty() && (has_args || tool.output_windows.is_empty());
+                let mut top_copy_button = show_top_copy.then(|| {
+                    let tool_copy_key = format!("tool:{id}");
+                    let copied = self.is_copied(&tool_copy_key);
+                    let copy_details = details.clone();
+                    Button::new(("copy-tool", index))
+                        .custom(crate::palette::subtle_icon_variant(cx))
+                        .compact()
+                        .h(px(22.))
+                        .w(px(22.))
+                        .rounded_md()
+                        .icon(if copied { Glyph::Check } else { Glyph::Copy })
+                        .tooltip(if copied { tr("已复制") } else { tr("复制详情") })
+                        .accessibility_label(if english() {
+                            format!("Copy {} tool details", tool.name)
+                        } else {
+                            format!("复制 {} 工具详情", tool.name)
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(copy_details.clone()));
+                            this.mark_copied(tool_copy_key.clone(), cx);
+                        }))
+                });
                 let args_for_diff = input.cloned().unwrap_or_default();
                 let name_for_diff = tool.name.clone();
                 let patch_for_diff = tool.patch.clone();
@@ -673,7 +703,7 @@ impl HiveApp {
                                                             let unavailable = target.is_none();
                                                             Button::new(SharedString::from(
                                                                 format!("tool-file-{id}-{i}"),
-                                                            ))
+                                                             ))
                                                             .custom(
                                                                 crate::palette::subtle_icon_variant(
                                                                     cx,
@@ -788,49 +818,14 @@ impl HiveApp {
                                                             )),
                                                         )
                                                     })
-                                                    .child({
-                                                        let tool_copy_key = format!("tool:{id}");
-                                                        let copied = self.is_copied(&tool_copy_key);
-                                                        Button::new(("copy-tool", index))
-                                                            .custom(
-                                                                crate::palette::subtle_icon_variant(
-                                                                    cx,
-                                                                ),
-                                                            )
-                                                            .compact()
-                                                            .h(px(24.))
-                                                            .w(px(24.))
-                                                            .rounded_md()
-                                                            .icon(if copied { Glyph::Check } else { Glyph::Copy })
-                                                            .disabled(details.is_empty())
-                                                            .tooltip(if copied { tr("已复制") } else { tr("复制详情") })
-                                                            .accessibility_label(if english() {
-                                                                format!(
-                                                                    "Copy {} tool details",
-                                                                    tool.name
-                                                                )
-                                                            } else {
-                                                                format!(
-                                                                    "复制 {} 工具详情",
-                                                                    tool.name
-                                                                )
-                                                            })
-                                                            .on_click(cx.listener(
-                                                                move |this, _, _, cx| {
-                                                                    cx.write_to_clipboard(
-                                                                        ClipboardItem::new_string(
-                                                                            details.clone(),
-                                                                        ),
-                                                                    );
-                                                                    this.mark_copied(tool_copy_key.clone(), cx);
-                                                                },
-                                                            ))
-                                                    }),
+                                                    .when_some(
+                                                        has_header_bar.then(|| top_copy_button.take()).flatten(),
+                                                        |row, btn| row.child(btn),
+                                                    ),
                                             ),
                                     )
                                 })
                                 .child({
-                                    let has_args = args.is_some();
                                     crate::text_reading::region(
                                         format!("tool-details-body-{id}"),
                                         if english() {
@@ -859,11 +854,21 @@ impl HiveApp {
                                                 .min_w_0()
                                                 .gap_1()
                                                 .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(Color::Muted.get(cx))
-                                                        .child(tr("输入参数")),
+                                                    h_flex()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(11.))
+                                                                .font_weight(FontWeight::MEDIUM)
+                                                                .text_color(Color::Muted.get(cx))
+                                                                .child(tr("输入参数")),
+                                                        )
+                                                        .when_some(
+                                                            (!has_header_bar).then(|| top_copy_button.take()).flatten(),
+                                                            |row, btn| row.child(btn),
+                                                        ),
                                                 )
                                                 .child(
                                                     div()
@@ -905,15 +910,27 @@ impl HiveApp {
                                                         .border_color(Color::Divider.get(cx).opacity(0.65))
                                                 })
                                                 .child(
-                                                    div()
-                                                        .text_size(px(11.))
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(if failed {
-                                                            Color::Error.get(cx)
-                                                        } else {
-                                                            Color::Muted.get(cx)
-                                                        })
-                                                        .child(tr("输出")),
+                                                    h_flex()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(11.))
+                                                                .font_weight(FontWeight::MEDIUM)
+                                                                .text_color(if failed {
+                                                                    Color::Error.get(cx)
+                                                                } else {
+                                                                    Color::Muted.get(cx)
+                                                                })
+                                                                .child(tr("输出")),
+                                                        )
+                                                        .when_some(
+                                                            (!has_header_bar && !has_args)
+                                                                .then(|| top_copy_button.take())
+                                                                .flatten(),
+                                                            |row, btn| row.child(btn),
+                                                        ),
                                                 )
                                                 .child(
                                                     div()

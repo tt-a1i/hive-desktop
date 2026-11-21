@@ -2918,5 +2918,16 @@
   "查看当前生效的全部键盘快捷键与输入框技巧": "View all active shortcuts and composer tips",
   "检查本机 Agent 环境、导入或选择起始项目": "Check local agents, import history, or pick a project",
   "已复制": "Copied",
-  "已停用": "Disabled"
+  "已停用": "Disabled",
+  "默认对话 Agent": "Default chat Agent",
+  "常用操作": "Actions",
+  "近期会话": "Recent conversations",
+  "切换项目": "Switch project",
+  "服务名称": "Server name",
+  "启动命令": "Command",
+  "命令行参数": "Arguments",
+  "服务地址 (URL)": "Server URL",
+  "环境变量（可选，脱敏）": "Environment variables (optional, masked)",
+  "去配置 →": "Configure →",
+  "录制单个 Command 或 Ctrl 组合键，保存后立即生效；文字编辑与退出快捷键保持系统默认": "Record a Command or Ctrl shortcut—changes apply immediately; text editing and quit keep system defaults"
 }

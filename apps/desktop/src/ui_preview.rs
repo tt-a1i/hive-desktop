@@ -114,7 +114,7 @@ fn apply_screen(
                     "toolName": "Bash",
                     "content": [{
                         "type": "text",
-                        "text": format!("{output}\n… [已截断 98304 字符以保持流畅；可按字节窗口继续加载或导出完整 Markdown]"),
+                        "text": format!("{output}\n… [已截断 98304 字符以保持流畅；可点击下方继续加载或导出完整记录]"),
                         "hasMoreBytes": true,
                         "loadedBytes": output.len(),
                         "totalBytes": output.len() + 98_304,

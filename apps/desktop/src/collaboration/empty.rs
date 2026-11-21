@@ -1,7 +1,10 @@
 use crate::{app::HiveApp, focus_scroll::Reveal, language::tr, palette::Color};
 use gpui_kit::{
     assets::IconName as Glyph,
-    component::{button::Button, *},
+    component::{
+        button::{Button, ButtonVariants},
+        *,
+    },
     prelude::FluentBuilder,
     *,
 };
@@ -34,20 +37,66 @@ impl HiveApp {
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD)
                         .text_color(Color::Text.get(cx))
                         .child(if first_page { tr("开始团队协作") } else { tr("此页没有派单") })))
-                .when(first_page, |card| card
-                    .child(v_flex().w_full().gap_2()
-                        .child(Button::new("collaboration-manage-members")
-                            .outline().small().label(tr("管理成员"))
-                            .disabled(!self.connected || !self.workspace_writes_allowed())
-                            .on_click(cx.listener(|this, _, window, cx| this.show_team(window, cx))))
-                        .when_some(orchestrator, |actions, id| actions.child(
-                            Button::new("collaboration-open-orchestrator")
-                                .outline().small().label(tr("继续主控会话"))
-                                .disabled(!self.connected || !self.workspace_writes_allowed())
-                                .on_click(cx.listener(move |this, _, _, cx| this.open_session(id.clone(), cx)))))
-                        .child(self.new_chat_menu("collaboration-new-orchestrator", tr("新建主控会话"), None, cx)))
-                    .child(div().text_xs().text_color(Color::Secondary.get(cx))
-                        .child(tr("添加成员后，向主控描述任务。主控负责派单，成员显式汇报后，结果会回到来源会话。"))))
+                .when(first_page, |card| {
+                    let has_orchestrator = orchestrator.is_some();
+                    card.child(
+                        v_flex()
+                            .w_full()
+                            .gap_2()
+                            .when_some(orchestrator, |actions, id| {
+                                actions.child(
+                                    Button::new("collaboration-open-orchestrator")
+                                        .primary()
+                                        .small()
+                                        .w_full()
+                                        .label(tr("继续主控会话"))
+                                        .disabled(!self.connected || !self.workspace_writes_allowed())
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.open_session(id.clone(), cx)
+                                        })),
+                                )
+                            })
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .child(
+                                        div().flex_1().min_w_0().child({
+                                            let btn = Button::new("collaboration-manage-members")
+                                                .small()
+                                                .w_full()
+                                                .label(tr("管理成员"))
+                                                .disabled(
+                                                    !self.connected
+                                                        || !self.workspace_writes_allowed(),
+                                                )
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.show_team(window, cx)
+                                                }));
+                                            if !has_orchestrator {
+                                                btn.primary()
+                                            } else {
+                                                btn.outline()
+                                            }
+                                        }),
+                                    )
+                                    .child(
+                                        div().flex_1().min_w_0().child(self.new_chat_menu(
+                                            "collaboration-new-orchestrator",
+                                            tr("新建主控会话"),
+                                            None,
+                                            cx,
+                                        )),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(Color::Secondary.get(cx))
+                            .child(tr("添加成员后，向主控描述任务。主控负责派单，成员显式汇报后，结果会回到来源会话。")),
+                    )
+                })
                 .when(!first_page, |card| card.child(
                     Button::new("collaboration-reset-filters")
                         .outline().small().label(tr("查看全部派单"))

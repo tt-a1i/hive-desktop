@@ -89,14 +89,14 @@ pub fn composer_shadow(focused: bool, cx: &App) -> Vec<BoxShadow> {
         if dark {
             vec![
                 BoxShadow {
-                    color: hsla(224. / 360., 0.85, 0.65, 0.16),
+                    color: hsla(0., 0., 1., 0.05),
                     offset: point(px(0.), px(0.)),
                     blur_radius: px(0.),
-                    spread_radius: px(2.),
+                    spread_radius: px(1.),
                     inset: false,
                 },
                 BoxShadow {
-                    color: hsla(0., 0., 0., 0.42),
+                    color: hsla(0., 0., 0., 0.40),
                     offset: point(px(0.), px(6.)),
                     blur_radius: px(20.),
                     spread_radius: px(-2.),
@@ -106,10 +106,10 @@ pub fn composer_shadow(focused: bool, cx: &App) -> Vec<BoxShadow> {
         } else {
             vec![
                 BoxShadow {
-                    color: hsla(224. / 360., 0.78, 0.50, 0.12),
+                    color: hsla(0., 0., 0., 0.045),
                     offset: point(px(0.), px(0.)),
                     blur_radius: px(0.),
-                    spread_radius: px(2.),
+                    spread_radius: px(1.),
                     inset: false,
                 },
                 BoxShadow {
@@ -167,6 +167,23 @@ pub fn subtle_icon_variant(cx: &App) -> ButtonCustomVariant {
         .foreground(Color::Muted.get(cx).opacity(0.68).into())
         .hover(Color::Inset.get(cx).into())
         .active(Color::Divider.get(cx).into())
+}
+
+/// Shared flat segmented switch variant used inside `Color::Inset` pill tracks.
+pub fn segment_variant(active: bool, cx: &App) -> ButtonCustomVariant {
+    ButtonCustomVariant::new(cx)
+        .color(if active {
+            Color::Card.get(cx).into()
+        } else {
+            rgba(0).into()
+        })
+        .foreground(if active {
+            Color::Text.get(cx).into()
+        } else {
+            Color::Secondary.get(cx).into()
+        })
+        .hover(Color::Card.get(cx).opacity(0.65).into())
+        .active(Color::Card.get(cx).into())
 }
 
 /// T3 Code–style sidebar navigation item variant: avoids heavy selected washes

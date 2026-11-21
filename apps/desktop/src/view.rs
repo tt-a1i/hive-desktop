@@ -723,7 +723,11 @@ impl HiveApp {
         let composer_focused = self.input.read(cx).focus_handle(cx).is_focused(window);
         let is_dark = Theme::global(cx).is_dark();
         let composer_border = if composer_focused {
-            Color::Accent.get(cx).opacity(if is_dark { 0.45 } else { 0.35 }).into()
+            if is_dark {
+                hsla(0., 0., 1., 0.24)
+            } else {
+                hsla(0., 0., 0., 0.22)
+            }
         } else if is_dark {
             hsla(0., 0., 1., 0.08)
         } else {

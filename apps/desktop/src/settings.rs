@@ -537,7 +537,7 @@ fn section_meta(section: SettingsSection) -> (&'static str, &'static str) {
         SettingsSection::General => ("通用", "默认打开工具、侧边栏排序、忙碌发送方式与确认保护"),
         SettingsSection::Appearance => ("外观", "主题、界面字号、对话宽度、等宽排版与语言"),
         SettingsSection::Chat => ("聊天", "发送快捷键、工具活动与思考展示"),
-        SettingsSection::Keybindings => ("快捷键", "搜索、录制与恢复全局快捷键，保存后立即生效"),
+        SettingsSection::Keybindings => ("快捷键", "录制单个 Command 或 Ctrl 组合键，保存后立即生效；文字编辑与退出快捷键保持系统默认"),
         SettingsSection::Diffs => ("Diff 与 PR", "默认差异视图、空白过滤与 Pull Request 创建偏好"),
         SettingsSection::ProjectScripts => ("项目脚本", "保存项目命令，手动运行并查看后台执行记录与输出"),
         SettingsSection::PiAccounts => ("内置 Pi", "连接提供商、订阅登录与 API Key"),
