@@ -159,12 +159,9 @@ impl HiveApp {
                         .child(message),
                 )
             })
-            .when(
-                self.session
-                    .as_ref()
-                    .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp | crate::protocol::Backend::Codex)),
-                |v| v.child(self.render_uncertain_acp(cx)),
-            )
+            .when(self.has_visible_uncertain_acp(), |v| {
+                v.child(self.render_uncertain_acp(cx))
+            })
             .children(receipts.enumerate().map(|(index, receipt)| {
                 render_attachment_receipt(index, receipt, cx)
             }))

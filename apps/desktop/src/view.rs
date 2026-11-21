@@ -265,13 +265,33 @@ impl HiveApp {
                                         },
                                     ))
                                     .separator();
-                                Self::session_menu_items(
+                                let menu = Self::session_menu_items(
                                     menu,
                                     session.clone(),
                                     archive_blocked,
                                     weak.clone(),
                                     cx,
-                                )
+                                );
+                                if matches!(
+                                    session.backend,
+                                    crate::protocol::Backend::Codex | crate::protocol::Backend::Acp
+                                ) {
+                                    let review_app = weak.clone();
+                                    menu.separator().item(
+                                        PopupMenuItem::new(if english() {
+                                            "Review uncertain deliveries"
+                                        } else {
+                                            "核对结果未确认的投递"
+                                        })
+                                        .on_click(move |_, _, cx| {
+                                            let _ = review_app.update(cx, |this, cx| {
+                                                this.open_uncertain_acp_review(cx);
+                                            });
+                                        }),
+                                    )
+                                } else {
+                                    menu
+                                }
                             }),
                     ),
                 )
@@ -1690,7 +1710,7 @@ impl Render for HiveApp {
                                                                 .px_2p5()
                                                                 .py_0p5()
                                                                 .rounded_full()
-                                                                .bg(Color::AccentSoft.get(cx))
+                                                                .bg(Color::Inset.get(cx))
                                                                 .child(
                                                                     div()
                                                                         .w(px(6.))
@@ -1700,12 +1720,13 @@ impl Render for HiveApp {
                                                                 )
                                                                 .child(
                                                                     div()
+                                                                        .flex_shrink_0()
                                                                         .text_xs()
                                                                         .font_weight(
                                                                             FontWeight::MEDIUM,
                                                                         )
                                                                         .text_color(
-                                                                            Color::Accent.get(cx),
+                                                                            Color::Secondary.get(cx),
                                                                         )
                                                                         .child(
                                                                             if running
@@ -1713,7 +1734,7 @@ impl Render for HiveApp {
                                                                                     .status
                                                                                     .is_background_connected()
                                                                             {
-                                                                                tr("正在回复…")
+                                                                                tr("回复中")
                                                                                     .to_string()
                                                                             } else {
                                                                                 self.status.text()

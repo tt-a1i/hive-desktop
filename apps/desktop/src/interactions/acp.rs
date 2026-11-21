@@ -1,6 +1,12 @@
 use super::*;
 use crate::{palette::Color, protocol::{Backend, ProfileRef}};
-use gpui_kit::{component::{button::Button, *}, prelude::FluentBuilder};
+use gpui_kit::{
+    component::{
+        button::{Button, ButtonVariants},
+        *,
+    },
+    prelude::FluentBuilder,
+};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -73,6 +79,33 @@ impl HiveApp {
             });
         }).detach();cx.notify();
     }
+    pub(crate) fn has_visible_uncertain_acp(&self) -> bool {
+        let Some((session, profile)) = self.acp_scope() else {
+            return false;
+        };
+        let state = &self.interactions.uncertain;
+        let current = state.connection == self.connection_generation
+            && state.open == self.open_request
+            && state.session.as_ref() == Some(&session)
+            && state.profile.as_ref() == Some(&profile);
+        current
+            && (state.loading
+                || state.error.is_some()
+                || state.blocked.is_some()
+                || !state.deliveries.is_empty()
+                || !state.resolved.is_empty()
+                || state.notice.is_some())
+    }
+
+    pub(crate) fn open_uncertain_acp_review(&mut self, cx: &mut Context<Self>) {
+        self.load_uncertain_acp(cx);
+    }
+
+    fn close_uncertain_acp(&mut self, cx: &mut Context<Self>) {
+        self.interactions.uncertain = Uncertain::default();
+        cx.notify();
+    }
+
     pub(super) fn render_uncertain_acp(&self,cx:&mut Context<Self>) -> impl IntoElement + use<> {
         let scope=self.acp_scope();let state=&self.interactions.uncertain;
         let codex=self.session.as_ref().is_some_and(|session|matches!(session.backend,Backend::Codex));
@@ -91,17 +124,73 @@ impl HiveApp {
             (false,false)=>"当前预览没有可放弃的等待投递；原生执行结果仍可能未知。",
         };
         let current=state.connection==self.connection_generation && state.open==self.open_request && scope.as_ref().is_some_and(|(s,p)|state.session.as_ref()==Some(s) && state.profile.as_ref()==Some(p));
-        v_flex().gap_2().p_3().border_1().border_color(Color::Divider.get(cx))
-            .child(Button::new("acp-uncertain-refresh").outline().small().label(if english(){"Review uncertain deliveries"}else if codex{"核对结果未确认的投递"}else{"查看未确认的待投递"}).disabled(!self.connected || (state.loading && current) || scope.is_none()).on_click(cx.listener(|this,_,_,cx|this.load_uncertain_acp(cx))))
+        let heading = if english() {
+            "Uncertain deliveries"
+        } else if codex {
+            "核对结果未确认的投递"
+        } else {
+            "未确认的待投递"
+        };
+        v_flex()
+            .gap_2()
+            .p_3()
+            .rounded_xl()
+            .bg(Color::Card.get(cx))
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(Color::Text.get(cx))
+                            .child(heading),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                Button::new("acp-uncertain-refresh")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(24.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .label(if english() { "Refresh" } else { "重新核对" })
+                                    .disabled(!self.connected || (state.loading && current) || scope.is_none())
+                                    .on_click(cx.listener(|this, _, _, cx| this.load_uncertain_acp(cx))),
+                            )
+                            .child(
+                                Button::new("acp-uncertain-close")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(24.))
+                                    .w(px(24.))
+                                    .rounded_md()
+                                    .icon(gpui_kit::assets::IconName::X)
+                                    .tooltip(tr("关闭"))
+                                    .accessibility_label(tr("关闭"))
+                                    .on_click(cx.listener(|this, _, _, cx| this.close_uncertain_acp(cx))),
+                            ),
+                    ),
+            )
             .when(current,|view|view
-                .when_some(state.native.clone(),|v,native|v.child(div().text_xs().child(format!("{}: {} · {}",if english(){"Original session"}else{"原生会话"},native,state.profile.as_ref().map(|p|format!("{}@{}",p.id,p.revision)).unwrap_or_default()))))
-                .when_some(decided_notice,|v,notice|v.child(div().id("acp-discard-status").role(Role::Status).aria_label(notice).child(notice)))
-                .when(!state.loading && state.error.is_none() && state.blocked.is_none() && state.deliveries.is_empty() && state.resolved.is_empty() && state.notice.is_none(),|v|v.child(div().id("acp-uncertain-empty").role(Role::Status).aria_label(empty_notice).child(empty_notice)))
+                .when_some(state.native.clone(),|v,native|v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(format!("{}: {} · {}",if english(){"Original session"}else{"原生会话"},native,state.profile.as_ref().map(|p|format!("{}@{}",p.id,p.revision)).unwrap_or_default()))))
+                .when_some(decided_notice,|v,notice|v.child(div().id("acp-discard-status").role(Role::Status).aria_label(notice).text_xs().text_color(Color::Secondary.get(cx)).child(notice)))
+                .when(!state.loading && state.error.is_none() && state.blocked.is_none() && state.deliveries.is_empty() && state.resolved.is_empty() && state.notice.is_none(),|v|v.child(div().id("acp-uncertain-empty").role(Role::Status).aria_label(empty_notice).text_xs().text_color(Color::Muted.get(cx)).child(empty_notice)))
                 .when_some(state.blocked.clone(),|v,text|{
                     let text=if codex&&!english()&&text=="Stop and finish the current turn before reviewing uncertain input"{"请先停止当前回复，等它结束后再核对投递。".into()}else{text};
-                    v.child(div().id("acp-uncertain-blocked").role(Role::Status).aria_label(text.clone()).child(text))
+                    v.child(div().id("acp-uncertain-blocked").role(Role::Status).aria_label(text.clone()).text_xs().text_color(Color::Secondary.get(cx)).child(text))
                 })
-                .when_some(state.error.clone(),|v,text|v.child(div().id("acp-uncertain-error").role(Role::Status).aria_label(text.clone()).child(text)))
+                .when_some(state.error.clone(),|v,text|v.child(div().id("acp-uncertain-error").role(Role::Status).aria_label(text.clone()).text_xs().text_color(Color::Error.get(cx)).child(text)))
                 .children(state.deliveries.iter().enumerate().map(|(index,delivery)| {
                     let id=delivery.delivery_id.clone();let text=delivery.text.clone();let confirm=state.confirm.as_ref()==Some(&id);
                     let notice=if codex {if english(){"The agent may already have received this input. Review native history before choosing how to proceed."}else{"Agent 可能已收到此消息。请先核对原生会话历史，再选择如何处理。"}}else{delivery.notice.as_str()};

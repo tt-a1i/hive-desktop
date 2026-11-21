@@ -126,8 +126,10 @@ impl HiveApp {
                         })),
                 )
         });
+        let message_group = SharedString::from(format!("message-row-{i}"));
         v_flex()
             .id(("message", i))
+            .group(message_group.clone())
             .when_some(message.markdown_focus.as_ref(), |view, focus| {
                 view.track_focus(focus)
             })
@@ -482,7 +484,8 @@ impl HiveApp {
                 |view| {
                     view.child(
                         div()
-                            .opacity(0.75)
+                            .opacity(0.)
+                            .group_hover(message_group.clone(), |s| s.opacity(0.95))
                             .child(self.message_actions(i, message, cx)),
                     )
                 },
