@@ -332,9 +332,11 @@ impl HiveApp {
                             .when(is_plain_user, |bubble| {
                                 bubble
                                     .px_3p5()
-                                    .py_2p5()
+                                    .py_2()
                                     .rounded_2xl()
                                     .bg(Color::Bubble.get(cx))
+                                    .border_1()
+                                    .border_color(Color::Divider.get(cx).opacity(0.65))
                                     .text_color(Color::Text.get(cx))
                             })
                             .child(body),

@@ -409,7 +409,7 @@ impl HiveApp {
                         )
                         .child(
                             div()
-                                .text_xs()
+                                .text_size(px(12.))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(if expanded {
                                     Color::Secondary.get(cx)
@@ -420,8 +420,8 @@ impl HiveApp {
                         )
                         .child(
                             div()
-                                .text_xs()
-                                .text_color(Color::Muted.get(cx).opacity(0.85))
+                                .text_size(px(12.))
+                                .text_color(Color::Muted.get(cx).opacity(0.8))
                                 .child(if english() {
                                     format!("· {count} completed")
                                 } else {
@@ -434,8 +434,8 @@ impl HiveApp {
                             } else {
                                 Glyph::ChevronRight
                             })
-                            .size(px(11.5))
-                            .text_color(Color::Muted.get(cx).opacity(0.8)),
+                            .size(px(11.))
+                            .text_color(Color::Muted.get(cx).opacity(0.65)),
                         )
                         .child(div().flex_1()),
                 )

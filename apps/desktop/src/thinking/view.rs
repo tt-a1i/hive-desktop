@@ -106,13 +106,13 @@ impl HiveApp {
                                     Glyph::Sparkles
                                 })
                                 .flex_shrink_0()
-                                .size(px(12.5))
+                                .size(px(12.))
                                 .text_color(accent_color),
                             )
                             .child(
                                 div()
                                     .flex_shrink_0()
-                                    .text_xs()
+                                    .text_size(px(12.))
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(if block.running {
                                         Color::Text.get(cx)
@@ -130,8 +130,8 @@ impl HiveApp {
                                         .text_left()
                                         .overflow_hidden()
                                         .truncate()
-                                        .text_xs()
-                                        .text_color(Color::Muted.get(cx).opacity(0.8))
+                                        .text_size(px(12.))
+                                        .text_color(Color::Muted.get(cx).opacity(0.75))
                                         .child(summary),
                                 )
                             })
@@ -143,8 +143,8 @@ impl HiveApp {
                                         Glyph::ChevronRight
                                     })
                                     .flex_shrink_0()
-                                    .size(px(11.5))
-                                    .text_color(Color::Muted.get(cx).opacity(0.8)),
+                                    .size(px(11.))
+                                    .text_color(Color::Muted.get(cx).opacity(0.65)),
                                 )
                             })
                             .child(div().flex_1()),
@@ -171,7 +171,7 @@ impl HiveApp {
                 view.child(
                     v_flex()
                         .min_w_0()
-                        .ml(px(12.))
+                        .ml(px(7.))
                         .pl_3()
                         .pr_1()
                         .py_1()
@@ -184,7 +184,7 @@ impl HiveApp {
                         } else {
                             Color::Divider.get(cx)
                         })
-                        .text_size(px(13.))
+                        .text_size(px(12.5))
                         .line_height(rems(1.55))
                         .text_color(Color::Secondary.get(cx))
                         .child(crate::text_reading::selectable_text(

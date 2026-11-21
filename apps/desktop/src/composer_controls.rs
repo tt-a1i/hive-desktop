@@ -16,8 +16,8 @@ use gpui_kit::{
 pub(crate) fn backend_glyph(backend: Backend) -> Glyph {
     match backend {
         Backend::Pi => Glyph::Sparkles,
-        Backend::Codex => Glyph::Cpu,
-        Backend::Claude => Glyph::Bot,
+        Backend::Codex => Glyph::Aperture,
+        Backend::Claude => Glyph::Asterisk,
         Backend::PiRpc => Glyph::SquareTerminal,
         Backend::Acp => Glyph::SquareTerminal,
     }

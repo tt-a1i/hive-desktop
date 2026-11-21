@@ -11,8 +11,10 @@ use gpui_kit::{
 pub(crate) fn reasoning_level_label(level: &str) -> &str {
     match level {
         "native" => tr("原生配置"),
+        "default" => tr("默认"),
         "max" => tr("最高"),
-        "off" => tr("关闭"),
+        "ultra" => tr("极致"),
+        "off" | "none" => tr("关闭"),
         "minimal" => tr("最低"),
         "low" => tr("低"),
         "medium" => tr("中"),
@@ -131,10 +133,14 @@ impl HiveApp {
                 },
             )
             .when_some(self.reasoning_picker.state.as_ref(), |view, state| {
-                view.when_some(state.description.as_ref(), |view, text| {
+                let is_recovery_notice = state
+                    .description
+                    .as_deref()
+                    .is_some_and(|text| text.starts_with("原设置未能恢复："));
+                let description_text = state.description.as_ref().map(|text| {
                     // Translate only metadata owned by Hive's native adapters.
                     // Preserve unknown/provider diagnostics verbatim.
-                    let text = if let Some(inner) = text
+                    if let Some(inner) = text
                         .strip_prefix("原设置未能恢复：")
                         .and_then(|rest| rest.strip_suffix(" 请选择当前可用档位。"))
                     {
@@ -152,15 +158,20 @@ impl HiveApp {
                             "读取原生实际强度；环境、组织限制或模型能力可能调整请求值。" => tr("读取原生实际强度；环境、组织限制或模型能力可能调整请求值。").to_owned(),
                             _ => text.clone(),
                         }
-                    };
-                    view.child(
-                        crate::text_reading::selectable_text("reasoning-description", text)
-                            .px_1()
-                            .pb_0p5()
-                            .text_size(px(11.5))
-                            .text_color(Color::Muted.get(cx)),
-                    )
-                })
+                    }
+                });
+                view.when_some(
+                    is_recovery_notice.then_some(()).and(description_text.clone()),
+                    |view, text| {
+                        view.child(
+                            crate::text_reading::selectable_text("reasoning-description", text)
+                                .px_1()
+                                .pb_0p5()
+                                .text_size(px(11.5))
+                                .text_color(Color::Muted.get(cx)),
+                        )
+                    },
+                )
                 .when(state.levels.len() < 2, |view| {
                     view.child(
                         crate::text_reading::selectable_text("reasoning-unavailable", tr("当前模型没有可调推理选项。"))
@@ -182,12 +193,12 @@ impl HiveApp {
                                 ("reasoning-option-reveal", i),
                                 &self.reasoning_picker.scroll,
                                 Button::new(("reasoning-option", i))
-                                    .ghost()
+                                    .custom(crate::palette::sidebar_item_variant(active, cx))
                                     .compact()
                                     .w_full()
-                                    .h(px(30.))
+                                    .h(px(28.))
                                     .px_2()
-                                    .rounded_lg()
+                                    .rounded_md()
                                     .justify_start()
                                     .selected(active)
                                     .disabled(self.reasoning_picker.loading || disabled)
@@ -215,7 +226,7 @@ impl HiveApp {
                                             .when(active, |row| {
                                                 row.child(
                                                     Icon::new(Glyph::Check)
-                                                        .size(px(13.5))
+                                                        .size(px(13.))
                                                         .text_color(Color::Accent.get(cx))
                                                         .flex_shrink_0(),
                                                 )
@@ -227,7 +238,38 @@ impl HiveApp {
                             )
                         })),
                 )
+                .when_some(
+                    (!is_recovery_notice).then_some(()).and(description_text),
+                    |view, text| {
+                        view.child(
+                            crate::text_reading::selectable_text("reasoning-description", text)
+                                .px_1()
+                                .pt_1()
+                                .text_size(px(11.))
+                                .text_color(Color::Muted.get(cx)),
+                        )
+                    },
+                )
             });
         content.into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reasoning_level_label;
+
+    #[test]
+    fn reasoning_level_labels_are_localized() {
+        for level in [
+            "native", "default", "max", "ultra", "off", "none", "minimal", "low", "medium",
+            "high", "xhigh",
+        ] {
+            assert_ne!(
+                reasoning_level_label(level),
+                level,
+                "expected localized label for effort `{level}`"
+            );
+        }
     }
 }

@@ -395,7 +395,7 @@ impl HiveApp {
                     Button::new(SharedString::from(format!("{scope}-{id}")))
                         .custom(palette::sidebar_item_variant(is_selected, cx))
                         .compact()
-                        .h(px(30.))
+                        .h(px(28.))
                         .px_2()
                         .rounded_md()
                         .accessibility_label(format!(
@@ -425,7 +425,7 @@ impl HiveApp {
                                 .min_w_0()
                                 .items_center()
                                 .gap_2()
-                                .child(palette::project_badge(&workspace_name, 18., cx))
+                                .child(palette::project_badge(&workspace_name, 17., cx))
                                 .when_some(dot_color, |row, color| {
                                     row.child(
                                         div().size(px(5.)).flex_shrink_0().rounded_full().bg(color),

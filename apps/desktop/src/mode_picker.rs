@@ -363,12 +363,6 @@ impl HiveApp {
                                 .text_size(px(12.))
                                 .text_color(Color::Muted.get(cx))
                                 .child(label),
-                        )
-                        .child(
-                            Icon::new(Glyph::ChevronDown)
-                                .size(px(10.5))
-                                .text_color(Color::Muted.get(cx))
-                                .flex_shrink_0(),
                         ),
                 )
                 .dropdown_menu(move |mut menu, _, _| {

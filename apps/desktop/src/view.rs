@@ -222,12 +222,6 @@ impl HiveApp {
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .text_color(Color::Text.get(cx))
                                             .child(title),
-                                    )
-                                    .child(
-                                        Icon::new(Glyph::ChevronDown)
-                                            .size(px(12.))
-                                            .flex_shrink_0()
-                                            .text_color(Color::Muted.get(cx)),
                                     ),
                             )
                             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {

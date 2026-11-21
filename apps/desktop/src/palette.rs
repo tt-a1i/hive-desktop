@@ -31,11 +31,11 @@ impl Color {
     pub fn get(self, cx: &App) -> Rgba {
         let dark = Theme::global(cx).is_dark();
         match self {
-            Self::Surface => rgb(if dark { 0x18181b } else { 0xfcfcfc }),
-            Self::Sidebar => rgb(if dark { 0x131316 } else { 0xfafafa }),
-            Self::Card => rgb(if dark { 0x1f1f23 } else { 0xffffff }),
-            Self::Bubble => rgb(if dark { 0x27272c } else { 0xebebed }),
-            Self::Divider => rgba(if dark { 0xffffff14 } else { 0x00000012 }),
+            Self::Surface => rgb(if dark { 0x161619 } else { 0xfcfcfc }),
+            Self::Sidebar => rgb(if dark { 0x111114 } else { 0xfafafa }),
+            Self::Card => rgb(if dark { 0x1d1d21 } else { 0xffffff }),
+            Self::Bubble => rgb(if dark { 0x26262c } else { 0xebebed }),
+            Self::Divider => rgba(if dark { 0xffffff12 } else { 0x00000010 }),
             Self::Text => rgb(if dark { 0xf4f4f5 } else { 0x18181b }),
             Self::Secondary => rgb(if dark { 0xa1a1aa } else { 0x52525b }),
             Self::Muted => rgb(if dark { 0x8e8e98 } else { 0x71717b }),
@@ -334,12 +334,10 @@ fn project_badge_tone_index(name: &str) -> usize {
 /// Light uses Tailwind 600 ink over a 14% tint; Dark uses Tailwind 400 ink over a 14% tint.
 pub fn project_badge_colors(name: &str, cx: &App) -> (Rgba, Rgba) {
     let (light_fg, dark_fg) = BADGE_TONES[project_badge_tone_index(name)];
-    let fg = rgb(if Theme::global(cx).is_dark() {
-        dark_fg
-    } else {
-        light_fg
-    });
-    let bg = fg.opacity(0.14);
+    let dark = Theme::global(cx).is_dark();
+    let base = rgb(if dark { dark_fg } else { light_fg });
+    let fg = if dark { base.opacity(0.88) } else { base };
+    let bg = base.opacity(if dark { 0.12 } else { 0.13 });
     (bg, fg)
 }
 

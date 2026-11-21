@@ -182,7 +182,7 @@ impl HiveApp {
                             } else if execution.is_some() {
                                 format!("{} · {}", tr("独立工作树"), ws.name)
                             } else {
-                                format!("{} · {}", tr("当前检出"), ws.name)
+                                tr("当前检出").to_owned()
                             };
                             let folder_tooltip =
                                 format!("{}\n{}", ws.path, tr("点击切换工作区或新建工作树"));
@@ -225,12 +225,6 @@ impl HiveApp {
                                                 .text_size(px(12.))
                                                 .text_color(Color::Muted.get(cx))
                                                 .child(folder_label),
-                                        )
-                                        .child(
-                                            Icon::new(Glyph::ChevronDown)
-                                                .size(px(10.5))
-                                                .text_color(Color::Muted.get(cx))
-                                                .flex_shrink_0(),
                                         ),
                                 )
                                 .dropdown_menu(move |mut menu, _, _| {
@@ -466,7 +460,7 @@ impl HiveApp {
             .cloned();
         let compact = window.viewport_size().width < px(1000.);
         let tall = window.viewport_size().height > px(560.);
-        let hero_px = if compact { 25. } else { 28. };
+        let hero_px = if compact { 24. } else { 27. };
         let aria_title = if let Some(ws) = &active_project {
             if english() {
                 format!("What should we build in {}?", ws.name)
@@ -498,8 +492,8 @@ impl HiveApp {
                             .w_full()
                             .items_center()
                             .text_center()
-                            .mb_6()
-                            .gap_1p5()
+                            .mb_5()
+                            .gap_1()
                             .child(
                                 div()
                                     .id("session-title")
@@ -519,9 +513,9 @@ impl HiveApp {
                                         let project_switcher = Button::new("hero-project-switcher")
                                             .custom(crate::palette::quiet_icon_variant(cx))
                                             .compact()
-                                            .px_2()
+                                            .px_1()
                                             .py_0p5()
-                                            .rounded_lg()
+                                            .rounded_md()
                                             .disabled(!self.connected || self.closing)
                                             .accessibility_label(ws.name.clone())
                                             .tooltip(format!(
@@ -530,22 +524,12 @@ impl HiveApp {
                                                 tr("点击切换工作区")
                                             ))
                                             .child(
-                                                h_flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .child(
-                                                        div()
-                                                            .text_size(px(hero_px))
-                                                            .line_height(px(34.))
-                                                            .font_weight(FontWeight::SEMIBOLD)
-                                                            .text_color(Color::Text.get(cx))
-                                                            .child(ws.name.clone()),
-                                                    )
-                                                    .child(
-                                                        Icon::new(Glyph::ChevronDown)
-                                                            .size(px(14.))
-                                                            .text_color(Color::Muted.get(cx)),
-                                                    ),
+                                                div()
+                                                    .text_size(px(hero_px))
+                                                    .line_height(px(34.))
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_color(Color::Text.get(cx))
+                                                    .child(ws.name.clone()),
                                             )
                                             .dropdown_menu(move |mut menu, _, _| {
                                                 for (id, name) in &workspaces {
@@ -663,8 +647,8 @@ impl HiveApp {
                                     .accessibility_label(tr("切换项目文件夹"))
                                     .child(
                                         div()
-                                            .text_size(px(13.))
-                                            .text_color(Color::Muted.get(cx))
+                                            .text_size(px(12.))
+                                            .text_color(Color::Muted.get(cx).opacity(0.8))
                                             .child(tr("或打开其他项目文件夹")),
                                     )
                                     .on_click(cx.listener(|this, _, window, cx| {
@@ -683,8 +667,8 @@ impl HiveApp {
                                     .accessibility_label(tr("选择项目文件夹，或在下方直接输入"))
                                     .child(
                                         div()
-                                            .text_size(px(13.))
-                                            .text_color(Color::Muted.get(cx))
+                                            .text_size(px(12.))
+                                            .text_color(Color::Muted.get(cx).opacity(0.8))
                                             .child(tr("选择项目文件夹，或在下方直接输入")),
                                     )
                                     .on_click(cx.listener(|this, _, window, cx| {
@@ -805,27 +789,26 @@ impl HiveApp {
                 .flex_1()
                 .min_w(px(220.))
                 .h_auto()
-                .p_3()
+                .px_3()
+                .py_2p5()
                 .rounded_xl()
-                .bg(Color::Card.get(cx))
+                .bg(Color::Inset.get(cx).opacity(0.45))
                 .border_1()
-                .border_color(Color::Divider.get(cx))
+                .border_color(Color::Divider.get(cx).opacity(0.55))
                 .accessibility_label(tr(title))
                 .child(
                     h_flex()
                         .w_full()
                         .items_start()
-                        .gap_2p5()
+                        .gap_2()
                         .child(
                             div()
                                 .mt(px(2.))
-                                .p_1p5()
-                                .rounded_md()
-                                .bg(Color::Inset.get(cx))
+                                .flex_shrink_0()
                                 .child(
                                     Icon::new(icon)
-                                        .size(px(13.))
-                                        .text_color(Color::Secondary.get(cx)),
+                                        .size(px(12.5))
+                                        .text_color(Color::Muted.get(cx)),
                                 ),
                         )
                         .child(
@@ -838,7 +821,7 @@ impl HiveApp {
                                         .text_left()
                                         .text_xs()
                                         .font_weight(FontWeight::MEDIUM)
-                                        .text_color(Color::Text.get(cx))
+                                        .text_color(Color::Secondary.get(cx))
                                         .truncate()
                                         .child(tr(title)),
                                 )
@@ -846,7 +829,7 @@ impl HiveApp {
                                     div()
                                         .text_left()
                                         .text_size(px(11.))
-                                        .text_color(Color::Muted.get(cx))
+                                        .text_color(Color::Muted.get(cx).opacity(0.8))
                                         .truncate()
                                         .child(tr(desc)),
                                 ),
@@ -901,18 +884,18 @@ impl HiveApp {
                         .px_1()
                         .py(px(0.5))
                         .rounded_sm()
-                        .bg(Color::Inset.get(cx))
+                        .bg(Color::Inset.get(cx).opacity(0.5))
                         .border_1()
-                        .border_color(Color::Divider.get(cx))
+                        .border_color(Color::Divider.get(cx).opacity(0.5))
                         .font_family(Theme::global(cx).mono_font_family.clone())
                         .text_size(px(10.))
-                        .text_color(Color::Secondary.get(cx))
+                        .text_color(Color::Muted.get(cx))
                         .child(key),
                 )
                 .child(
                     div()
                         .text_size(px(11.))
-                        .text_color(Color::Muted.get(cx))
+                        .text_color(Color::Muted.get(cx).opacity(0.75))
                         .child(tr(text)),
                 )
         };

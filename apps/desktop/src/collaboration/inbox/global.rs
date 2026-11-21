@@ -478,6 +478,51 @@ impl HiveApp {
             .on_click(cx.listener(|this, _, window, cx| this.open_global_inbox(window, cx)))
     }
 
+    pub(crate) fn global_inbox_icon_button(&self, id: &'static str, cx: &Context<Self>) -> Button {
+        let attention = self.has_new_global_inbox_items(cx);
+        let title = tr("跨项目收件箱");
+        let description = if attention {
+            format!("{title} · {}", tr("有新事项需要关注"))
+        } else {
+            title.to_owned()
+        };
+        Button::new(id)
+            .custom(crate::palette::quiet_icon_variant(cx))
+            .compact()
+            .xsmall()
+            .h(px(24.))
+            .w(px(24.))
+            .rounded_md()
+            .tooltip(description.clone())
+            .accessibility_label(description)
+            .disabled(self.closing)
+            .child(
+                div()
+                    .relative()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Icon::new(Glyph::Inbox)
+                            .size(px(13.5))
+                            .text_color(Color::Muted.get(cx)),
+                    )
+                    .when(attention, |el| {
+                        el.child(
+                            div()
+                                .absolute()
+                                .top(px(3.))
+                                .right(px(3.))
+                                .size(px(5.5))
+                                .rounded_full()
+                                .bg(Color::Success.get(cx)),
+                        )
+                    }),
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.open_global_inbox(window, cx)))
+    }
+
     pub(crate) fn open_global_inbox(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.closing || window.has_active_dialog(cx) {
             return;
