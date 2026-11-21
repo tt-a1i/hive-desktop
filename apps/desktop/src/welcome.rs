@@ -427,9 +427,24 @@ impl HiveApp {
                     .when_some(self.render_composer_mode_pills(running, cx), |row, pills| {
                         row.child(pills)
                     })
-                    .when(self.session.is_some(), |row| {
-                        row.when(!self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) && !self.current_history_access().is_some_and(|a| a.handoff_unconsumed()), |row| row.child(self.usage_button(window, running, cx)))
-                    })
+                    .when(
+                        self.session.is_some()
+                            && (!self.messages.is_empty()
+                                || self.usage.visible
+                                || self.usage.snapshot.is_some()),
+                        |row| {
+                            row.when(
+                                !self
+                                    .session
+                                    .as_ref()
+                                    .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp))
+                                    && !self
+                                        .current_history_access()
+                                        .is_some_and(|a| a.handoff_unconsumed()),
+                                |row| row.child(self.usage_button(window, running, cx)),
+                            )
+                        },
+                    )
                     .when(self.session.is_none() && active_project.is_some(), |row| {
                         row.child(
                             div()
@@ -711,25 +726,25 @@ impl HiveApp {
         let cards: [(&'static str, &'static str, &'static str, Glyph); 4] = if has_project {
             [
                 (
-                    "梳理项目架构",
+                    "梳理架构",
                     "快速了解核心模块、入口与数据流",
                     "请先浏览当前项目结构，梳理核心模块、入口文件与主要数据流，并用简洁列表总结。",
                     Glyph::Layers,
                 ),
                 (
-                    "审查当前 Git 改动",
+                    "审查改动",
                     "排查未提交代码中的隐患与边界条件",
                     "请检查当前工作区未提交的 Git 改动，重点排查潜在 Bug、边界条件和可维护性改进点。",
                     Glyph::GitBranch,
                 ),
                 (
-                    "定位并修复报错",
+                    "修复报错",
                     "分析构建或测试失败并给出最小修复",
                     "请帮我排查当前项目的构建或测试失败，先定位根因，再给出最小且安全的修复方案。",
                     Glyph::SquareTerminal,
                 ),
                 (
-                    "多 Agent 协作拆解",
+                    "协作拆解",
                     "将复杂需求拆分为并行任务派发",
                     "请把接下来的开发需求拆分为可并行的子任务清单，明确各成员职责边界与验收标准。",
                     Glyph::Users,
@@ -738,25 +753,25 @@ impl HiveApp {
         } else {
             [
                 (
-                    "技术方案设计与对比",
+                    "方案设计",
                     "评估架构权衡与落地步骤",
                     "请帮我设计一个清晰的技术方案，对比可选实现路径的优缺点并给出分阶段落地计划：",
                     Glyph::Sparkles,
                 ),
                 (
-                    "代码重构与性能优化",
+                    "代码重构",
                     "分析瓶颈并输出更简洁的实现",
                     "请帮我审阅并重构下面这段代码，重点提升可读性、健壮性与性能：",
                     Glyph::FileText,
                 ),
                 (
-                    "排查报错与堆栈",
+                    "排查报错",
                     "快速定位异常原因与修复步骤",
                     "我遇到了下面这个报错，请帮我分析可能根因并提供逐步排查与修复方案：",
                     Glyph::SquareTerminal,
                 ),
                 (
-                    "撰写文档与 PR 说明",
+                    "撰写文档",
                     "生成结构化说明与变更清单",
                     "请根据以下改动要点，帮我整理一份结构清晰的文档或 PR 说明：",
                     Glyph::SquarePen,
@@ -764,7 +779,7 @@ impl HiveApp {
             ]
         };
 
-        let render_card = |idx: usize,
+        let render_chip = |idx: usize,
                            title: &'static str,
                            desc: &'static str,
                            prompt: &'static str,
@@ -784,55 +799,30 @@ impl HiveApp {
                 prompt
             };
             Button::new(("welcome-starter-card", idx))
-                .custom(crate::palette::subtle_icon_variant(cx))
+                .custom(crate::palette::quiet_icon_variant(cx))
                 .compact()
-                .flex_1()
-                .min_w(px(220.))
-                .h_auto()
-                .px_3()
-                .py_2p5()
-                .rounded_xl()
-                .bg(Color::Inset.get(cx).opacity(0.45))
-                .border_1()
-                .border_color(Color::Divider.get(cx).opacity(0.55))
+                .xsmall()
+                .h(px(28.))
+                .px_2p5()
+                .rounded_full()
+                .bg(Color::Inset.get(cx).opacity(0.42))
+                .tooltip(tr(desc))
                 .accessibility_label(tr(title))
                 .child(
                     h_flex()
-                        .w_full()
-                        .items_start()
-                        .gap_2()
+                        .items_center()
+                        .gap_1p5()
                         .child(
-                            div()
-                                .mt(px(2.))
-                                .flex_shrink_0()
-                                .child(
-                                    Icon::new(icon)
-                                        .size(px(12.5))
-                                        .text_color(Color::Muted.get(cx)),
-                                ),
+                            Icon::new(icon)
+                                .size(px(12.))
+                                .text_color(Color::Muted.get(cx)),
                         )
                         .child(
-                            v_flex()
-                                .flex_1()
-                                .min_w_0()
-                                .gap_0p5()
-                                .child(
-                                    div()
-                                        .text_left()
-                                        .text_xs()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(Color::Secondary.get(cx))
-                                        .truncate()
-                                        .child(tr(title)),
-                                )
-                                .child(
-                                    div()
-                                        .text_left()
-                                        .text_size(px(11.))
-                                        .text_color(Color::Muted.get(cx).opacity(0.8))
-                                        .truncate()
-                                        .child(tr(desc)),
-                                ),
+                            div()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::NORMAL)
+                                .text_color(Color::Secondary.get(cx))
+                                .child(tr(title)),
                         ),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -846,26 +836,16 @@ impl HiveApp {
                 }))
         };
 
-        v_flex()
+        h_flex()
             .w_full()
-            .pt_4()
+            .flex_wrap()
+            .items_center()
+            .justify_center()
+            .pt_5()
             .gap_2()
-            .child(
-                h_flex()
-                    .w_full()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(render_card(0, cards[0].0, cards[0].1, cards[0].2, cards[0].3))
-                    .child(render_card(1, cards[1].0, cards[1].1, cards[1].2, cards[1].3)),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(render_card(2, cards[2].0, cards[2].1, cards[2].2, cards[2].3))
-                    .child(render_card(3, cards[3].0, cards[3].1, cards[3].2, cards[3].3)),
-            )
+            .children(cards.into_iter().enumerate().map(|(idx, (t, d, p, ic))| {
+                render_chip(idx, t, d, p, ic)
+            }))
             .into_any_element()
     }
 
@@ -875,41 +855,16 @@ impl HiveApp {
         let palette_key =
             crate::keybindings::chord_label(crate::keybindings::Target::CommandPalette, cx)
                 .unwrap_or_else(|| "⌘⇧P".into());
-        let pill = |key: String, text: &'static str| {
-            h_flex()
-                .items_center()
-                .gap_1()
-                .child(
-                    div()
-                        .px_1()
-                        .py(px(0.5))
-                        .rounded_sm()
-                        .bg(Color::Inset.get(cx).opacity(0.5))
-                        .border_1()
-                        .border_color(Color::Divider.get(cx).opacity(0.5))
-                        .font_family(Theme::global(cx).mono_font_family.clone())
-                        .text_size(px(10.))
-                        .text_color(Color::Muted.get(cx))
-                        .child(key),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(Color::Muted.get(cx).opacity(0.75))
-                        .child(tr(text)),
-                )
+        let hint = if english() {
+            format!("{search_key} Search  ·  {palette_key} Commands  ·  Shortcuts")
+        } else {
+            format!("{search_key} 搜索  ·  {palette_key} 命令面板  ·  快捷键速查")
         };
         h_flex()
             .w_full()
-            .flex_wrap()
             .items_center()
             .justify_center()
-            .gap_3()
-            .pt_3()
-            .child(pill("@".into(), "引用文件"))
-            .child(pill("/".into(), "斜杠命令"))
-            .child(pill(search_key, "搜索会话"))
-            .child(pill(palette_key, "命令面板"))
+            .pt_2p5()
             .child(
                 Button::new("welcome-open-shortcuts-guide")
                     .custom(crate::palette::quiet_icon_variant(cx))
@@ -918,8 +873,13 @@ impl HiveApp {
                     .h(px(22.))
                     .px_2()
                     .rounded_md()
-                    .label(tr("快捷键速查 →"))
                     .accessibility_label(tr("快捷键与效率速查"))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(Color::Muted.get(cx).opacity(0.6))
+                            .child(hint),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.open_shortcuts_guide(window, cx);
                     })),

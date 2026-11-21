@@ -287,8 +287,10 @@ impl HiveApp {
                         ),
                 )
             })
-            .when(!in_sidebar, |view| view.child(self.global_search_button(cx)))
-            .child(self.command_palette_button(cx))
+            .when(!in_sidebar, |view| {
+                view.child(self.global_search_button(cx))
+                    .child(self.command_palette_button(cx))
+            })
             .when(!self.connected && self.runtime.is_some(), |view| {
                 view.child(
                     h_flex()
@@ -918,8 +920,7 @@ impl HiveApp {
                             .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                                 this.start_new_conversation(event.modifiers().shift, window, cx);
                             })),
-                    )
-                    .child(self.new_chat_menu("new-session-menu", tr("新建会话"), None, cx)),
+                    ),
             )
             .when(searching, |sidebar| sidebar.child(search.clone()))
             .when(!searching, |sidebar| {
@@ -1236,17 +1237,17 @@ impl HiveApp {
                     .h(px(36.))
                     .items_center()
                     .border_t_1()
-                    .border_color(Color::Divider.get(cx))
-                    .h(px(34.))
-                    .px_1p5()
-                    .gap_0p5()
+                    .border_color(Color::Divider.get(cx).opacity(0.5))
+                    .h(px(36.))
+                    .px_2()
+                    .gap_1()
                     .child(
                         Button::new("open-settings")
                             .custom(palette::quiet_icon_variant(cx))
                             .compact()
                             .xsmall()
-                            .h(px(24.))
-                            .w(px(24.))
+                            .h(px(26.))
+                            .w(px(26.))
                             .rounded_md()
                             .icon(Glyph::Settings)
                             .tooltip(crate::keybindings::hint(
@@ -1264,56 +1265,7 @@ impl HiveApp {
                                 cx.notify();
                             })),
                     )
-                    .child(
-                        Button::new("sidebar-quick-terminal")
-                            .custom(palette::quiet_icon_variant(cx))
-                            .compact()
-                            .xsmall()
-                            .h(px(24.))
-                            .w(px(24.))
-                            .rounded_md()
-                            .icon(Glyph::SquareTerminal)
-                            .tooltip(crate::keybindings::hint(
-                                crate::keybindings::Target::ToggleTerminal,
-                                "工作区终端",
-                                cx,
-                            ))
-                            .accessibility_label(tr("工作区终端"))
-                            .selected(self.terminal.visible)
-                            .disabled(!terminal_enabled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                if this.terminal.visible {
-                                    this.hide_terminal(cx);
-                                } else {
-                                    this.show_terminal(window, cx);
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("sidebar-git-drawer")
-                            .custom(palette::quiet_icon_variant(cx))
-                            .compact()
-                            .xsmall()
-                            .h(px(24.))
-                            .w(px(24.))
-                            .rounded_md()
-                            .icon(Glyph::GitBranch)
-                            .tooltip(crate::keybindings::hint(
-                                crate::keybindings::Target::OpenGitWorkspace,
-                                "Git 状态与差异",
-                                cx,
-                            ))
-                            .accessibility_label(tr("Git 状态与差异"))
-                            .selected(self.git_drawer_open)
-                            .disabled(!terminal_enabled || self.workspace.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_git_workspace(window, cx);
-                            })),
-                    )
-                    .when(self.workspace.is_some(), |row| {
-                        row.child(self.project_file_browser_button("sidebar-project-files", window, cx))
-                    })
+                    .child(self.command_palette_button(cx))
                     .child(div().flex_1())
                     .when(!self.pending_reports.is_empty(), |row| {
                         row.child(
@@ -1334,8 +1286,8 @@ impl HiveApp {
                             .custom(palette::quiet_icon_variant(cx))
                             .compact()
                             .xsmall()
-                            .h(px(24.))
-                            .w(px(24.))
+                            .h(px(26.))
+                            .w(px(26.))
                             .rounded_md()
                             .icon(Glyph::Bot)
                             .tooltip(tr("团队成员"))
@@ -1351,8 +1303,8 @@ impl HiveApp {
                             .custom(palette::quiet_icon_variant(cx))
                             .compact()
                             .xsmall()
-                            .h(px(24.))
-                            .w(px(24.))
+                            .h(px(26.))
+                            .w(px(26.))
                             .rounded_md()
                             .icon(Glyph::Network)
                             .tooltip(tr("协作概览"))
@@ -1372,8 +1324,8 @@ impl HiveApp {
                             .custom(palette::quiet_icon_variant(cx))
                             .compact()
                             .xsmall()
-                            .h(px(24.))
-                            .w(px(24.))
+                            .h(px(26.))
+                            .w(px(26.))
                             .rounded_md()
                             .icon(Glyph::Workflow)
                             .tooltip(tr("工作流"))

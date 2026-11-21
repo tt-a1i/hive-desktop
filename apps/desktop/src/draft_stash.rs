@@ -235,7 +235,7 @@ impl HiveApp {
         }
     }
 
-    pub(crate) fn render_prompt_stash_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn render_prompt_stash_button(&self, cx: &mut Context<Self>) -> Option<Button> {
         let owner = self.stash_owner();
         let count = owner
             .as_ref()
@@ -245,19 +245,24 @@ impl HiveApp {
                     .map(|store| store.stashed(&owner.key).len())
             })
             .unwrap_or(0);
-        Button::new("prompt-stash")
-            .custom(palette::quiet_icon_variant(cx))
-            .compact()
-            .xsmall()
-            .h(px(28.))
-            .when(count == 0, |button| button.w(px(28.)))
-            .rounded_lg()
-            .icon(Glyph::Archive)
-            .when(count > 0, |button| button.label(count.to_string()))
-            .tooltip(keybindings::hint(Target::PromptStash, "草稿暂存", cx))
-            .accessibility_label(tr("草稿暂存"))
-            .disabled(owner.is_none())
-            .on_click(cx.listener(|this, _, window, cx| this.open_prompt_stash(window, cx)))
+        if count == 0 && self.input.read(cx).value().trim().is_empty() {
+            return None;
+        }
+        Some(
+            Button::new("prompt-stash")
+                .custom(palette::quiet_icon_variant(cx))
+                .compact()
+                .xsmall()
+                .h(px(28.))
+                .when(count == 0, |button| button.w(px(28.)))
+                .rounded_lg()
+                .icon(Glyph::Archive)
+                .when(count > 0, |button| button.label(count.to_string()))
+                .tooltip(keybindings::hint(Target::PromptStash, "草稿暂存", cx))
+                .accessibility_label(tr("草稿暂存"))
+                .disabled(owner.is_none())
+                .on_click(cx.listener(|this, _, window, cx| this.open_prompt_stash(window, cx))),
+        )
     }
 
     fn open_prompt_stash(&mut self, window: &mut Window, cx: &mut Context<Self>) {

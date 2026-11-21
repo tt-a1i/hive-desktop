@@ -134,7 +134,7 @@ impl HiveApp {
                                 this.open_project_file_picker(window, cx)
                             })),
                     )
-                    .child(self.render_prompt_stash_button(cx)),
+                    .children(self.render_prompt_stash_button(cx)),
             )
             .child(
                 h_flex()
@@ -263,8 +263,8 @@ impl HiveApp {
                             Button::new("send")
                                 .custom(palette::send_circle_variant(can_send, cx))
                                 .compact()
-                                .h(px(28.))
-                                .when(busy_badge.is_none(), |button| button.w(px(28.)))
+                                .h(px(30.))
+                                .when(busy_badge.is_none(), |button| button.w(px(30.)))
                                 .when(busy_badge.is_some(), |button| button.px_3())
                                 .rounded_full()
                                 .when(!can_send, |button| {

@@ -537,59 +537,28 @@ impl HiveApp {
             format!("在 {target_label} 中打开项目")
         };
 
-        let workspace = workspace.to_owned();
-        let menu_workspace = workspace.clone();
+        let menu_workspace = workspace.to_owned();
         let owner = cx.weak_entity();
-        h_flex()
-            .items_center()
-            .gap_1()
-            .child(
-                Button::new("topbar-open-folder")
-                    .custom(crate::palette::quiet_icon_variant(cx))
-                    .compact()
-                    .xsmall()
-                    .h(px(28.))
-                    .px_2()
-                    .rounded_lg()
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_1p5()
-                            .child(
-                                Icon::new(target.fallback_icon())
-                                    .size(px(13.5))
-                                    .text_color(crate::palette::Color::Muted.get(cx)),
-                            )
-                            .child(target_label),
-                    )
-                    .tooltip(tooltip.clone())
-                    .accessibility_label(tooltip)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_workspace_target(workspace.clone(), target, cx);
-                    })),
-            )
-            .child(
-                Button::new("topbar-open-target-menu")
-                    .custom(crate::palette::quiet_icon_variant(cx))
-                    .compact()
-                    .xsmall()
-                    .h(px(28.))
-                    .w(px(20.))
-                    .rounded_lg()
-                    .icon(Glyph::ChevronDown)
-                    .tooltip(tr("选择打开方式"))
-                    .accessibility_label(tr("选择打开方式"))
-                    .disabled(apps.is_empty())
-                    .dropdown_menu(move |menu, _, cx| {
-                        workspace_menu(
-                            menu,
-                            owner.clone(),
-                            menu_workspace.clone(),
-                            Some(target),
-                            cx,
-                        )
-                    }),
-            )
+        Button::new("topbar-open-target-menu")
+            .custom(crate::palette::quiet_icon_variant(cx))
+            .compact()
+            .xsmall()
+            .h(px(28.))
+            .w(px(28.))
+            .rounded_lg()
+            .icon(Glyph::ExternalLink)
+            .tooltip(tooltip.clone())
+            .accessibility_label(tooltip)
+            .disabled(apps.is_empty())
+            .dropdown_menu(move |menu, _, cx| {
+                workspace_menu(
+                    menu,
+                    owner.clone(),
+                    menu_workspace.clone(),
+                    Some(target),
+                    cx,
+                )
+            })
     }
 
     pub(crate) fn open_workspace_target(

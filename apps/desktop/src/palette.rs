@@ -87,33 +87,24 @@ pub fn composer_shadow(focused: bool, cx: &App) -> Vec<BoxShadow> {
     let dark = Theme::global(cx).is_dark();
     if focused {
         if dark {
-            vec![
-                BoxShadow {
-                    color: hsla(0., 0., 1., 0.05),
-                    offset: point(px(0.), px(0.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(1.),
-                    inset: false,
-                },
-                BoxShadow {
-                    color: hsla(0., 0., 0., 0.40),
-                    offset: point(px(0.), px(6.)),
-                    blur_radius: px(20.),
-                    spread_radius: px(-2.),
-                    inset: false,
-                },
-            ]
+            vec![BoxShadow {
+                color: hsla(0., 0., 0., 0.36),
+                offset: point(px(0.), px(4.)),
+                blur_radius: px(16.),
+                spread_radius: px(-2.),
+                inset: false,
+            }]
         } else {
             vec![
                 BoxShadow {
-                    color: hsla(0., 0., 0., 0.045),
-                    offset: point(px(0.), px(0.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(1.),
+                    color: hsla(0., 0., 0., 0.04),
+                    offset: point(px(0.), px(1.)),
+                    blur_radius: px(3.),
+                    spread_radius: px(0.),
                     inset: false,
                 },
                 BoxShadow {
-                    color: hsla(0., 0., 0., 0.06),
+                    color: hsla(0., 0., 0., 0.05),
                     offset: point(px(0.), px(6.)),
                     blur_radius: px(18.),
                     spread_radius: px(-2.),
@@ -123,25 +114,25 @@ pub fn composer_shadow(focused: bool, cx: &App) -> Vec<BoxShadow> {
         }
     } else if dark {
         vec![BoxShadow {
-            color: hsla(0., 0., 0., 0.30),
-            offset: point(px(0.), px(3.)),
-            blur_radius: px(12.),
+            color: hsla(0., 0., 0., 0.24),
+            offset: point(px(0.), px(2.)),
+            blur_radius: px(10.),
             spread_radius: px(-1.),
             inset: false,
         }]
     } else {
         vec![
             BoxShadow {
-                color: hsla(0., 0., 0., 0.04),
+                color: hsla(0., 0., 0., 0.03),
                 offset: point(px(0.), px(1.)),
-                blur_radius: px(3.),
+                blur_radius: px(2.),
                 spread_radius: px(0.),
                 inset: false,
             },
             BoxShadow {
-                color: hsla(0., 0., 0., 0.03),
+                color: hsla(0., 0., 0., 0.025),
                 offset: point(px(0.), px(4.)),
-                blur_radius: px(14.),
+                blur_radius: px(12.),
                 spread_radius: px(-2.),
                 inset: false,
             },

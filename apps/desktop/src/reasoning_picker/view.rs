@@ -3,7 +3,7 @@ use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
-        Icon, *,
+        *,
     },
     prelude::FluentBuilder,
     *,
@@ -36,15 +36,49 @@ impl HiveApp {
         &self,
         running: bool,
         cx: &Context<Self>,
-    ) -> AnyElement {
+    ) -> Option<AnyElement> {
         let disabled =
             running || self.loading || !self.conversation_ready || !self.connected || self.closing;
+        let state = self.reasoning_picker.state.as_ref();
+        let has_options = state.is_some_and(|s| s.levels.len() >= 2);
+        let recovery_notice = state
+            .and_then(|s| s.description.as_ref())
+            .filter(|text| text.starts_with("原设置未能恢复："))
+            .map(|text| {
+                if let Some(inner) = text
+                    .strip_prefix("原设置未能恢复：")
+                    .and_then(|rest| rest.strip_suffix(" 请选择当前可用档位。"))
+                {
+                    if crate::language::english() {
+                        format!(
+                            "Could not restore saved effort: {} Choose an available level.",
+                            crate::language::localize_owned_error(inner)
+                        )
+                    } else {
+                        text.clone()
+                    }
+                } else {
+                    text.clone()
+                }
+            });
+        if !has_options
+            && !self.reasoning_picker.loading
+            && self.reasoning_picker.error.is_none()
+            && recovery_notice.is_none()
+        {
+            return None;
+        }
         let content = v_flex()
             .id("reasoning-picker-content")
             .role(Role::Group)
-            .aria_label(tr("会话推理强度"))
+            .aria_label(tr("推理强度"))
+            .w_full()
             .min_w_0()
+            .px_2p5()
+            .py_2()
             .gap_1p5()
+            .border_t_1()
+            .border_color(Color::Divider.get(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -52,206 +86,110 @@ impl HiveApp {
                     .items_center()
                     .justify_between()
                     .gap_2()
-                    .px_1()
-                    .pb_1()
                     .child(
-                        h_flex()
-                            .min_w_0()
-                            .items_center()
-                            .gap_1p5()
-                            .child(
-                                Icon::new(Glyph::SlidersHorizontal)
-                                    .size(px(13.))
-                                    .text_color(Color::Muted.get(cx))
-                                    .flex_shrink_0(),
-                            )
-                            .child(
-                                crate::text_reading::selectable_text("reasoning-heading", tr("会话推理强度"))
-                                    .text_xs()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(Color::Muted.get(cx)),
-                            ),
+                        div()
+                            .text_size(px(11.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(Color::Muted.get(cx))
+                            .child(tr("推理强度")),
                     )
-                    .child(
-                        crate::focus_scroll::Reveal::new(
-                            "refresh-reasoning-reveal",
-                            &self.reasoning_picker.scroll,
+                    .when(self.reasoning_picker.error.is_some(), |row| {
+                        row.child(
                             Button::new("refresh-reasoning")
                                 .custom(crate::palette::quiet_icon_variant(cx))
                                 .compact()
                                 .xsmall()
-                                .h(px(24.))
-                                .w(px(24.))
+                                .h(px(20.))
+                                .w(px(20.))
                                 .rounded_md()
                                 .icon(Glyph::RefreshCw)
                                 .tooltip(tr("重新读取"))
                                 .accessibility_label(tr("重新读取"))
                                 .disabled(self.reasoning_picker.loading || disabled)
-                                .on_click(cx.listener(|this, _, _, cx| this.load_reasoning(None, cx))),
-                        ),
-                    ),
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.load_reasoning(None, cx)),
+                                ),
+                        )
+                    }),
             )
-            .when(self.reasoning_picker.loading, |view| {
+            .when(self.reasoning_picker.loading && !has_options, |view| {
                 view.child(
-                    crate::text_reading::selectable_text("reasoning-loading", tr("正在读取原生设置…"))
-                        .px_1()
-                        .text_xs()
-                        .text_color(Color::Muted.get(cx)),
+                    div()
+                        .text_size(px(11.5))
+                        .text_color(Color::Muted.get(cx))
+                        .child(tr("正在读取…")),
                 )
             })
             .when_some(self.reasoning_picker.error.as_ref(), |view, error| {
                 view.child(
                     div()
                         .px_2()
-                        .py_1p5()
-                        .rounded_lg()
+                        .py_1()
+                        .rounded_md()
                         .bg(Color::ErrorSurface.get(cx))
-                        .child(
-                            crate::text_reading::selectable_text(
-                                "reasoning-error",
-                                crate::language::localize_owned_error(error),
-                            )
-                            .text_xs()
-                            .text_color(Color::Error.get(cx)),
-                        ),
+                        .text_size(px(11.5))
+                        .text_color(Color::Error.get(cx))
+                        .child(crate::language::localize_owned_error(error)),
                 )
             })
-            .when(
-                !self.reasoning_picker.loading
-                    && self.reasoning_picker.error.is_none()
-                    && self.reasoning_picker.state.is_none(),
-                |view| {
-                    view.child(
-                        crate::text_reading::selectable_text(
-                            "reasoning-empty",
-                            tr("当前模型没有可调推理选项。"),
-                        )
-                        .px_1()
-                        .text_xs()
-                        .text_color(Color::Muted.get(cx)),
-                    )
-                },
-            )
-            .when_some(self.reasoning_picker.state.as_ref(), |view, state| {
-                let is_recovery_notice = state
-                    .description
-                    .as_deref()
-                    .is_some_and(|text| text.starts_with("原设置未能恢复："));
-                let description_text = state.description.as_ref().map(|text| {
-                    // Translate only metadata owned by Hive's native adapters.
-                    // Preserve unknown/provider diagnostics verbatim.
-                    if let Some(inner) = text
-                        .strip_prefix("原设置未能恢复：")
-                        .and_then(|rest| rest.strip_suffix(" 请选择当前可用档位。"))
-                    {
-                        if crate::language::english() {
-                            format!(
-                                "Could not restore saved effort: {} Choose an available level.",
-                                crate::language::localize_owned_error(inner)
-                            )
-                        } else {
-                            text.clone()
-                        }
-                    } else {
-                        match text.as_str() {
-                            "从原生 Codex 线程读取；档位由当前模型提供。" => tr("从原生 Codex 线程读取；档位由当前模型提供。").to_owned(),
-                            "读取原生实际强度；环境、组织限制或模型能力可能调整请求值。" => tr("读取原生实际强度；环境、组织限制或模型能力可能调整请求值。").to_owned(),
-                            _ => text.clone(),
-                        }
-                    }
-                });
-                view.when_some(
-                    is_recovery_notice.then_some(()).and(description_text.clone()),
-                    |view, text| {
-                        view.child(
-                            crate::text_reading::selectable_text("reasoning-description", text)
-                                .px_1()
-                                .pb_0p5()
-                                .text_size(px(11.5))
-                                .text_color(Color::Muted.get(cx)),
-                        )
-                    },
+            .when_some(recovery_notice, |view, text| {
+                view.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(Color::Muted.get(cx))
+                        .child(text),
                 )
-                .when(state.levels.len() < 2, |view| {
-                    view.child(
-                        crate::text_reading::selectable_text("reasoning-unavailable", tr("当前模型没有可调推理选项。"))
-                            .px_1()
-                            .text_xs()
-                            .text_color(Color::Muted.get(cx)),
-                    )
-                })
-                .child(
-                    v_flex()
+            })
+            .when_some(state.filter(|s| s.levels.len() >= 2), |view, state| {
+                view.child(
+                    h_flex()
                         .w_full()
                         .min_w_0()
-                        .gap_0p5()
+                        .items_center()
+                        .gap(px(2.))
+                        .p(px(2.))
+                        .rounded_lg()
+                        .bg(Color::Inset.get(cx))
                         .children(state.levels.iter().enumerate().map(|(i, level)| {
                             let active = state.level == *level;
                             let level_label = reasoning_level_label(level).to_owned();
                             let level = level.clone();
-                            crate::focus_scroll::Reveal::new(
-                                ("reasoning-option-reveal", i),
-                                &self.reasoning_picker.scroll,
-                                Button::new(("reasoning-option", i))
-                                    .custom(crate::palette::sidebar_item_variant(active, cx))
-                                    .compact()
-                                    .w_full()
-                                    .h(px(28.))
-                                    .px_2()
-                                    .rounded_md()
-                                    .justify_start()
-                                    .selected(active)
-                                    .disabled(self.reasoning_picker.loading || disabled)
-                                    .accessibility_label(format!("{}: {}", tr("推理强度"), level_label))
-                                    .child(
-                                        h_flex()
-                                            .w_full()
-                                            .min_w_0()
-                                            .items_center()
-                                            .justify_between()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .min_w_0()
-                                                    .truncate()
-                                                    .text_size(px(12.5))
-                                                    .font_weight(if active {
-                                                        FontWeight::SEMIBOLD
-                                                    } else {
-                                                        FontWeight::MEDIUM
-                                                    })
-                                                    .text_color(Color::Text.get(cx))
-                                                    .child(level_label),
-                                            )
-                                            .when(active, |row| {
-                                                row.child(
-                                                    Icon::new(Glyph::Check)
-                                                        .size(px(13.))
-                                                        .text_color(Color::Accent.get(cx))
-                                                        .flex_shrink_0(),
-                                                )
-                                            }),
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.load_reasoning(Some(level.clone()), cx)
-                                    })),
-                            )
+                            Button::new(("reasoning-option", i))
+                                .custom(crate::palette::segment_variant(active, cx))
+                                .compact()
+                                .xsmall()
+                                .flex_1()
+                                .min_w_0()
+                                .h(px(24.))
+                                .px_1()
+                                .rounded_md()
+                                .justify_center()
+                                .selected(active)
+                                .disabled(self.reasoning_picker.loading || disabled)
+                                .accessibility_label(format!("{}: {}", tr("推理强度"), level_label))
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .text_size(px(11.5))
+                                        .font_weight(if active {
+                                            FontWeight::SEMIBOLD
+                                        } else {
+                                            FontWeight::NORMAL
+                                        })
+                                        .text_color(if active {
+                                            Color::Text.get(cx)
+                                        } else {
+                                            Color::Muted.get(cx)
+                                        })
+                                        .child(level_label),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.load_reasoning(Some(level.clone()), cx)
+                                }))
                         })),
                 )
-                .when_some(
-                    (!is_recovery_notice).then_some(()).and(description_text),
-                    |view, text| {
-                        view.child(
-                            crate::text_reading::selectable_text("reasoning-description", text)
-                                .px_1()
-                                .pt_1()
-                                .text_size(px(11.))
-                                .text_color(Color::Muted.get(cx)),
-                        )
-                    },
-                )
             });
-        content.into_any_element()
+        Some(content.into_any_element())
     }
 }
 

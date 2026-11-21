@@ -718,9 +718,9 @@ impl HiveApp {
         let is_dark = Theme::global(cx).is_dark();
         let composer_border = if composer_focused {
             if is_dark {
-                hsla(0., 0., 1., 0.24)
+                hsla(0., 0., 1., 0.14)
             } else {
-                hsla(0., 0., 0., 0.22)
+                hsla(0., 0., 0., 0.15)
             }
         } else if is_dark {
             hsla(0., 0., 1., 0.08)
@@ -738,12 +738,12 @@ impl HiveApp {
             .max_w(px(chat_width))
             .mx_auto()
             .flex_shrink_1()
-            .gap_2()
+            .gap_1p5()
             .px(px(14.))
-            .pt(px(12.))
+            .pt(px(11.))
             .pb(px(8.))
             .when(welcome, |composer| {
-                composer.min_h(px(118.)).justify_between()
+                composer.min_h(px(102.)).justify_between()
             })
             .rounded_2xl()
             .border_1()
@@ -1642,6 +1642,7 @@ impl Render for HiveApp {
                                         .when(!renaming, |header| {
                                             let show_conv_tools = self.conversation_ready
                                                 && self.session.is_some()
+                                                && !self.messages.is_empty()
                                                 && !self.loading;
                                             let title_disabled = !self.connected
                                                 || self.session_name_loading

@@ -476,8 +476,9 @@ impl HiveApp {
     }
 
     pub(crate) fn reading_above_latest(&self) -> bool {
-        self.history_navigation.live_start.is_some()
-            || !self.conversation_list.state.is_following_tail()
+        !self.messages.is_empty()
+            && (self.history_navigation.live_start.is_some()
+                || !self.conversation_list.state.is_following_tail())
     }
 
     pub(crate) fn message_index(&self, id: &str) -> Option<usize> {

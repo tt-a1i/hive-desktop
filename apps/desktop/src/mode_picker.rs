@@ -23,7 +23,6 @@ struct ModeState {
     #[serde(default)]
     connect_available: bool,
     options: Vec<ModeOption>,
-    description: Option<String>,
 }
 impl ModeState {
     fn label(&self, id: &str) -> String {
@@ -448,25 +447,63 @@ impl HiveApp {
         )
     }
 
-    pub(crate) fn render_mode_settings(&self, running: bool, cx: &Context<Self>) -> AnyElement {
+    pub(crate) fn render_mode_settings(
+        &self,
+        running: bool,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
         let codex = self
             .session
             .as_ref()
             .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Codex));
-        let acp_permission = self.mode_picker.permission.state.as_ref().is_some_and(|mode| mode.backend == "acp" && !mode.options.is_empty());
-        v_flex()
-            .child(self.render_mode_axis(false, running, cx))
-            .when(codex || acp_permission, |view| {
-                view.child(self.render_mode_axis(true, running, cx))
-            })
-            .into_any_element()
+        let acp_permission = self
+            .mode_picker
+            .permission
+            .state
+            .as_ref()
+            .is_some_and(|mode| mode.backend == "acp" && !mode.options.is_empty());
+        let mode_axis = self.render_mode_axis(false, running, cx);
+        let perm_axis = (codex || acp_permission)
+            .then(|| self.render_mode_axis(true, running, cx))
+            .flatten();
+        if mode_axis.is_none() && perm_axis.is_none() {
+            return None;
+        }
+        Some(
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .children(mode_axis)
+                .children(perm_axis)
+                .into_any_element(),
+        )
     }
 
-    fn render_mode_axis(&self, permission: bool, running: bool, cx: &Context<Self>) -> AnyElement {
+    fn render_mode_axis(
+        &self,
+        permission: bool,
+        running: bool,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let picker = if permission {
+            &self.mode_picker.permission
+        } else {
+            &self.mode_picker.mode
+        };
+        let has_options = picker.state.as_ref().is_some_and(|s| !s.options.is_empty());
+        if !has_options && picker.error.is_none() {
+            return None;
+        }
         let heading = if permission {
-            if self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) {
-                tr("ACP 访问权限")
-            } else { tr("Codex 访问权限") }
+            if self
+                .session
+                .as_ref()
+                .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp))
+            {
+                tr("访问权限")
+            } else {
+                tr("访问权限")
+            }
         } else {
             tr("会话模式")
         };
@@ -480,136 +517,120 @@ impl HiveApp {
             self.pending.get(&session.id).copied().unwrap_or(0) > 0
                 || self.interaction_count(&session.id) > 0
         });
-        let picker = if permission {
-            &self.mode_picker.permission
-        } else {
-            &self.mode_picker.mode
-        };
-        v_flex()
-            .id(format!("mode-picker-content-{permission}"))
-            .role(Role::Group)
-            .aria_label(heading)
-            .min_w_0()
-            .gap_1p5()
-            .pt_2()
-            .border_t_1()
-            .border_color(Color::Divider.get(cx))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        crate::text_reading::selectable_text(format!("mode-heading-{permission}"), heading)
-                            .text_xs()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(Color::Muted.get(cx)),
-                    )
-                    .child(
-                        Button::new(format!("refresh-mode-{permission}"))
-                            .ghost()
-                            .compact()
-                            .xsmall()
-                            .label(tr("重新读取"))
-                            .disabled(picker.loading || disabled)
-                            .on_click(cx.listener(move |this, _, _, cx| this.load_mode_axis(permission, None, cx))),
-                    ),
-            )
-            .when(permission && heading == tr("Codex 访问权限"), |view| {
-                view.child(crate::text_reading::selectable_text(
-                    "codex-permission-scope",
-                    tr("仅适用于当前 Codex 原生会话，不限制其他 Agent。完全访问会关闭 Codex 沙箱和审批。"),
-                ).text_xs().text_color(Color::Muted.get(cx)))
-            })
-            .when(picker.loading, |view| {
-                view.child(
-                    div()
-                        .text_xs()
-                        .text_color(Color::Muted.get(cx))
-                        .child(tr("正在读取原生设置…")),
+        Some(
+            v_flex()
+                .id(format!("mode-picker-content-{permission}"))
+                .role(Role::Group)
+                .aria_label(heading)
+                .w_full()
+                .min_w_0()
+                .px_2p5()
+                .py_2()
+                .gap_1p5()
+                .border_t_1()
+                .border_color(Color::Divider.get(cx))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(Color::Muted.get(cx))
+                                .child(heading),
+                        )
+                        .when(picker.error.is_some(), |row| {
+                            row.child(
+                                Button::new(format!("refresh-mode-{permission}"))
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(20.))
+                                    .w(px(20.))
+                                    .rounded_md()
+                                    .icon(Glyph::RefreshCw)
+                                    .tooltip(tr("重新读取"))
+                                    .disabled(picker.loading || disabled)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.load_mode_axis(permission, None, cx)
+                                    })),
+                            )
+                        }),
                 )
-            })
-            .when_some(picker.error.as_ref(), |view, error| {
-                view.child(
-                    crate::text_reading::selectable_text(
-                        format!("mode-error-{permission}"),
-                        crate::language::localize_owned_error(error),
-                    )
-                    .text_xs()
-                    .text_color(Color::Error.get(cx)),
-                )
-            })
-            .when_some(picker.state.as_ref(), |view, state| {
-                let status = state.status();
-                view.child(
-                    div()
-                        .id(format!("mode-current-status-{permission}"))
-                        .role(Role::Status)
-                        .aria_label(status.clone())
-                        .text_xs()
-                        .text_color(Color::Muted.get(cx))
-                        .child(status),
-                )
-                .when_some(state.description.as_ref(), |view, text| {
-                    view.child(
-                        crate::text_reading::selectable_text(format!("mode-description-{permission}"), match text.as_str() {
-                            "Native Claude permission mode applies to this session. It does not constrain other agents." => tr("Claude 原生权限模式仅适用于当前会话，不限制其他 Agent。").to_owned(),
-                            "This backend does not support native session modes." => tr("此后端不支持会话模式。").to_owned(),
-                            "This ACP session does not advertise a native mode." => tr("此 ACP 会话未提供原生模式。").to_owned(),
-                            "Connect this ACP session to read its native modes." => tr("连接此 ACP 会话以读取原生模式。").to_owned(),
-                            "Codex 未提供权限策略要求。" => tr("Codex 未提供权限策略要求。").to_owned(),
-                            "无法确定 Codex 权限策略要求。" => tr("无法确定 Codex 权限策略要求。").to_owned(),
-                            "此 Codex 程序不支持原生协作模式。" => tr("此 Codex 程序不支持原生协作模式。").to_owned(),
-                            "无法确定 Codex 协作模式。" => tr("无法确定 Codex 协作模式。").to_owned(),
-                            _ => text.clone(),
-                        })
-                            .text_xs()
-                            .text_color(Color::Muted.get(cx)),
-                    )
-                })
-                .when(state.options.is_empty(), |view| {
+                .when_some(picker.error.as_ref(), |view, error| {
                     view.child(
                         div()
-                            .text_xs()
-                            .text_color(Color::Muted.get(cx))
-                            .child(format!(
-                                "{}: {}",
-                                state.backend,
-                                tr("当前没有可用的原生模式选项。")
-                            )),
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .bg(Color::ErrorSurface.get(cx))
+                            .text_size(px(11.5))
+                            .text_color(Color::Error.get(cx))
+                            .child(crate::language::localize_owned_error(error)),
                     )
                 })
-                .children(state.options.iter().enumerate().map(|(i, option)| {
-                    let selected = state.selected.as_ref() == Some(&option.id);
-                    let id = option.id.clone();
-                    let label = mode_label(&state.backend, option);
-                    let description = option.description.clone();
-                    v_flex()
-                        .min_w_0()
-                        .child(
-                            Button::new(format!("mode-option-{permission}-{i}"))
-                                .ghost()
-                                .compact()
+                .when_some(
+                    picker.state.as_ref().filter(|s| !s.options.is_empty()),
+                    |view, state| {
+                        view.child(
+                            h_flex()
                                 .w_full()
-                                .justify_start()
-                                .selected(selected)
-                                .disabled(picker.loading || disabled || blocked)
-                                .accessibility_label(format!("{}: {}", heading, label))
-                                .label(label)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.load_mode_axis(permission, Some(id.clone()), cx)
+                                .min_w_0()
+                                .items_center()
+                                .gap(px(2.))
+                                .p(px(2.))
+                                .rounded_lg()
+                                .bg(Color::Inset.get(cx))
+                                .children(state.options.iter().enumerate().map(|(i, option)| {
+                                    let selected = state.selected.as_ref() == Some(&option.id)
+                                        || (state.selected.is_none()
+                                            && state.applied.as_ref() == Some(&option.id));
+                                    let id = option.id.clone();
+                                    let label = mode_label(&state.backend, option);
+                                    let tooltip = option
+                                        .description
+                                        .clone()
+                                        .unwrap_or_else(|| label.clone());
+                                    Button::new(format!("mode-option-{permission}-{i}"))
+                                        .custom(crate::palette::segment_variant(selected, cx))
+                                        .compact()
+                                        .xsmall()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .h(px(24.))
+                                        .px_1p5()
+                                        .rounded_md()
+                                        .justify_center()
+                                        .selected(selected)
+                                        .disabled(picker.loading || disabled || blocked)
+                                        .tooltip(tooltip)
+                                        .accessibility_label(format!("{heading}: {label}"))
+                                        .child(
+                                            div()
+                                                .truncate()
+                                                .text_size(px(11.5))
+                                                .font_weight(if selected {
+                                                    FontWeight::SEMIBOLD
+                                                } else {
+                                                    FontWeight::NORMAL
+                                                })
+                                                .text_color(if selected {
+                                                    Color::Text.get(cx)
+                                                } else {
+                                                    Color::Muted.get(cx)
+                                                })
+                                                .child(label),
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.load_mode_axis(permission, Some(id.clone()), cx)
+                                        }))
                                 })),
                         )
-                        .when_some(description, |view, text| {
-                            view.child(
-                                div()
-                                    .px_2()
-                                    .text_xs()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child(text),
-                            )
-                        })
-                }))
-            })
-            .into_any_element()
+                    },
+                )
+                .into_any_element(),
+        )
     }
 }
