@@ -1,6 +1,7 @@
 mod editor;
 use crate::{
     app::HiveApp,
+    general::BusySendMode,
     language::{english, tr},
     palette::Color,
     protocol::PendingUserInput,
@@ -17,6 +18,77 @@ use gpui_kit::{
 use std::ops::Range;
 
 gpui_kit::actions!(hive_desktop, [SteerPendingInput]);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum QueueBadge {
+    Steering,
+    Processing,
+    Steerable,
+    Queued,
+    Paused,
+}
+
+impl QueueBadge {
+    pub(crate) fn label_key(self) -> &'static str {
+        match self {
+            Self::Steering => "插话中",
+            Self::Processing => "处理中",
+            Self::Steerable => "可插话",
+            Self::Queued => "排队中",
+            Self::Paused => "待继续",
+        }
+    }
+}
+
+pub(crate) fn queue_item_badge_kind(
+    steering: bool,
+    processing: bool,
+    steerable: bool,
+    running: bool,
+    reason: Option<&str>,
+) -> QueueBadge {
+    if steering {
+        QueueBadge::Steering
+    } else if processing || matches!(reason, Some("completed" | "attempted")) {
+        QueueBadge::Processing
+    } else if steerable && running {
+        QueueBadge::Steerable
+    } else if running {
+        QueueBadge::Queued
+    } else {
+        QueueBadge::Paused
+    }
+}
+
+pub(crate) fn composer_busy_status_key(
+    connected: bool,
+    bg_connected: bool,
+    inflight: bool,
+    running: bool,
+    mode: BusySendMode,
+    pending: usize,
+) -> Option<&'static str> {
+    if !connected {
+        return Some("后台暂不可用 · 可在窗口顶部重新启动后台");
+    }
+    if !bg_connected {
+        return None;
+    }
+    if inflight {
+        return Some("正在提交消息…");
+    }
+    if running {
+        return Some(match mode {
+            BusySendMode::Queue => "Agent 正在处理 · 新消息会按顺序排队",
+            BusySendMode::SteerWhenSupported => "Agent 正在处理 · 新消息将优先插话引导当前回合",
+            BusySendMode::BlockUntilIdle => "Agent 正在运行中；当前设置为等待空闲后再发送",
+        });
+    }
+    if pending > 0 {
+        return Some("有待处理消息，请先继续");
+    }
+    None
+}
 
 fn latest_queued_input(inputs: &[PendingUserInput]) -> Option<&PendingUserInput> {
     inputs
@@ -48,15 +120,28 @@ impl HiveApp {
             return None;
         }
         let count = undisplayed.len();
+        let collapsible = count > 3;
+        let visible_count = if collapsible && !self.queue_expanded {
+            2
+        } else {
+            count
+        };
+        let hidden_count = count.saturating_sub(visible_count);
         let latest_editable_id = self
             .latest_queue_edit_target()
             .map(|input| input.delivery_id.as_str());
+        let busy_mode = crate::general::current(cx).busy_send_mode;
+        let mode_pill = running.then_some(match busy_mode {
+            BusySendMode::Queue => tr("排队"),
+            BusySendMode::SteerWhenSupported => tr("插话"),
+            BusySendMode::BlockUntilIdle => tr("等待空闲"),
+        });
         Some(
             v_flex()
                 .w_full()
                 .min_w_0()
-                .gap_1p5()
-                .p_2p5()
+                .gap_1()
+                .p_2()
                 .rounded_xl()
                 .bg(Color::Inset.get(cx))
                 .border_1()
@@ -64,55 +149,91 @@ impl HiveApp {
                 .child(
                     h_flex()
                         .items_center()
-                        .gap_1p5()
+                        .justify_between()
+                        .gap_2()
                         .px_0p5()
                         .child(
-                            div()
-                                .size(px(6.))
-                                .rounded_full()
-                                .flex_shrink_0()
-                                .bg(if running {
-                                    Color::Accent.get(cx)
-                                } else {
-                                    Color::Muted.get(cx)
-                                }),
+                            h_flex()
+                                .items_center()
+                                .gap_1p5()
+                                .child(
+                                    div()
+                                        .size(px(6.))
+                                        .rounded_full()
+                                        .flex_shrink_0()
+                                        .bg(if running {
+                                            Color::Accent.get(cx)
+                                        } else {
+                                            Color::Muted.get(cx)
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(Color::Secondary.get(cx))
+                                        .child(tr("已接收消息")),
+                                )
+                                .child(
+                                    div()
+                                        .px_1p5()
+                                        .py(px(1.))
+                                        .rounded_full()
+                                        .bg(Color::Card.get(cx))
+                                        .border_1()
+                                        .border_color(Color::Divider.get(cx))
+                                        .text_size(px(10.5))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(Color::Muted.get(cx))
+                                        .child(count.to_string()),
+                                ),
                         )
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(Color::Secondary.get(cx))
-                                .child(tr("已接收消息")),
-                        )
-                        .child(
-                            div()
-                                .px_1p5()
-                                .py(px(1.))
-                                .rounded_full()
-                                .bg(Color::Card.get(cx))
-                                .border_1()
-                                .border_color(Color::Divider.get(cx))
-                                .text_size(px(10.5))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(Color::Muted.get(cx))
-                                .child(count.to_string()),
-                        ),
+                        .when_some(mode_pill, |row, mode_label| {
+                            row.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .px_1p5()
+                                    .py(px(1.))
+                                    .rounded_md()
+                                    .bg(Color::Card.get(cx))
+                                    .border_1()
+                                    .border_color(Color::Divider.get(cx))
+                                    .text_size(px(10.5))
+                                    .text_color(Color::Muted.get(cx))
+                                    .child(mode_label),
+                            )
+                        }),
                 )
-                .child(v_flex().id("queued-user-inputs").gap_1p5()
+                .child(v_flex().id("queued-user-inputs").gap_1()
                     .key_context("HiveQueuedInputs")
                     .on_action(cx.listener(Self::steer_next_queued_input))
                     .children(
-                    undisplayed.into_iter().map(|input| {
+                    undisplayed.into_iter().take(visible_count).map(|input| {
                         let text = input.text.clone();
                         let edit_input = input.clone();
                         let cancel_input = input.clone();
                         let steering = self.steering_queued_input(&input.delivery_id);
+                        let badge = queue_item_badge_kind(
+                            steering,
+                            input.processing,
+                            input.steerable,
+                            running,
+                            input.reason.as_deref(),
+                        );
+                        let (badge_bg, badge_fg) = match badge {
+                            QueueBadge::Steering | QueueBadge::Processing | QueueBadge::Steerable => {
+                                (Color::AccentSoft.get(cx), Color::Accent.get(cx))
+                            }
+                            QueueBadge::Queued => (Color::Inset.get(cx), Color::Secondary.get(cx)),
+                            QueueBadge::Paused => (Color::Attention.get(cx), Color::Secondary.get(cx)),
+                        };
                         let status = match input.reason.as_deref() {
                             Some("completed") => tr("消息已处理，不能编辑或撤回"),
                             Some("attempted") => tr("消息已尝试发送，不能编辑或撤回"),
                             Some("legacy") => tr("旧版待发消息缺少原始记录，不能编辑或撤回"),
                             _ if steering => tr("正在发送到当前回合…"),
                             _ if input.processing => tr("已接收，正在处理"),
+                            _ if input.steerable && running => tr("已入队，可发送插话"),
                             _ if running => tr("已入队，等待当前回复结束"),
                             _ => tr("已入队，等待继续处理"),
                         };
@@ -136,6 +257,8 @@ impl HiveApp {
                                     .join(if english() { ", " } else { "、" })
                             )
                         };
+                        let first_attachment = input.attachments.first().map(|a| a.name.clone());
+                        let extra_attachments = input.attachments.len().saturating_sub(1);
                         crate::focus_scroll::Reveal::new(
                             SharedString::from(format!(
                                 "received-input-reveal-{}",
@@ -152,7 +275,7 @@ impl HiveApp {
                                 .items_center()
                                 .min_w_0()
                                 .gap_2()
-                                .px_2p5()
+                                .px_2()
                                 .py_1p5()
                                 .rounded_lg()
                                 .border_1()
@@ -164,24 +287,86 @@ impl HiveApp {
                                         .min_w_0()
                                         .gap_0p5()
                                         .child(
-                                            div()
-                                                .text_xs()
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .text_color(Color::Text.get(cx))
-                                                .truncate()
-                                                .child(label),
+                                            h_flex()
+                                                .w_full()
+                                                .min_w_0()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .px_1p5()
+                                                        .py(px(1.))
+                                                        .rounded_md()
+                                                        .bg(badge_bg)
+                                                        .text_size(px(10.5))
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(badge_fg)
+                                                        .child(tr(badge.label_key())),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .text_xs()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(Color::Text.get(cx))
+                                                        .truncate()
+                                                        .child(label),
+                                                ),
                                         )
                                         .child(
-                                            div()
-                                                .text_size(px(11.))
-                                                .text_color(Color::Muted.get(cx))
-                                                .truncate()
-                                                .child(detail),
+                                            h_flex()
+                                                .w_full()
+                                                .min_w_0()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .child(
+                                                    div()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .text_size(px(11.))
+                                                        .text_color(Color::Muted.get(cx))
+                                                        .child(status),
+                                                )
+                                                .when_some(first_attachment, |row, file_name| {
+                                                    row.child(
+                                                        h_flex()
+                                                            .flex_shrink_0()
+                                                            .max_w(px(160.))
+                                                            .min_w_0()
+                                                            .items_center()
+                                                            .gap_1()
+                                                            .px_1p5()
+                                                            .py(px(1.))
+                                                            .rounded_md()
+                                                            .bg(Color::Inset.get(cx))
+                                                            .child(
+                                                                Icon::new(Glyph::Paperclip)
+                                                                    .size(px(10.))
+                                                                    .text_color(Color::Muted.get(cx))
+                                                                    .flex_shrink_0(),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .min_w_0()
+                                                                    .truncate()
+                                                                    .text_size(px(10.5))
+                                                                    .text_color(Color::Secondary.get(cx))
+                                                                    .child(if extra_attachments > 0 {
+                                                                        format!("{file_name} +{extra_attachments}")
+                                                                    } else {
+                                                                        file_name
+                                                                    }),
+                                                            ),
+                                                    )
+                                                }),
                                         ),
                                 )
                                 .when(input.steerable && running, |row| {
                                     let delivery = input.delivery_id.clone();
                                     let expected = input.text.clone();
+                                    let can_steer = self.can_steer_queued_input(input);
                                     let shortcut = if cfg!(target_os = "macos") {
                                         "⌘⇧↵"
                                     } else {
@@ -190,6 +375,7 @@ impl HiveApp {
                                     row.child(
                                         Button::new(SharedString::from(format!("steer-queued-{delivery}")))
                                             .custom(crate::palette::subtle_icon_variant(cx))
+                                            .when(can_steer, |btn| btn.bg(Color::AccentSoft.get(cx)))
                                             .compact()
                                             .h(px(24.))
                                             .w(px(24.))
@@ -197,7 +383,7 @@ impl HiveApp {
                                             .icon(Glyph::ArrowUp)
                                             .tooltip(format!("{} ({shortcut})", tr("发送到当前回合")))
                                             .accessibility_label(tr("发送到当前回合"))
-                                            .disabled(!self.can_steer_queued_input(input))
+                                            .disabled(!can_steer)
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.steer_queued_input_now(&delivery, &expected, cx);
                                             })),
@@ -299,6 +485,27 @@ impl HiveApp {
                         )
                     }),
                 ))
+                .when(collapsible, |col| {
+                    col.child(
+                        Button::new("toggle-queued-inputs-expand")
+                            .custom(crate::palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(22.))
+                            .px_2()
+                            .rounded_md()
+                            .justify_start()
+                            .label(if self.queue_expanded {
+                                tr("收起排队消息").to_owned()
+                            } else {
+                                tr("展开其余 {count} 条").replace("{count}", &hidden_count.to_string())
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.queue_expanded = !this.queue_expanded;
+                                cx.notify();
+                            })),
+                    )
+                })
                 .into_any_element(),
         )
     }
@@ -518,8 +725,11 @@ impl HiveApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{can_edit_queue_at_caret, latest_queued_input};
-    use crate::protocol::PendingUserInput;
+    use super::{
+        QueueBadge, can_edit_queue_at_caret, composer_busy_status_key, latest_queued_input,
+        queue_item_badge_kind,
+    };
+    use crate::{general::BusySendMode, protocol::PendingUserInput};
 
     fn input(id: &str, editable: bool, processing: bool) -> PendingUserInput {
         PendingUserInput {
@@ -553,5 +763,65 @@ mod tests {
         tail.processing = false;
         tail.editable = false;
         assert!(latest_queued_input(&[first, tail]).is_none());
+    }
+
+    #[test]
+    fn queue_badge_state_distinguishes_steer_processing_queued_and_paused() {
+        assert_eq!(
+            queue_item_badge_kind(true, false, true, true, None),
+            QueueBadge::Steering
+        );
+        assert_eq!(
+            queue_item_badge_kind(false, true, false, true, None),
+            QueueBadge::Processing
+        );
+        assert_eq!(
+            queue_item_badge_kind(false, false, true, true, None),
+            QueueBadge::Steerable
+        );
+        assert_eq!(
+            queue_item_badge_kind(false, false, false, true, None),
+            QueueBadge::Queued
+        );
+        assert_eq!(
+            queue_item_badge_kind(false, false, true, false, None),
+            QueueBadge::Paused
+        );
+    }
+
+    #[test]
+    fn composer_busy_status_matches_busy_send_mode() {
+        assert_eq!(
+            composer_busy_status_key(false, true, false, false, BusySendMode::Queue, 0),
+            Some("后台暂不可用 · 可在窗口顶部重新启动后台")
+        );
+        assert_eq!(
+            composer_busy_status_key(true, false, false, true, BusySendMode::Queue, 0),
+            None
+        );
+        assert_eq!(
+            composer_busy_status_key(true, true, true, false, BusySendMode::Queue, 0),
+            Some("正在提交消息…")
+        );
+        assert_eq!(
+            composer_busy_status_key(true, true, false, true, BusySendMode::Queue, 0),
+            Some("Agent 正在处理 · 新消息会按顺序排队")
+        );
+        assert_eq!(
+            composer_busy_status_key(true, true, false, true, BusySendMode::SteerWhenSupported, 0),
+            Some("Agent 正在处理 · 新消息将优先插话引导当前回合")
+        );
+        assert_eq!(
+            composer_busy_status_key(true, true, false, true, BusySendMode::BlockUntilIdle, 0),
+            Some("Agent 正在运行中；当前设置为等待空闲后再发送")
+        );
+        assert_eq!(
+            composer_busy_status_key(true, true, false, false, BusySendMode::Queue, 2),
+            Some("有待处理消息，请先继续")
+        );
+        assert_eq!(
+            composer_busy_status_key(true, true, false, false, BusySendMode::Queue, 0),
+            None
+        );
     }
 }

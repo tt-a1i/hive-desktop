@@ -143,6 +143,8 @@ impl HiveApp {
                             .flatten()
                             .any(|card| draft_visible_on_card(receipt, card)))
             });
+        let quick_select_card =
+            cards.and_then(|list| list.iter().position(interaction_supports_quick_select));
         v_flex()
             .w_full()
             .min_w_0()
@@ -166,7 +168,7 @@ impl HiveApp {
                 render_attachment_receipt(index, receipt, cx)
             }))
             .children(cards.into_iter().flatten().enumerate().map(|(i, card)| {
-                self.render_interaction_card(i, &session, card, cx)
+                self.render_interaction_card(i, &session, card, quick_select_card == Some(i), cx)
             }))
     }
     fn render_interaction_card(
@@ -174,6 +176,7 @@ impl HiveApp {
         i: usize,
         session: &str,
         card: &InteractionCard,
+        allow_quick_select: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         if card.raw.backend == "acp" {
@@ -192,12 +195,12 @@ impl HiveApp {
         }
         if card.is_claude() {
             return self
-                .render_claude_interaction(i, session, card, cx)
+                .render_claude_interaction(i, session, card, allow_quick_select, cx)
                 .into_any_element();
         }
         if card.is_pi() {
             return self
-                .render_pi_interaction(i, session, card, cx)
+                .render_pi_interaction(i, session, card, allow_quick_select, cx)
                 .into_any_element();
         }
         let method = card.raw.method.as_str();
@@ -223,6 +226,10 @@ impl HiveApp {
         };
         v_flex()
             .id(("interaction-card", i))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.focus_interaction_history(window, cx)),
+            )
             .w_full()
             .min_w_0()
             .rounded_2xl()
@@ -487,9 +494,19 @@ impl HiveApp {
                         )
                     })
                     .when(questions && waiting, |view| {
+                        let target_q = allow_quick_select
+                            .then(|| active_quick_select_question_index(card))
+                            .flatten();
                         view.children(card.questions.iter().enumerate().map(|(j, draft)| {
                             self.render_interaction_question(
-                                i, j, &session, &id, draft, disabled, cx,
+                                i,
+                                j,
+                                &session,
+                                &id,
+                                draft,
+                                disabled,
+                                target_q == Some(j),
+                                cx,
                             )
                         }))
                     })

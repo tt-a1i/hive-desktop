@@ -409,6 +409,14 @@ mod tests {
         assert_eq!(tr("展开已完结会话"), "Expand settled conversations");
         assert_eq!(tr("收起已完结会话"), "Collapse settled conversations");
         assert_eq!(tr("或无项目开始"), "or start without a project");
+        assert_eq!(tr("收藏"), "Favorites");
+        assert_eq!(tr("暂无收藏模型"), "No favorite models yet");
+        assert_eq!(tr("推理与模式"), "Effort & Mode");
+        assert_eq!(tr("原生用量与上下文"), "Native usage & context");
+        assert_eq!(tr("插话中"), "Steering");
+        assert_eq!(tr("可插话"), "Steerable");
+        assert_eq!(tr("待继续"), "Paused");
+        assert_eq!(tr("正在提交消息…"), "Submitting message…");
         assert_eq!(
             tr("连接已中断，任务保存结果尚未确认"),
             "Connection interrupted; task save was not confirmed"

@@ -67,8 +67,11 @@ impl HiveApp {
         self.command_picker.open = open;
         self.command_picker.selected = 0;
         self.command_picker.scroll.set_offset(point(px(0.), px(0.)));
-        if self.command_picker.open && !self.command_picker.loaded {
-            self.load_commands(cx);
+        if self.command_picker.open {
+            self.mention_picker.close();
+            if !self.command_picker.loaded {
+                self.load_commands(cx);
+            }
         }
         cx.notify();
     }
@@ -230,6 +233,10 @@ impl HiveApp {
             cx.stop_propagation();
             self.command_picker.open = false;
             cx.notify();
+        } else if self.mention_picker.open {
+            cx.stop_propagation();
+            self.mention_picker.close();
+            cx.notify();
         }
     }
     pub(crate) fn toggle_native_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -238,6 +245,7 @@ impl HiveApp {
         }
         self.command_picker.open = !self.command_picker.open;
         if self.command_picker.open {
+            self.mention_picker.close();
             self.load_commands(cx);
             let focus = self.input.read(cx).focus_handle(cx);
             window.on_next_frame(move |window, cx| focus.focus(window, cx));

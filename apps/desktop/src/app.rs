@@ -319,6 +319,7 @@ pub struct HiveApp {
     pub agent_diagnostic: Option<crate::failures::Diagnostic>,
     pub pending_reports: Vec<PendingReport>,
     pub pending_user_inputs: Vec<PendingUserInput>,
+    pub queue_expanded: bool,
     pub(crate) steering_queued_inputs: HashSet<(u64, String, String)>,
     pub completed_deliveries: HashSet<String>,
     pub pending: HashMap<String, usize>,
@@ -345,8 +346,10 @@ pub struct HiveApp {
     pub copied_seq: u64,
     pub pending_events: Vec<PiEvent>,
     pub choosing_model: bool,
+    pub(crate) model_picker: crate::model_picker::ModelPickerState,
     pub usage: crate::usage::Usage,
     pub command_picker: crate::command_picker::CommandPicker,
+    pub mention_picker: crate::project_files::MentionPicker,
     pub reasoning_picker: crate::reasoning_picker::ReasoningPicker,
     pub(crate) project_model_default: crate::model_picker::ProjectModelDefaultState,
     pub mode_picker: crate::mode_picker::ModePicker,
@@ -658,7 +661,7 @@ impl HiveApp {
                     InputEvent::Change => this.model_picker_search_changed(cx),
                     InputEvent::Focus => cx.notify(),
                     InputEvent::Blur => {
-                        this.reasoning_picker.model_search_navigation.cancel_enter();
+                        this.model_picker.navigation.cancel_enter();
                         cx.notify();
                     }
                     _ => {}
@@ -734,6 +737,7 @@ impl HiveApp {
                     let text = input.read(cx).value();
                     if !this.prompt_history.on_change(this.open_request, &text) {
                         this.composer_commands_changed(cx);
+                        this.composer_mentions_changed(cx);
                     }
                     let enter_mode_changed = this.sync_composer_enter_mode(cx);
                     let has_text = !text.trim().is_empty();
@@ -925,6 +929,7 @@ impl HiveApp {
             agent_diagnostic: None,
             pending_reports: Vec::new(),
             pending_user_inputs: Vec::new(),
+            queue_expanded: false,
             steering_queued_inputs: HashSet::new(),
             completed_deliveries: HashSet::new(),
             pending: HashMap::new(),
@@ -951,11 +956,13 @@ impl HiveApp {
             copied_seq: 0,
             pending_events: vec![],
             choosing_model: false,
+            model_picker: crate::model_picker::ModelPickerState::new(cx),
             usage: Default::default(),
             reasoning_picker: Default::default(),
             project_model_default: Default::default(),
             mode_picker: Default::default(),
             command_picker: Default::default(),
+            mention_picker: Default::default(),
             closing: false,
             restarting: false,
             backend_initialized: false,

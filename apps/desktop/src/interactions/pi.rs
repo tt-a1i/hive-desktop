@@ -50,6 +50,7 @@ impl HiveApp {
         i: usize,
         session: &str,
         card: &InteractionCard,
+        allow_quick_select: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let disabled = !card.waiting() || !self.connected;
@@ -74,6 +75,10 @@ impl HiveApp {
         let action_count = actions.len();
         v_flex()
             .id(("pi-interaction-card", i))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.focus_interaction_history(window, cx)),
+            )
             .w_full()
             .min_w_0()
             .rounded_2xl()
@@ -260,13 +265,40 @@ impl HiveApp {
                                 let is_cancel = j + 1 == action_count;
                                 let is_confirm_primary =
                                     card.raw.method == "confirm" && j == 0 && !is_cancel;
+                                let show_keycap = allow_quick_select
+                                    && card.raw.method == "select"
+                                    && card.waiting()
+                                    && !is_cancel
+                                    && j < 9;
                                 let btn = Button::new(("pi-option", i * 1000 + j))
                                     .w_full()
                                     .compact()
                                     .h(px(32.))
                                     .px_3()
                                     .rounded_lg()
-                                    .label(label)
+                                    .accessibility_label(label.clone())
+                                    .when(!show_keycap, |btn| btn.label(label.clone()))
+                                    .when(show_keycap, |btn| {
+                                        btn.child(
+                                            h_flex()
+                                                .w_full()
+                                                .min_w_0()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .child(label.clone()),
+                                                )
+                                                .child(crate::palette::keycap(
+                                                    format!("{}", j + 1),
+                                                    cx,
+                                                )),
+                                        )
+                                    })
                                     .disabled(disabled)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.submit_interaction(

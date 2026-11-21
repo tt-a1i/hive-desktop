@@ -85,6 +85,7 @@ impl HiveApp {
                             crate::composer::restore(std::path::Path::new(root), cx);
                             crate::keybindings::restore(std::path::Path::new(root), cx);
                             this.sidebar.restore(std::path::Path::new(root));
+                            this.model_picker.favorites.restore(std::path::Path::new(root));
                             crate::local_notifications::restore(std::path::Path::new(root), cx);
                             this.sync_terminal_typography(cx);
                         }
@@ -225,6 +226,9 @@ impl HiveApp {
         self.reasoning_picker = Default::default();
         self.mode_picker = Default::default();
         self.command_picker = Default::default();
+        self.mention_picker = Default::default();
+        self.model_picker.reset_ephemeral();
+        self.queue_expanded = false;
         self.reset_usage();
         self.attachments.reset_connection();
         self.release_attachment_previews(false, cx);

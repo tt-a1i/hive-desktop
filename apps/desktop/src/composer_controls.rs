@@ -23,6 +23,10 @@ pub(crate) fn backend_glyph(backend: Backend) -> Glyph {
     }
 }
 
+pub(crate) fn composer_control_layout(width: f32) -> (bool, bool) {
+    (width < 520., width < 380.)
+}
+
 fn busy_send_hint(mode: BusySendMode, shifted: bool) -> SharedString {
     let (default, alternate) = match mode {
         BusySendMode::Queue => (
@@ -58,13 +62,15 @@ impl HiveApp {
         let can_send = can_send && !self.conversation_is_read_only();
         let footer_width = window.use_keyed_state("composer-footer-width", cx, |_, _| px(0.));
         let width = *footer_width.read(cx);
-        let compact = if width > px(0.) {
-            width < px(480.)
+        let (compact, tight) = if width > px(0.) {
+            composer_control_layout(f32::from(width))
         } else {
-            window.viewport_size().width < px(900.)
+            let vw = f32::from(window.viewport_size().width);
+            (vw < 900., vw < 640.)
         };
         let native_commands = self.pi_commands_available();
-        let can_resume = !self.conversation_is_read_only() && !running
+        let can_resume = !self.conversation_is_read_only()
+            && !running
             && self
                 .session
                 .as_ref()
@@ -73,6 +79,25 @@ impl HiveApp {
                 .unwrap_or(0)
                 > 0
             && (self.delivery_failure.is_none() || self.agent_diagnostic.is_some());
+        let show_send_and_draft = self.session.is_some()
+            && !running
+            && !can_resume
+            && can_send
+            && self.can_send_and_start_draft(cx);
+        let can_reference = self.can_reference_project_file();
+        let can_stash = self.can_open_prompt_stash();
+        let stash_count = self.stashed_draft_count();
+        let can_usage = self.session.is_some()
+            && self.connected
+            && self.conversation_ready
+            && !self.conversation_is_read_only()
+            && !self
+                .session
+                .as_ref()
+                .is_some_and(|s| matches!(s.backend, Backend::Acp))
+            && !self
+                .current_history_access()
+                .is_some_and(|a| a.handoff_unconsumed());
 
         h_flex()
             .id("composer-footer-controls")
@@ -84,57 +109,33 @@ impl HiveApp {
             })
             .w_full()
             .min_w_0()
-            .gap_2()
+            .gap(if tight { px(4.) } else { px(8.) })
             .items_center()
             .pt_1()
             .child(
-                h_flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .child(
-                        Button::new("attach-images")
-                            .custom(palette::quiet_icon_variant(cx))
-                            .compact()
-                            .xsmall()
-                            .h(px(28.))
-                            .w(px(28.))
-                            .rounded_lg()
-                            .icon(Glyph::Paperclip)
-                            .tooltip(tr("添加文件或图片"))
-                            .accessibility_label(tr("添加文件或图片"))
-                            .disabled(
-                                !self.connected
-                                    || self.workspace.is_none()
-                                    || self.loading
-                                    || self.current_worktree_released()
-                                    || self.session.as_ref().is_some_and(|session| {
-                                        self.inflight_inputs.contains_key(&session.id)
-                                    })
-                                    || !self.attachments.ready(self.draft_target.as_ref()),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| this.choose_images(cx))),
-                    )
-                    .child(
-                        Button::new("reference-project-file")
-                            .custom(palette::quiet_icon_variant(cx))
-                            .compact()
-                            .xsmall()
-                            .h(px(28.))
-                            .w(px(28.))
-                            .rounded_lg()
-                            .icon(Glyph::AtSign)
-                            .tooltip(crate::keybindings::hint(
-                                crate::keybindings::Target::SearchProjectFiles,
-                                "引用项目文件",
-                                cx,
-                            ))
-                            .accessibility_label(tr("引用项目文件"))
-                            .disabled(!self.can_reference_project_file())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_project_file_picker(window, cx)
-                            })),
-                    )
-                    .children(self.render_prompt_stash_button(cx)),
+                h_flex().flex_shrink_0().items_center().child(
+                    Button::new("attach-images")
+                        .custom(palette::quiet_icon_variant(cx))
+                        .compact()
+                        .xsmall()
+                        .h(px(28.))
+                        .w(px(28.))
+                        .rounded_lg()
+                        .icon(Glyph::Paperclip)
+                        .tooltip(tr("添加文件或图片"))
+                        .accessibility_label(tr("添加文件或图片"))
+                        .disabled(
+                            !self.connected
+                                || self.workspace.is_none()
+                                || self.loading
+                                || self.current_worktree_released()
+                                || self.session.as_ref().is_some_and(|session| {
+                                    self.inflight_inputs.contains_key(&session.id)
+                                })
+                                || !self.attachments.ready(self.draft_target.as_ref()),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.choose_images(cx))),
+                ),
             )
             .child(
                 h_flex()
@@ -147,53 +148,133 @@ impl HiveApp {
                         row.child(self.new_chat_menu("home-agent", tr("选择 Agent"), None, cx))
                     })
                     .when(self.session.is_some(), |row| {
-                        row.when(!self.session.as_ref().is_some_and(|s| matches!(s.backend, Backend::Acp)) && !self.current_history_access().is_some_and(|a| a.handoff_unconsumed() && (a.handoff_passive() || !self.session.as_ref().is_some_and(|s| matches!(s.backend, Backend::Pi)))), |row| row.child(
-                            div()
-                                .min_w_0()
-                                .max_w(px(260.))
-                                .child(self.model_picker(window, running || self.conversation_is_read_only(), cx)),
-                        ))
+                        row.when(
+                            !self
+                                .session
+                                .as_ref()
+                                .is_some_and(|s| matches!(s.backend, Backend::Acp))
+                                && !self.current_history_access().is_some_and(|a| {
+                                    a.handoff_unconsumed()
+                                        && (a.handoff_passive()
+                                            || !self
+                                                .session
+                                                .as_ref()
+                                                .is_some_and(|s| matches!(s.backend, Backend::Pi)))
+                                }),
+                            |row| {
+                                row.child(
+                                    div()
+                                        .min_w_0()
+                                        .max_w(px(if compact { 190. } else { 260. }))
+                                        .child(self.model_picker(
+                                            window,
+                                            running || self.conversation_is_read_only(),
+                                            cx,
+                                        )),
+                                )
+                            },
+                        )
                         .when(native_commands && !compact, |row| {
                             row.child(self.command_button(cx))
                         })
-                        .when(native_commands && compact, |row| {
-                            row.child(
-                                Button::new("composer-controls-overflow")
-                                    .custom(palette::quiet_icon_variant(cx))
-                                    .compact()
-                                    .h(px(28.))
-                                    .w(px(28.))
-                                    .rounded_lg()
-                                    .icon(Glyph::Ellipsis)
-                                    .tooltip(tr("更多输入选项"))
-                                    .accessibility_label(tr("更多输入选项"))
-                                    .disabled(
-                                        !self.connected || !self.conversation_ready || self.loading,
-                                    )
-                                    .dropdown_menu({
-                                        let weak = cx.weak_entity();
-                                        move |menu, _, _| {
-                                            let weak = weak.clone();
-                                            menu.item(
-                                                PopupMenuItem::new(tr("选择原生命令")).on_click(
-                                                    move |_, window, cx| {
-                                                        let _ = weak.update(cx, |this, cx| {
-                                                            this.toggle_native_commands(window, cx);
+                    })
+                    .when(self.connected && !self.closing, |row| {
+                        row.child(
+                            Button::new("composer-controls-overflow")
+                                .custom(palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(28.))
+                                .w(px(28.))
+                                .rounded_lg()
+                                .icon(Glyph::Ellipsis)
+                                .tooltip(tr("更多输入选项"))
+                                .accessibility_label(tr("更多输入选项"))
+                                .disabled(!self.connected || self.loading)
+                                .dropdown_menu({
+                                    let weak = cx.weak_entity();
+                                    move |mut menu, _, _| {
+                                        let weak_ref = weak.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new(format!(
+                                                "{} (@)",
+                                                tr("引用项目文件")
+                                            ))
+                                            .disabled(!can_reference)
+                                            .on_click(move |_, window, cx| {
+                                                let _ = weak_ref.update(cx, |this, cx| {
+                                                    this.open_project_file_picker(window, cx);
+                                                });
+                                            }),
+                                        );
+                                        let stash_label = if stash_count > 0 {
+                                            format!("{} ({stash_count})", tr("草稿暂存"))
+                                        } else {
+                                            tr("草稿暂存").to_owned()
+                                        };
+                                        let weak_stash = weak.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new(stash_label)
+                                                .disabled(!can_stash)
+                                                .on_click(move |_, window, cx| {
+                                                    let _ = weak_stash.update(cx, |this, cx| {
+                                                        this.open_prompt_stash(window, cx);
+                                                    });
+                                                }),
+                                        );
+                                        if native_commands {
+                                            let weak_cmd = weak.clone();
+                                            menu = menu.item(
+                                                PopupMenuItem::new(format!(
+                                                    "{} (/)",
+                                                    tr("选择原生命令")
+                                                ))
+                                                .on_click(move |_, window, cx| {
+                                                    let _ = weak_cmd.update(cx, |this, cx| {
+                                                        this.toggle_native_commands(window, cx);
+                                                    });
+                                                }),
+                                            );
+                                        }
+                                        if can_usage {
+                                            let weak_usage = weak.clone();
+                                            menu = menu.separator().item(
+                                                PopupMenuItem::new(tr("原生用量与上下文")).on_click(
+                                                    move |_, _, cx| {
+                                                        let _ = weak_usage.update(cx, |this, cx| {
+                                                            this.usage.visible =
+                                                                !this.usage.visible;
+                                                            if this.usage.visible {
+                                                                this.load_usage(cx);
+                                                            }
+                                                            cx.notify();
                                                         });
                                                     },
                                                 ),
-                                            )
+                                            );
                                         }
-                                    }),
-                            )
-                        })
+                                        if compact && show_send_and_draft {
+                                            let weak_draft = weak.clone();
+                                            menu = menu.separator().item(
+                                                PopupMenuItem::new(tr("发送并开始新草稿"))
+                                                    .on_click(move |_, window, cx| {
+                                                        let _ = weak_draft.update(cx, |this, cx| {
+                                                            this.send_and_start_draft(window, cx);
+                                                        });
+                                                    }),
+                                            );
+                                        }
+                                        menu
+                                    }
+                                }),
+                        )
                     }),
             )
             .child(
                 h_flex()
                     .flex_shrink_0()
                     .items_center()
-                    .gap_1p5()
+                    .gap(if tight { px(4.) } else { px(6.) })
                     .when(running, |actions| {
                         actions.child(
                             Button::new("stop")
@@ -233,31 +314,31 @@ impl HiveApp {
                                 .on_click(cx.listener(|this, _, _, cx| this.resume(cx))),
                         )
                     })
-                    .when(
-                        self.session.is_some()
-                            && !running
-                            && !can_resume
-                            && can_send
-                            && self.can_send_and_start_draft(cx),
-                        |actions| {
-                            actions.child(
-                                Button::new("send-and-start-draft")
-                                    .custom(palette::quiet_icon_variant(cx))
-                                    .compact().xsmall().h(px(28.)).w(px(28.)).rounded_lg()
-                                    .icon(Glyph::SquarePen)
-                                    .tooltip(crate::keybindings::hint(
-                                        crate::keybindings::Target::SendAndStartDraft,
-                                        "发送并开始新草稿", cx,
-                                    ))
-                                    .accessibility_label(tr("发送并开始新草稿"))
-                                    .on_click(cx.listener(|this, _, window, cx| this.send_and_start_draft(window, cx))),
-                            )
-                        },
-                    )
+                    .when(!compact && show_send_and_draft, |actions| {
+                        actions.child(
+                            Button::new("send-and-start-draft")
+                                .custom(palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(28.))
+                                .w(px(28.))
+                                .rounded_lg()
+                                .icon(Glyph::SquarePen)
+                                .tooltip(crate::keybindings::hint(
+                                    crate::keybindings::Target::SendAndStartDraft,
+                                    "发送并开始新草稿",
+                                    cx,
+                                ))
+                                .accessibility_label(tr("发送并开始新草稿"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.send_and_start_draft(window, cx)
+                                })),
+                        )
+                    })
                     .when(!can_resume, |actions| {
                         let busy_mode = crate::general::current(cx).busy_send_mode;
-                        let blocked_while_running = running
-                            && busy_mode == BusySendMode::BlockUntilIdle;
+                        let blocked_while_running =
+                            running && busy_mode == BusySendMode::BlockUntilIdle;
                         let busy_badge = if !running {
                             None
                         } else {
@@ -298,7 +379,8 @@ impl HiveApp {
                                 .tooltip(if self.workspace.is_none() {
                                     tr("选择项目文件夹并发送").into()
                                 } else if running {
-                                    let shifted = cx.global::<crate::composer::ComposerPreferences>()
+                                    let shifted = cx
+                                        .global::<crate::composer::ComposerPreferences>()
                                         .settings
                                         .mode
                                         .uses_shift_for_alternate(&self.input.read(cx).value());
@@ -321,5 +403,19 @@ impl HiveApp {
                         )
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::composer_control_layout;
+
+    #[test]
+    fn composer_controls_compact_thresholds() {
+        assert_eq!(composer_control_layout(600.), (false, false));
+        assert_eq!(composer_control_layout(520.), (false, false));
+        assert_eq!(composer_control_layout(519.), (true, false));
+        assert_eq!(composer_control_layout(380.), (true, false));
+        assert_eq!(composer_control_layout(379.), (true, true));
     }
 }

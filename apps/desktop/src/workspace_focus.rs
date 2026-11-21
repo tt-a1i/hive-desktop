@@ -83,6 +83,7 @@ impl HiveApp {
         let composer = self.input.read(cx).focus_handle(cx);
         if composer.is_focused(window)
             && (self.command_picker.open
+                || self.mention_picker.open
                 || self.input.update(cx, |input, cx| {
                     input.marked_text_range(window, cx).is_some()
                 }))

@@ -99,6 +99,21 @@ pub(crate) fn cached_git_branch(project_path: &str) -> Option<String> {
     branch
 }
 
+fn meta_member_badge_target(session: &crate::protocol::Session) -> Option<Option<&str>> {
+    let lead = format!("{}:orchestrator", session.workspace_id);
+    if session.identity_state.as_deref() == Some("unknown") {
+        return Some(session.display_agent_id());
+    }
+    session
+        .display_agent_id()
+        .filter(|id| *id != lead && !id.ends_with(":orchestrator"))
+        .map(Some)
+}
+
+fn should_show_meta_usage(usage_visible: bool, context_percent: Option<f64>) -> bool {
+    usage_visible || context_percent.is_some_and(|percent| percent >= 75.0)
+}
+
 impl HiveApp {
     /// T3 Code Layer-2 borderless metadata strip directly below the Composer card.
     pub(crate) fn render_composer_meta_bar(
@@ -112,16 +127,26 @@ impl HiveApp {
             .iter()
             .find(|ws| Some(&ws.id) == self.workspace.as_ref())
             .cloned();
+        if active_project.is_none() && self.session.is_none() {
+            return div().hidden().into_any_element();
+        }
         let execution = self.session.as_ref().and_then(|session| session.execution.as_ref());
         let worktree_released = self.current_worktree_released();
         let shared_worktree = execution.is_some_and(|execution| execution.owner_session_id.is_some());
         let reusable_worktree = self.shared_worktree_draft_source().map(|source| source.id.clone());
         let can_reuse_worktree = self.can_create_shared_worktree_draft();
         let scratch = self.session.as_ref().is_some_and(|session| session.scratch);
-        let execution_path = execution.map(|execution| execution.path.clone())
+        let execution_path = execution
+            .map(|execution| execution.path.clone())
             .or_else(|| self.session.as_ref().and_then(|session| session.execution_path.clone()))
-            .or_else(|| active_project.as_ref().filter(|_| !scratch).map(|workspace| workspace.path.clone()));
-        let branch = execution.map(|execution| execution.branch.clone())
+            .or_else(|| {
+                active_project
+                    .as_ref()
+                    .filter(|_| !scratch)
+                    .map(|workspace| workspace.path.clone())
+            });
+        let branch = execution
+            .map(|execution| execution.branch.clone())
             .or_else(|| execution_path.as_deref().and_then(cached_git_branch));
         let git_hint = crate::keybindings::hint(
             crate::keybindings::Target::OpenGitWorkspace,
@@ -148,14 +173,19 @@ impl HiveApp {
             })
             .unwrap_or(git_hint);
         let member_badge = self
-            .has_active_team_context()
-            .then(|| {
-                self.session
-                    .as_ref()
-                    .and_then(|s| s.agent_id.as_deref())
-                    .map(|id| self.agent_name(id))
-            })
-            .flatten();
+            .session
+            .as_ref()
+            .and_then(meta_member_badge_target)
+            .map(|agent_id| match agent_id {
+                Some(id) => self.agent_name(id),
+                None => tr("成员身份未知").to_owned(),
+            });
+        let context_percent = self
+            .usage
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.context.as_ref())
+            .and_then(|context| context.percent);
 
         let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
         h_flex()
@@ -163,14 +193,18 @@ impl HiveApp {
             .min_w_0()
             .max_w(px(chat_width))
             .mx_auto()
+            .flex_wrap()
             .items_center()
             .justify_between()
-            .gap_2()
+            .gap_x_2()
+            .gap_y_1()
             .px_2()
             .pt_1p5()
             .child(
                 h_flex()
                     .min_w_0()
+                    .max_w_full()
+                    .flex_wrap()
                     .items_center()
                     .gap_2()
                     .child({
@@ -203,6 +237,7 @@ impl HiveApp {
                                 .px_1p5()
                                 .rounded_md()
                                 .min_w_0()
+                                .max_w_full()
                                 .tooltip(folder_tooltip)
                                 .accessibility_label(tr("打开项目文件夹"))
                                 .disabled(!self.connected || self.closing)
@@ -326,48 +361,37 @@ impl HiveApp {
                                 })
                                 .into_any_element()
                         } else {
-                            Button::new("composer-project-folder")
-                                .custom(crate::palette::quiet_icon_variant(cx))
-                                .compact()
-                                .xsmall()
+                            h_flex()
+                                .id("composer-project-folder")
                                 .h(px(22.))
                                 .px_1p5()
-                                .rounded_md()
                                 .min_w_0()
-                                .tooltip(tr("打开项目文件夹"))
-                                .accessibility_label(tr("打开项目文件夹"))
-                                .disabled(!self.connected || self.closing)
+                                .max_w_full()
+                                .items_center()
+                                .gap_1()
                                 .child(
-                                    h_flex()
-                                        .min_w_0()
-                                        .items_center()
-                                        .gap_1p5()
-                                        .child(
-                                            Icon::new(Glyph::Folder)
-                                                .size(px(12.5))
-                                                .text_color(Color::Muted.get(cx))
-                                                .flex_shrink_0(),
-                                        )
-                                        .child(
-                                            div()
-                                                .min_w_0()
-                                                .max_w(px(220.))
-                                                .truncate()
-                                                .text_size(px(12.))
-                                                .text_color(Color::Muted.get(cx))
-                                                .child(tr("打开项目文件夹")),
-                                        ),
+                                    Icon::new(Glyph::Folder)
+                                        .size(px(12.5))
+                                        .text_color(Color::Muted.get(cx))
+                                        .flex_shrink_0(),
                                 )
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.choose_workspace_folder(window, cx);
-                                }))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .max_w(px(210.))
+                                        .truncate()
+                                        .text_size(px(12.))
+                                        .text_color(Color::Muted.get(cx))
+                                        .child(tr("临时会话")),
+                                )
                                 .into_any_element()
                         }
                     })
                     .when_some(member_badge, |row, member| {
                         row.child(
                             h_flex()
-                                .flex_shrink_0()
+                                .min_w_0()
+                                .max_w_full()
                                 .items_center()
                                 .gap_1()
                                 .px_1p5()
@@ -377,10 +401,12 @@ impl HiveApp {
                                 .child(
                                     Icon::new(Glyph::Users)
                                         .size(px(11.))
+                                        .flex_shrink_0()
                                         .text_color(Color::Secondary.get(cx)),
                                 )
                                 .child(
                                     div()
+                                        .min_w_0()
                                         .max_w(px(140.))
                                         .truncate()
                                         .text_size(px(11.5))
@@ -392,46 +418,53 @@ impl HiveApp {
             )
             .child(
                 h_flex()
-                    .flex_shrink_0()
+                    .min_w_0()
+                    .max_w_full()
+                    .flex_wrap()
                     .items_center()
                     .gap_2()
-                    .when(active_project.is_some(), |row| {
-                        row.child(
-                            Button::new("composer-git-branch")
-                                .custom(crate::palette::quiet_icon_variant(cx))
-                                .compact()
-                                .xsmall()
-                                .h(px(22.))
-                                .px_1p5()
-                                .rounded_md()
-                                .min_w_0()
-                                .selected(self.git_drawer_open)
-                                .icon(Glyph::GitBranch)
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .max_w(px(180.))
-                                        .truncate()
-                                        .text_size(px(12.))
-                                        .text_color(Color::Muted.get(cx))
-                                        .child(branch.unwrap_or_else(|| tr("Git 状态").to_owned())),
-                                )
-                                .tooltip(execution_tooltip)
-                                .accessibility_label(tr("查看项目 Git 状态与差异"))
-                                .disabled(!self.connected || self.closing)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_git_workspace(window, cx)
-                                })),
-                        )
-                    })
+                    .when_some(
+                        active_project
+                            .as_ref()
+                            .filter(|_| branch.is_some() || execution.is_some())
+                            .map(|_| branch.unwrap_or_else(|| tr("Git 状态").to_owned())),
+                        |row, branch_label| {
+                            row.child(
+                                Button::new("composer-git-branch")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(22.))
+                                    .px_1p5()
+                                    .rounded_md()
+                                    .min_w_0()
+                                    .max_w_full()
+                                    .selected(self.git_drawer_open)
+                                    .icon(Glyph::GitBranch)
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .max_w(px(180.))
+                                            .truncate()
+                                            .text_size(px(12.))
+                                            .text_color(Color::Muted.get(cx))
+                                            .child(branch_label),
+                                    )
+                                    .tooltip(execution_tooltip)
+                                    .accessibility_label(tr("查看项目 Git 状态与差异"))
+                                    .disabled(!self.connected || self.closing)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_git_workspace(window, cx)
+                                    })),
+                            )
+                        },
+                    )
                     .when_some(self.render_composer_mode_pills(running, cx), |row, pills| {
                         row.child(pills)
                     })
                     .when(
                         self.session.is_some()
-                            && (!self.messages.is_empty()
-                                || self.usage.visible
-                                || self.usage.snapshot.is_some()),
+                            && should_show_meta_usage(self.usage.visible, context_percent),
                         |row| {
                             row.when(
                                 !self
@@ -444,16 +477,9 @@ impl HiveApp {
                                 |row| row.child(self.usage_button(window, running, cx)),
                             )
                         },
-                    )
-                    .when(self.session.is_none() && active_project.is_some(), |row| {
-                        row.child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(Color::Muted.get(cx))
-                                .child(tr("未选择 Agent")),
-                        )
-                    }),
+                    ),
             )
+            .into_any_element()
     }
 
     /// Unified T3 Code centered Hero stage for both no-project home and empty threads.
@@ -878,7 +904,28 @@ fn hero_switcher_layout(
 
 #[cfg(test)]
 mod tests {
-    use super::{hero_switcher_layout, normalize_hero_line_text};
+    use super::{
+        hero_switcher_layout, meta_member_badge_target, normalize_hero_line_text,
+        should_show_meta_usage,
+    };
+    use crate::protocol::Session;
+
+    fn sample_session(
+        workspace_id: &str,
+        agent_id: Option<&str>,
+        origin_agent_id: Option<&str>,
+        identity_state: Option<&str>,
+    ) -> Session {
+        let mut value = serde_json::json!({
+            "id": "s-1",
+            "title": "Test",
+            "workspaceId": workspace_id,
+            "agentId": agent_id,
+            "originAgentId": origin_agent_id,
+            "identityState": identity_state,
+        });
+        serde_json::from_value(value.take()).unwrap()
+    }
 
     #[test]
     fn normalize_hero_line_text_strips_cr_and_lf() {
@@ -911,5 +958,38 @@ mod tests {
         let (inline, max_w) = hero_switcher_layout(200., 180., 500., false);
         assert!(!inline);
         assert!((max_w - 200.).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn meta_bar_hides_member_badge_for_orchestrator_but_keeps_worker_identity() {
+        let lead = sample_session(
+            "ws-1",
+            Some("ws-1:orchestrator"),
+            Some("ws-1:orchestrator"),
+            Some("known"),
+        );
+        assert_eq!(meta_member_badge_target(&lead), None);
+
+        let worker = sample_session(
+            "ws-1",
+            Some("ws-1:coder-1"),
+            Some("ws-1:coder-1"),
+            Some("known"),
+        );
+        assert_eq!(meta_member_badge_target(&worker), Some(Some("ws-1:coder-1")));
+
+        let unknown_origin = sample_session("ws-1", None, None, Some("unknown"));
+        assert_eq!(meta_member_badge_target(&unknown_origin), Some(None));
+    }
+
+    #[test]
+    fn meta_bar_usage_visibility_threshold() {
+        assert!(!should_show_meta_usage(false, None));
+        assert!(!should_show_meta_usage(false, Some(0.0)));
+        assert!(!should_show_meta_usage(false, Some(74.9)));
+        assert!(should_show_meta_usage(false, Some(75.0)));
+        assert!(should_show_meta_usage(false, Some(95.0)));
+        assert!(should_show_meta_usage(true, None));
+        assert!(should_show_meta_usage(true, Some(10.0)));
     }
 }

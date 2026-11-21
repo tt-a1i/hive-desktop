@@ -83,7 +83,7 @@ fn apply_screen(
         "chat:export" => app.open_conversation_export(window, cx),
         "chat:model-picker" => {
             app.choosing_model = true;
-            app.load_reasoning(None, cx);
+            app.load_model_picker_contents(cx);
             cx.notify();
         }
         "chat:usage" => {

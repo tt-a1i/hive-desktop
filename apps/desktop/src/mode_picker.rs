@@ -59,6 +59,38 @@ pub struct ModePicker {
     recovery: recovery::Recovery,
 }
 
+impl ModePicker {
+    pub(crate) fn is_loading(&self) -> bool {
+        self.mode.loading || self.permission.loading
+    }
+
+    pub(crate) fn has_visible_right_column_content(
+        &self,
+        backend: Option<crate::protocol::Backend>,
+    ) -> bool {
+        let mode_visible = self
+            .mode
+            .state
+            .as_ref()
+            .is_some_and(|s| !s.options.is_empty())
+            || self.mode.error.is_some();
+        let codex = matches!(backend, Some(crate::protocol::Backend::Codex));
+        let acp_permission = self
+            .permission
+            .state
+            .as_ref()
+            .is_some_and(|mode| mode.backend == "acp" && !mode.options.is_empty());
+        let perm_visible = (codex || acp_permission)
+            && (self
+                .permission
+                .state
+                .as_ref()
+                .is_some_and(|s| !s.options.is_empty())
+                || self.permission.error.is_some());
+        should_render_mode_axes(mode_visible, perm_visible)
+    }
+}
+
 #[derive(Default)]
 struct ModeSlot {
     loading: bool,
@@ -156,7 +188,7 @@ impl HiveApp {
         self.load_mode_axis(true, mode, cx);
     }
 
-    fn load_mode_axis(&mut self, permission: bool, mode: Option<String>, cx: &mut Context<Self>) {
+    pub(crate) fn load_mode_axis(&mut self, permission: bool, mode: Option<String>, cx: &mut Context<Self>) {
         let picker = if permission {
             &self.mode_picker.permission
         } else {
@@ -246,6 +278,7 @@ impl HiveApp {
                 if std::mem::take(&mut picker.refresh_queued) && !failed {
                     this.load_mode_axis(permission, None, cx);
                 }
+                this.sync_model_picker_right_column_after_load();
                 cx.notify();
             });
         })
@@ -336,6 +369,7 @@ impl HiveApp {
                 .px_1p5()
                 .rounded_md()
                 .min_w_0()
+                .max_w_full()
                 .disabled(disabled || picker.loading)
                 .tooltip(accessibility_label.clone())
                 .accessibility_label(accessibility_label)
@@ -412,6 +446,8 @@ impl HiveApp {
                     .xsmall()
                     .h(px(22.))
                     .rounded_md()
+                    .min_w_0()
+                    .max_w_full()
                     .icon(Glyph::Sparkles)
                     .label(mode.label())
                     .tooltip(status.clone())
@@ -425,6 +461,8 @@ impl HiveApp {
         }).or_else(|| {
             self.mode_picker.mode.state.as_ref().is_some_and(|mode| mode.connect_available).then(|| {
                 Button::new("composer-connect-acp-modes").compact().xsmall()
+                    .min_w_0()
+                    .max_w_full()
                     .label(tr("连接 ACP 以设置模式"))
                     .disabled(disabled || self.mode_picker.mode.loading)
                     .on_click(cx.listener(|this, _, _, cx| this.connect_acp_modes(cx))).into_any_element()
@@ -438,13 +476,42 @@ impl HiveApp {
         }
         Some(
             h_flex()
-                .flex_shrink_0()
+                .min_w_0()
+                .max_w_full()
+                .flex_wrap()
                 .items_center()
                 .gap_1()
                 .children(mode_pill)
                 .children(permission_pill)
                 .into_any_element(),
         )
+    }
+
+    pub(crate) fn mode_right_column_items(&self) -> Vec<(bool, String)> {
+        let mut items = Vec::new();
+        if let Some(state) = &self.mode_picker.mode.state {
+            for option in &state.options {
+                items.push((false, option.id.clone()));
+            }
+        }
+        let codex = self
+            .session
+            .as_ref()
+            .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Codex));
+        let acp_permission = self
+            .mode_picker
+            .permission
+            .state
+            .as_ref()
+            .is_some_and(|mode| mode.backend == "acp" && !mode.options.is_empty());
+        if (codex || acp_permission)
+            && let Some(state) = &self.mode_picker.permission.state
+        {
+            for option in &state.options {
+                items.push((true, option.id.clone()));
+            }
+        }
+        items
     }
 
     pub(crate) fn render_mode_settings(
@@ -466,15 +533,26 @@ impl HiveApp {
         let perm_axis = (codex || acp_permission)
             .then(|| self.render_mode_axis(true, running, cx))
             .flatten();
-        if mode_axis.is_none() && perm_axis.is_none() {
+        if !should_render_mode_axes(mode_axis.is_some(), perm_axis.is_some()) {
             return None;
         }
+        let has_mode = mode_axis.is_some();
         Some(
             v_flex()
                 .w_full()
                 .min_w_0()
                 .children(mode_axis)
-                .children(perm_axis)
+                .when_some(perm_axis, |col, perm| {
+                    col.child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .when(has_mode, |wrap| {
+                                wrap.border_t_1().border_color(Color::Divider.get(cx))
+                            })
+                            .child(perm),
+                    )
+                })
                 .into_any_element(),
         )
     }
@@ -495,15 +573,7 @@ impl HiveApp {
             return None;
         }
         let heading = if permission {
-            if self
-                .session
-                .as_ref()
-                .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp))
-            {
-                tr("访问权限")
-            } else {
-                tr("访问权限")
-            }
+            tr("访问权限")
         } else {
             tr("会话模式")
         };
@@ -517,6 +587,12 @@ impl HiveApp {
             self.pending.get(&session.id).copied().unwrap_or(0) > 0
                 || self.interaction_count(&session.id) > 0
         });
+        let focused_id = self.model_picker_focused_mode(permission);
+        let pending_note = picker
+            .state
+            .as_ref()
+            .filter(|state| state.pending_next_turn)
+            .map(|state| state.status());
         Some(
             v_flex()
                 .id(format!("mode-picker-content-{permission}"))
@@ -524,16 +600,15 @@ impl HiveApp {
                 .aria_label(heading)
                 .w_full()
                 .min_w_0()
-                .px_2p5()
-                .py_2()
-                .gap_1p5()
-                .border_t_1()
-                .border_color(Color::Divider.get(cx))
+                .px_1p5()
+                .py_1p5()
+                .gap_1()
                 .child(
                     h_flex()
                         .w_full()
                         .justify_between()
                         .items_center()
+                        .px_1()
                         .child(
                             div()
                                 .text_size(px(11.))
@@ -575,18 +650,16 @@ impl HiveApp {
                     picker.state.as_ref().filter(|s| !s.options.is_empty()),
                     |view, state| {
                         view.child(
-                            h_flex()
+                            v_flex()
                                 .w_full()
                                 .min_w_0()
-                                .items_center()
-                                .gap(px(2.))
-                                .p(px(2.))
-                                .rounded_lg()
-                                .bg(Color::Inset.get(cx))
+                                .gap_0p5()
                                 .children(state.options.iter().enumerate().map(|(i, option)| {
                                     let selected = state.selected.as_ref() == Some(&option.id)
                                         || (state.selected.is_none()
                                             && state.applied.as_ref() == Some(&option.id));
+                                    let keyboard_focused =
+                                        focused_id.as_deref() == Some(option.id.as_str());
                                     let id = option.id.clone();
                                     let label = mode_label(&state.backend, option);
                                     let tooltip = option
@@ -594,34 +667,54 @@ impl HiveApp {
                                         .clone()
                                         .unwrap_or_else(|| label.clone());
                                     Button::new(format!("mode-option-{permission}-{i}"))
-                                        .custom(crate::palette::segment_variant(selected, cx))
+                                        .custom(crate::palette::sidebar_item_variant(
+                                            selected || keyboard_focused,
+                                            cx,
+                                        ))
                                         .compact()
-                                        .xsmall()
-                                        .flex_1()
+                                        .w_full()
                                         .min_w_0()
-                                        .h(px(24.))
-                                        .px_1p5()
+                                        .h(px(28.))
+                                        .px_2()
                                         .rounded_md()
-                                        .justify_center()
-                                        .selected(selected)
+                                        .justify_start()
+                                        .selected(selected || keyboard_focused)
                                         .disabled(picker.loading || disabled || blocked)
                                         .tooltip(tooltip)
                                         .accessibility_label(format!("{heading}: {label}"))
                                         .child(
-                                            div()
-                                                .truncate()
-                                                .text_size(px(11.5))
-                                                .font_weight(if selected {
-                                                    FontWeight::SEMIBOLD
-                                                } else {
-                                                    FontWeight::NORMAL
-                                                })
-                                                .text_color(if selected {
-                                                    Color::Text.get(cx)
-                                                } else {
-                                                    Color::Muted.get(cx)
-                                                })
-                                                .child(label),
+                                            h_flex()
+                                                .w_full()
+                                                .min_w_0()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_1p5()
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .text_size(px(12.5))
+                                                        .font_weight(if selected {
+                                                            FontWeight::SEMIBOLD
+                                                        } else {
+                                                            FontWeight::NORMAL
+                                                        })
+                                                        .text_color(if selected {
+                                                            Color::Text.get(cx)
+                                                        } else {
+                                                            Color::Secondary.get(cx)
+                                                        })
+                                                        .child(label),
+                                                )
+                                                .when(selected, |row| {
+                                                    row.child(
+                                                        Icon::new(Glyph::Check)
+                                                            .size(px(13.))
+                                                            .text_color(Color::Accent.get(cx))
+                                                            .flex_shrink_0(),
+                                                    )
+                                                }),
                                         )
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.load_mode_axis(permission, Some(id.clone()), cx)
@@ -630,7 +723,77 @@ impl HiveApp {
                         )
                     },
                 )
+                .when_some(pending_note, |view, note| {
+                    view.child(
+                        div()
+                            .px_1()
+                            .text_size(px(10.5))
+                            .text_color(Color::Muted.get(cx))
+                            .child(note),
+                    )
+                })
                 .into_any_element(),
         )
+    }
+}
+
+fn should_render_mode_axes(mode_axis_visible: bool, perm_axis_visible: bool) -> bool {
+    mode_axis_visible || perm_axis_visible
+}
+
+#[cfg(test)]
+fn mode_axis_has_content(
+    backend: crate::protocol::Backend,
+    permission: bool,
+    options_len: usize,
+    has_error: bool,
+    state_backend: Option<&str>,
+) -> bool {
+    if permission {
+        let allowed = matches!(backend, crate::protocol::Backend::Codex)
+            || (state_backend == Some("acp") && options_len > 0);
+        allowed && (options_len > 0 || has_error)
+    } else {
+        options_len > 0 || has_error
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mode_axis_has_content, should_render_mode_axes};
+    use crate::protocol::Backend;
+
+    #[test]
+    fn mode_settings_hide_when_all_axes_empty() {
+        for backend in [
+            Backend::Codex,
+            Backend::Claude,
+            Backend::Pi,
+            Backend::PiRpc,
+            Backend::Acp,
+        ] {
+            let mode_visible = mode_axis_has_content(backend, false, 0, false, None);
+            let perm_visible = mode_axis_has_content(backend, true, 0, false, None);
+            assert!(
+                !should_render_mode_axes(mode_visible, perm_visible),
+                "expected empty mode settings to stay hidden for {backend:?}"
+            );
+        }
+        assert!(should_render_mode_axes(
+            mode_axis_has_content(Backend::Codex, false, 2, false, Some("codex")),
+            false,
+        ));
+        assert!(should_render_mode_axes(
+            false,
+            mode_axis_has_content(Backend::Codex, true, 3, false, Some("codex")),
+        ));
+        assert!(should_render_mode_axes(
+            false,
+            mode_axis_has_content(Backend::Acp, true, 2, false, Some("acp")),
+        ));
+        assert!(!should_render_mode_axes(
+            false,
+            mode_axis_has_content(Backend::Claude, true, 3, false, Some("claude")),
+        ));
     }
 }

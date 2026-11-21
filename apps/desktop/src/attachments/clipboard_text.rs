@@ -3,14 +3,59 @@ use serde::Serialize;
 use std::{fs, io, path::Path};
 use tempfile::NamedTempFile;
 
+use std::collections::HashSet;
+
 pub(crate) const MIN_BYTES: usize = 32 * 1024;
 pub(crate) const MAX_BYTES: usize = 8 * 1024 * 1024;
+
+fn default_pasted_text_name() -> String {
+    "pasted-text.txt".to_owned()
+}
+
+pub(crate) fn is_valid_pasted_text_name(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".txt") else {
+        return false;
+    };
+    if stem == "pasted-text" {
+        return true;
+    }
+    let Some(num) = stem.strip_prefix("pasted-text-") else {
+        return false;
+    };
+    if !num.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    match num.as_bytes() {
+        [b'2'..=b'9'] => true,
+        [b'1'..=b'9', _, ..] => true,
+        _ => false,
+    }
+}
+
+pub(crate) fn next_pasted_text_name(existing: &[AttachmentRef]) -> String {
+    let used: HashSet<String> = existing
+        .iter()
+        .map(|item| item.name.to_ascii_lowercase())
+        .collect();
+    if !used.contains("pasted-text.txt") {
+        return "pasted-text.txt".to_owned();
+    }
+    for n in 2usize.. {
+        let candidate = format!("pasted-text-{n}.txt");
+        if !used.contains(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!("unbounded integer sequence")
+}
 
 #[derive(Deserialize, Serialize)]
 pub(super) struct ClipboardTextPaste {
     workspace: String,
     key: String,
     text: String,
+    #[serde(default = "default_pasted_text_name")]
+    name: String,
     staged: Option<AttachmentRef>,
 }
 
@@ -28,9 +73,11 @@ impl ClipboardTextPaste {
             || !safe_id(id)
             || !(scope == "session" || (scope == "workspace" && self.workspace == id))
             || !(MIN_BYTES..=MAX_BYTES).contains(&self.text.len())
+            || !is_valid_pasted_text_name(&self.name)
             || self.staged.as_ref().is_some_and(|attachment| {
                 attachment.workspace_id != self.workspace
                     || attachment.mime_type != "text/plain"
+                    || attachment.name != self.name
                     || attachment.size != self.text.len() as u64
             })
         {
@@ -101,8 +148,19 @@ impl ClipboardTextPaste {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClipboardTextPaste, MIN_BYTES};
+    use super::{ClipboardTextPaste, MIN_BYTES, is_valid_pasted_text_name, next_pasted_text_name};
     use crate::protocol::AttachmentRef;
+
+    fn attachment_with_name(name: &str) -> AttachmentRef {
+        AttachmentRef {
+            id: format!("id-{name}"),
+            workspace_id: "ws".into(),
+            name: name.into(),
+            mime_type: "text/plain".into(),
+            size: 1024,
+            project_file: None,
+        }
+    }
 
     #[test]
     fn journal_reopens_exact_text_and_committed_attachment_under_original_owner() {
@@ -113,6 +171,7 @@ mod tests {
             workspace: "test-project".into(),
             key: "session:test-session".into(),
             text: text.clone(),
+            name: "pasted-text.txt".into(),
             staged: None,
         };
         paste.save(root).unwrap();
@@ -148,6 +207,65 @@ mod tests {
         staged.remove(root).unwrap();
         assert!(ClipboardTextPaste::load(root).unwrap().is_empty());
     }
+
+    #[test]
+    fn pasted_text_name_increments_case_insensitively() {
+        assert_eq!(next_pasted_text_name(&[]), "pasted-text.txt");
+        assert_eq!(
+            next_pasted_text_name(&[attachment_with_name("notes.md")]),
+            "pasted-text.txt"
+        );
+        assert_eq!(
+            next_pasted_text_name(&[attachment_with_name("Pasted-Text.TXT")]),
+            "pasted-text-2.txt"
+        );
+        assert_eq!(
+            next_pasted_text_name(&[
+                attachment_with_name("pasted-text.txt"),
+                attachment_with_name("PASTED-TEXT-2.txt"),
+            ]),
+            "pasted-text-3.txt"
+        );
+        assert_eq!(
+            next_pasted_text_name(&[
+                attachment_with_name("pasted-text.txt"),
+                attachment_with_name("pasted-text-3.txt"),
+            ]),
+            "pasted-text-2.txt"
+        );
+        assert!(is_valid_pasted_text_name("pasted-text.txt"));
+        assert!(is_valid_pasted_text_name("pasted-text-2.txt"));
+        assert!(is_valid_pasted_text_name("pasted-text-10.txt"));
+        assert!(is_valid_pasted_text_name("pasted-text-19.txt"));
+        assert!(is_valid_pasted_text_name("pasted-text-20.txt"));
+        assert!(is_valid_pasted_text_name("pasted-text-100.txt"));
+        assert!(!is_valid_pasted_text_name("pasted-text-0.txt"));
+        assert!(!is_valid_pasted_text_name("pasted-text-1.txt"));
+        assert!(!is_valid_pasted_text_name("pasted-text-02.txt"));
+        assert!(!is_valid_pasted_text_name("pasted-text-010.txt"));
+        assert!(!is_valid_pasted_text_name("pasted-text-.txt"));
+        assert!(!is_valid_pasted_text_name("../pasted-text.txt"));
+
+        // 10-attachment boundary: after 9 pasted text files, the 10th gets `pasted-text-10.txt`
+        // and must pass `is_valid_pasted_text_name`.
+        let mut nine_pasted = vec![attachment_with_name("pasted-text.txt")];
+        for n in 2..=9 {
+            nine_pasted.push(attachment_with_name(&format!("pasted-text-{n}.txt")));
+        }
+        let tenth = next_pasted_text_name(&nine_pasted);
+        assert_eq!(tenth, "pasted-text-10.txt");
+        assert!(is_valid_pasted_text_name(&tenth));
+
+        // Backward compatibility: legacy journal JSON without `name` defaults to `pasted-text.txt`.
+        let legacy_json = serde_json::json!({
+            "workspace": "ws",
+            "key": "session:s1",
+            "text": "x".repeat(MIN_BYTES),
+            "staged": null
+        });
+        let legacy: ClipboardTextPaste = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(legacy.name, "pasted-text.txt");
+    }
 }
 
 impl HiveApp {
@@ -174,6 +292,13 @@ impl HiveApp {
             .as_ref()
             .and_then(|key| self.attachments.clipboard_text.get(key))
             .filter(|paste| self.workspace.as_deref() == Some(&paste.workspace))
+    }
+
+    pub(crate) fn has_pending_clipboard_text(&self) -> bool {
+        self.draft_target.as_ref().is_some_and(|key| {
+            self.attachments.clipboard_text.contains_key(key)
+                || self.attachments.loading.contains(key)
+        })
     }
 
     fn clipboard_attachment_target(&self) -> Option<(&str, &str)> {
@@ -218,10 +343,18 @@ impl HiveApp {
         if self.attachments.clipboard_text.contains_key(key) {
             return false;
         }
+        let existing = self
+            .attachments
+            .drafts
+            .get(key)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let name = next_pasted_text_name(existing);
         let paste = ClipboardTextPaste {
             workspace: workspace.to_owned(),
             key: key.to_owned(),
             text,
+            name,
             staged: None,
         };
         if paste.save(root).is_err() {
@@ -251,7 +384,8 @@ impl HiveApp {
             return;
         }
         let expected_size = paste.text.len() as u64;
-        let params = json!({"workspaceId": workspace, "text": paste.text});
+        let expected_name = paste.name.clone();
+        let params = json!({"workspaceId": workspace, "text": paste.text, "name": paste.name});
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
@@ -287,6 +421,7 @@ impl HiveApp {
                         if item.image.is_none()
                             && item.attachment.workspace_id == workspace
                             && item.attachment.mime_type == "text/plain"
+                            && item.attachment.name == expected_name
                             && item.attachment.size == expected_size
                         {
                             paste.staged = Some(item.attachment);
@@ -346,17 +481,61 @@ impl HiveApp {
         let retry_key = paste.key.clone();
         let copy_key = paste.key.clone();
         let dismiss_key = paste.key.clone();
+        let size = format!("{:.1} KB", paste.text.len() as f64 / 1024.);
         Some(
             h_flex()
-                .gap_2()
-                .flex_wrap()
+                .h(px(30.))
+                .max_w_full()
+                .min_w_0()
                 .items_center()
-                .child(div().text_xs().child(tr("粘贴文本尚未存为附件。")))
+                .gap_1()
+                .pl_2()
+                .pr_1()
+                .rounded_lg()
+                .bg(Color::Inset.get(cx))
+                .border_1()
+                .border_color(Color::Error.get(cx).opacity(0.35))
+                .child(
+                    Icon::new(Glyph::FileText)
+                        .size(px(13.))
+                        .text_color(Color::Error.get(cx))
+                        .flex_shrink_0(),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_xs()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(Color::Secondary.get(cx))
+                        .child(paste.name.clone()),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(11.))
+                        .text_color(Color::Muted.get(cx))
+                        .child(size),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(11.))
+                        .text_color(Color::Error.get(cx))
+                        .child(tr("待保存为附件")),
+                )
                 .child(
                     Button::new("retry-clipboard-text")
-                        .small()
-                        .outline()
-                        .label(tr("重试保存粘贴文本"))
+                        .custom(crate::palette::quiet_icon_variant(cx))
+                        .compact()
+                        .xsmall()
+                        .h(px(22.))
+                        .px_1p5()
+                        .rounded_md()
+                        .icon(Glyph::RefreshCw)
+                        .label(tr("重试"))
+                        .tooltip(tr("重试保存粘贴文本"))
+                        .accessibility_label(tr("重试保存粘贴文本"))
                         .disabled(self.clipboard_attachment_target().is_none())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if this
@@ -369,9 +548,15 @@ impl HiveApp {
                 )
                 .child(
                     Button::new("copy-clipboard-text")
-                        .small()
-                        .outline()
-                        .label(tr("复制粘贴文本"))
+                        .custom(crate::palette::subtle_icon_variant(cx))
+                        .compact()
+                        .xsmall()
+                        .h(px(22.))
+                        .w(px(22.))
+                        .rounded_md()
+                        .icon(Glyph::Copy)
+                        .tooltip(tr("复制粘贴文本"))
+                        .accessibility_label(tr("复制粘贴文本"))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(paste) = this
                                 .pending_clipboard_text()
@@ -385,9 +570,15 @@ impl HiveApp {
                 )
                 .child(
                     Button::new("dismiss-clipboard-text")
-                        .small()
-                        .outline()
-                        .label(tr("移除待保存的粘贴文本"))
+                        .custom(crate::palette::subtle_icon_variant(cx))
+                        .compact()
+                        .xsmall()
+                        .h(px(22.))
+                        .w(px(22.))
+                        .rounded_md()
+                        .icon(Glyph::X)
+                        .tooltip(tr("移除待保存的粘贴文本"))
+                        .accessibility_label(tr("移除待保存的粘贴文本"))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let (Some(root), Some(paste)) = (
                                 this.data_dir.as_ref(),

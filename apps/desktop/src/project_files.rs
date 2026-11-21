@@ -8,6 +8,7 @@ use crate::{
     transport::Runtime,
 };
 use gpui_kit::{
+    assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
@@ -19,7 +20,7 @@ use gpui_kit::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::{sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, time::Duration};
 
 mod browser;
 
@@ -97,6 +98,541 @@ struct FilePicker {
     loading: bool,
     error: Option<FileError>,
     scroll: ScrollHandle,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MentionQuery {
+    pub start: usize,
+    pub end: usize,
+    pub query: String,
+}
+
+pub(crate) fn mention_token_at_cursor(text: &str, cursor: usize) -> Option<MentionQuery> {
+    if cursor > text.len() || !text.is_char_boundary(cursor) {
+        return None;
+    }
+    if text.starts_with('/') && !text.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let before = &text[..cursor];
+    for (idx, ch) in before.char_indices().rev() {
+        if ch.is_whitespace() {
+            return None;
+        }
+        if ch == '@' {
+            let valid_boundary = idx == 0
+                || before[..idx]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_whitespace);
+            if !valid_boundary {
+                return None;
+            }
+            return Some(MentionQuery {
+                start: idx,
+                end: cursor,
+                query: before[idx + 1..].to_owned(),
+            });
+        }
+    }
+    None
+}
+
+#[derive(Default)]
+pub struct MentionPicker {
+    pub open: bool,
+    pub loading: bool,
+    generation: u64,
+    query: String,
+    token_range: Option<Range<usize>>,
+    page: Page,
+    selected: usize,
+    error: Option<FileError>,
+    scroll: ScrollHandle,
+    target: Option<Target>,
+}
+
+impl MentionPicker {
+    pub(crate) fn close(&mut self) {
+        self.open = false;
+        self.loading = false;
+        self.generation = self.generation.wrapping_add(1);
+        self.query.clear();
+        self.token_range = None;
+        self.page = Page::default();
+        self.selected = 0;
+        self.error = None;
+        self.target = None;
+    }
+}
+
+impl HiveApp {
+    pub(crate) fn composer_mentions_changed(&mut self, cx: &mut Context<Self>) {
+        if self.command_picker.open
+            || !self.viewing_conversation()
+            || !self.can_reference_project_file()
+        {
+            if self.mention_picker.open {
+                self.mention_picker.close();
+                cx.notify();
+            }
+            return;
+        }
+        let (text, cursor, selection_empty) = {
+            let input = self.input.read(cx);
+            (
+                input.value().to_string(),
+                input.cursor(),
+                input.selected_range().is_empty(),
+            )
+        };
+        if !selection_empty {
+            if self.mention_picker.open {
+                self.mention_picker.close();
+                cx.notify();
+            }
+            return;
+        }
+        let Some(token) = mention_token_at_cursor(&text, cursor) else {
+            if self.mention_picker.open {
+                self.mention_picker.close();
+                cx.notify();
+            }
+            return;
+        };
+        let Some(target) = Target::capture(self) else {
+            if self.mention_picker.open {
+                self.mention_picker.close();
+                cx.notify();
+            }
+            return;
+        };
+        let same_query = self.mention_picker.open
+            && self.mention_picker.query == token.query
+            && self
+                .mention_picker
+                .target
+                .as_ref()
+                .is_some_and(|prev| prev.draft == target.draft && prev.workspace == target.workspace);
+        self.mention_picker.open = true;
+        self.mention_picker.token_range = Some(token.start..token.end);
+        self.mention_picker.target = Some(target);
+        if same_query {
+            cx.notify();
+            return;
+        }
+        self.mention_picker.query = token.query;
+        self.mention_picker.selected = 0;
+        self.mention_picker.scroll.set_offset(point(px(0.), px(0.)));
+        self.load_inline_mentions(true, cx);
+    }
+
+    pub(crate) fn load_inline_mentions(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        let (Some(runtime), Some(target)) = (self.runtime.clone(), self.mention_picker.target.clone())
+        else {
+            return;
+        };
+        if !target.current(self) {
+            self.mention_picker.close();
+            cx.notify();
+            return;
+        }
+        self.mention_picker.generation = self.mention_picker.generation.wrapping_add(1);
+        let generation = self.mention_picker.generation;
+        self.mention_picker.loading = true;
+        self.mention_picker.error = None;
+        let query = self.mention_picker.query.clone();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            if debounce {
+                smol::Timer::after(Duration::from_millis(150)).await;
+            }
+            let still_valid = this
+                .update(cx, |this, _| {
+                    this.mention_picker.open
+                        && this.mention_picker.generation == generation
+                        && target.current(this)
+                })
+                .ok()
+                == Some(true);
+            if !still_valid {
+                return;
+            }
+            let mut params = json!({
+                "workspaceId": target.workspace,
+                "query": query,
+                "offset": 0
+            });
+            if let Some(session) = &target.session {
+                params["sessionId"] = json!(session);
+            }
+            let result = runtime
+                .request("project.files.search", params)
+                .await
+                .and_then(|value| {
+                    serde_json::from_value::<Page>(value).map_err(|error| error.to_string())
+                });
+            let _ = this.update(cx, |this, cx| {
+                if !this.mention_picker.open
+                    || this.mention_picker.generation != generation
+                    || !target.current(this)
+                {
+                    return;
+                }
+                this.mention_picker.loading = false;
+                match result {
+                    Ok(page) => {
+                        this.mention_picker.page = page;
+                        this.mention_picker.selected = 0;
+                        this.mention_picker.error = None;
+                    }
+                    Err(error) => {
+                        this.mention_picker.page = Page::default();
+                        this.mention_picker.error = Some(FileError::Request(error));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn accept_inline_mention(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(target) = self.mention_picker.target.clone() else {
+            self.mention_picker.close();
+            return false;
+        };
+        if !target.current(self) || !self.can_reference_project_file() {
+            self.mention_picker.error = Some(FileError::Owned(
+                "当前草稿暂不能添加引用，请关闭后重试。",
+            ));
+            cx.notify();
+            return false;
+        }
+        let range = self.mention_picker.token_range.clone();
+        self.mention_picker.close();
+        if let Some(range) = range {
+            let text = self.input.read(cx).value().to_string();
+            if range.start < range.end
+                && range.end <= text.len()
+                && text.is_char_boundary(range.start)
+                && text.is_char_boundary(range.end)
+                && text[range.start..].starts_with('@')
+            {
+                let start = text[..range.start].encode_utf16().count();
+                let end = start + text[range.start..range.end].encode_utf16().count();
+                self.input.update(cx, |input, cx| {
+                    input.replace_text_in_range(Some(start..end), "", window, cx);
+                    input.focus(window, cx);
+                });
+            }
+        }
+        if !self.reference_project_file(&target, path, None, cx) {
+            self.error = Some("当前草稿暂不能添加引用，请关闭后重试。".into());
+        }
+        self.schedule_draft_save(cx);
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn accept_selected_mention(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.input.update(cx, |input, cx| {
+            input.marked_text_range(window, cx).is_some()
+        }) {
+            return false;
+        }
+        if self.mention_picker.loading {
+            return true;
+        }
+        if let Some(path) = self
+            .mention_picker
+            .page
+            .paths
+            .get(self.mention_picker.selected)
+            .cloned()
+        {
+            self.accept_inline_mention(path, window, cx)
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn move_mention(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let count = self.mention_picker.page.paths.len();
+        if count > 0 {
+            self.mention_picker.selected = self
+                .mention_picker
+                .selected
+                .saturating_add_signed(delta)
+                .min(count - 1);
+            self.mention_picker
+                .scroll
+                .scroll_to_item(self.mention_picker.selected);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn render_inline_mentions(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let paths = &self.mention_picker.page.paths;
+        v_flex()
+            .w((window.viewport_size().width - px(48.)).min(px(500.)))
+            .id("inline-mention-menu")
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.mention_picker.close();
+                cx.notify();
+            }))
+            .occlude()
+            .shadow(crate::palette::overlay_shadow(cx))
+            .p_0()
+            .rounded_xl()
+            .border_1()
+            .border_color(Color::BorderStrong.get(cx))
+            .bg(Color::Overlay.get(cx))
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(Color::Divider.get(cx))
+                    .child(
+                        h_flex()
+                            .min_w_0()
+                            .items_center()
+                            .gap_1p5()
+                            .child(
+                                Icon::new(Glyph::AtSign)
+                                    .size(px(13.))
+                                    .text_color(Color::Accent.get(cx))
+                                    .flex_shrink_0(),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(Color::Secondary.get(cx))
+                                    .child(tr("引用项目文件")),
+                            )
+                            .when(!self.mention_picker.query.is_empty(), |row| {
+                                row.child(
+                                    div()
+                                        .min_w_0()
+                                        .max_w(px(180.))
+                                        .truncate()
+                                        .px_1p5()
+                                        .py(px(1.))
+                                        .rounded_md()
+                                        .bg(Color::Inset.get(cx))
+                                        .font_family(Theme::global(cx).mono_font_family.clone())
+                                        .text_size(px(11.))
+                                        .text_color(Color::Muted.get(cx))
+                                        .child(format!("@{}", self.mention_picker.query)),
+                                )
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                Button::new("open-full-project-file-picker")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(26.))
+                                    .px_2()
+                                    .rounded_lg()
+                                    .icon(Glyph::FolderOpen)
+                                    .label(tr("浏览全部"))
+                                    .accessibility_label(tr("引用项目文件"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.mention_picker.close();
+                                        this.open_project_file_picker(window, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("close-inline-mentions")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(26.))
+                                    .w(px(26.))
+                                    .rounded_lg()
+                                    .icon(Glyph::X)
+                                    .tooltip(tr("关闭"))
+                                    .accessibility_label(tr("关闭"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.mention_picker.close();
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+            .when(self.mention_picker.loading, |view| {
+                view.child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .text_xs()
+                        .text_color(Color::Muted.get(cx))
+                        .child(tr("正在搜索…")),
+                )
+            })
+            .when_some(
+                self.mention_picker.error.as_ref().map(FileError::text),
+                |view, error| {
+                    view.child(
+                        div()
+                            .mx_3()
+                            .my_2()
+                            .p_2p5()
+                            .rounded_lg()
+                            .bg(Color::ErrorSurface.get(cx))
+                            .text_xs()
+                            .text_color(Color::Error.get(cx))
+                            .child(error),
+                    )
+                },
+            )
+            .when(
+                !self.mention_picker.loading
+                    && self.mention_picker.error.is_none()
+                    && paths.is_empty(),
+                |view| {
+                    view.child(
+                        div()
+                            .px_4()
+                            .py_5()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .child(tr("没有匹配的项目文件")),
+                    )
+                },
+            )
+            .when(!paths.is_empty(), |view| {
+                view.child(
+                    div().w_full().min_w_0().flex().child(Viewport::new(
+                        "inline-mention-results-viewport",
+                        &self.mention_picker.scroll,
+                        v_flex()
+                            .id("inline-mention-results")
+                            .w_full()
+                            .flex_1()
+                            .min_w_0()
+                            .max_h(px(220.))
+                            .p_1p5()
+                            .gap_0p5()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.mention_picker.scroll)
+                            .vertical_scrollbar(&self.mention_picker.scroll)
+                            .children(paths.iter().enumerate().map(|(i, path)| {
+                                let active = i == self.mention_picker.selected;
+                                let path_click = path.clone();
+                                Reveal::new(
+                                    ("inline-mention-reveal", i),
+                                    &self.mention_picker.scroll,
+                                    Button::new(("inline-mention", i))
+                                        .custom(crate::palette::sidebar_item_variant(active, cx))
+                                        .compact()
+                                        .w_full()
+                                        .min_w_0()
+                                        .h(px(30.))
+                                        .px_2p5()
+                                        .rounded_lg()
+                                        .justify_start()
+                                        .selected(active)
+                                        .accessibility_label(format!(
+                                            "{}: {path}",
+                                            tr("引用项目文件")
+                                        ))
+                                        .tooltip(path.clone())
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .min_w_0()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_2()
+                                                .child(
+                                                    h_flex()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .child(
+                                                            Icon::new(Glyph::FileText)
+                                                                .size(px(13.))
+                                                                .text_color(Color::Muted.get(cx))
+                                                                .flex_shrink_0(),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .flex_1()
+                                                                .min_w_0()
+                                                                .truncate()
+                                                                .font_family(
+                                                                    Theme::global(cx)
+                                                                        .mono_font_family
+                                                                        .clone(),
+                                                                )
+                                                                .text_xs()
+                                                                .text_color(Color::Text.get(cx))
+                                                                .child(path.clone()),
+                                                        ),
+                                                )
+                                                .when(active, |row| {
+                                                    row.child(
+                                                        h_flex()
+                                                            .flex_shrink_0()
+                                                            .items_center()
+                                                            .gap_1()
+                                                            .child(crate::palette::keycap(
+                                                                "Tab", cx,
+                                                            ))
+                                                            .child(
+                                                                Icon::new(Glyph::CornerDownLeft)
+                                                                    .size(px(13.))
+                                                                    .text_color(
+                                                                        Color::Accent.get(cx),
+                                                                    )
+                                                                    .flex_shrink_0(),
+                                                            ),
+                                                    )
+                                                }),
+                                        )
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.accept_inline_mention(
+                                                path_click.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                        })),
+                                )
+                            })),
+                    )),
+                )
+            })
+            .child(crate::palette::overlay_footer(
+                &[("↑↓", "选择"), ("Tab / Enter", "引用文件"), ("Esc", "关闭")],
+                cx,
+            ))
+            .into_any_element()
+    }
 }
 impl HiveApp {
     pub(crate) fn can_reference_project_file(&self) -> bool {
@@ -423,20 +959,33 @@ impl Render for FilePicker {
                         )
                         .children(self.page.paths.iter().enumerate().map(|(i, path)| {
                             let path = path.clone();
+                            let active = i == self.selected;
                             Reveal::new(
                                 ("project-file-reveal", i),
                                 &self.scroll,
                                 Button::new(("project-file", i))
-                                    .ghost()
+                                    .custom(crate::palette::sidebar_item_variant(active, cx))
                                     .compact()
                                     .w_full()
                                     .min_w_0()
+                                    .rounded_lg()
                                     .justify_start()
-                                    .selected(i == self.selected)
+                                    .selected(active)
                                     .disabled(!current)
                                     .accessibility_label(format!("{}: {path}", tr("引用项目文件")))
                                     .tooltip(path.clone())
-                                    .child(div().min_w_0().truncate().child(path.clone()))
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .min_w_0()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_2()
+                                            .child(div().flex_1().min_w_0().truncate().child(path.clone()))
+                                            .when(active, |row| {
+                                                row.child(crate::palette::keycap("Tab / Enter", cx))
+                                            }),
+                                    )
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.select(path.clone(), window, cx)
                                     })),
@@ -450,14 +999,22 @@ impl Render for FilePicker {
                     .justify_between()
                     .gap_2()
                     .child(
-                        div()
-                            .text_xs()
-                            .text_color(Color::Muted.get(cx))
-                            .child(format!(
-                                "{} / {}",
-                                self.offset + self.page.paths.len(),
-                                self.page.total
-                            )),
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(Color::Muted.get(cx))
+                                    .child(format!(
+                                        "{} / {}",
+                                        self.offset + self.page.paths.len(),
+                                        self.page.total
+                                    )),
+                            )
+                            .child(crate::palette::keycap("↑↓", cx))
+                            .child(crate::palette::keycap("Tab", cx))
+                            .child(crate::palette::keycap("Esc", cx)),
                     )
                     .child(
                         h_flex()
@@ -717,5 +1274,64 @@ impl Render for ReferenceDetails {
                             .on_click(cx.listener(|this, _, window, cx| this.reveal_source(window, cx))),
                     )),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MentionQuery, mention_token_at_cursor};
+
+    #[test]
+    fn mention_token_at_cursor_parses_boundary_cases() {
+        assert_eq!(
+            mention_token_at_cursor("@", 1),
+            Some(MentionQuery {
+                start: 0,
+                end: 1,
+                query: String::new(),
+            })
+        );
+        assert_eq!(
+            mention_token_at_cursor("check @src/app.rs", 17),
+            Some(MentionQuery {
+                start: 6,
+                end: 17,
+                query: "src/app.rs".into(),
+            })
+        );
+        assert_eq!(
+            mention_token_at_cursor("line1\n@readme", 13),
+            Some(MentionQuery {
+                start: 6,
+                end: 13,
+                query: "readme".into(),
+            })
+        );
+        assert_eq!(mention_token_at_cursor("user@example.com", 16), None);
+        assert_eq!(mention_token_at_cursor("@foo bar", 8), None);
+        assert_eq!(mention_token_at_cursor("@foo bar", 4), Some(MentionQuery {
+            start: 0,
+            end: 4,
+            query: "foo".into(),
+        }));
+        assert_eq!(mention_token_at_cursor("/cmd", 4), None);
+        assert_eq!(mention_token_at_cursor("/@foo", 5), None);
+        assert_eq!(
+            mention_token_at_cursor("@foo\n/cmd", 4),
+            Some(MentionQuery {
+                start: 0,
+                end: 4,
+                query: "foo".into(),
+            })
+        );
+        let text = "测试 @文件.rs";
+        assert_eq!(
+            mention_token_at_cursor(text, text.len()),
+            Some(MentionQuery {
+                start: "测试 ".len(),
+                end: text.len(),
+                query: "文件.rs".into(),
+            })
+        );
     }
 }

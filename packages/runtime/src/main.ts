@@ -522,10 +522,10 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       return chats.attachments.addClipboard(workspace, params.image);
     }
     case 'chat.attachments.clipboardText': {
-      exact(params, ['workspaceId', 'text']);
+      exact(params, ['workspaceId', 'text', 'name']);
       const workspace = text(params, 'workspaceId');
       chats.assertWorkspaceAvailable(workspace);
-      return chats.attachments.addClipboardText(workspace, params.text);
+      return chats.attachments.addClipboardText(workspace, params.text, params.name);
     }
     case 'git.status': return chats.gitStatus(text(params, 'workspaceId'), params.offset, params.limit, params.sessionId);
     case 'git.branches': return chats.gitBranches(text(params, 'workspaceId'), params.sessionId);

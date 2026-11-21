@@ -2,7 +2,7 @@
 //! Tuned to T3 Code's cool-zinc light & obsidian-graphite dark hierarchy,
 //! paired with Beluga's crisp local-readiness surfaces.
 use gpui_kit::{
-    App, BoxShadow, Div, FontWeight, ParentElement as _, Rgba, Styled as _,
+    App, BoxShadow, Div, FontWeight, ParentElement as _, Rgba, SharedString, Styled as _,
     assets::IconName as Glyph,
     component::{Icon, Theme, button::ButtonCustomVariant, h_flex},
     div, hsla, point, px, rgb, rgba,
@@ -45,7 +45,6 @@ pub enum Color {
     Overlay,
     Bubble,
     Divider,
-    #[allow(dead_code)]
     BorderStrong,
     Text,
     Muted,
@@ -119,7 +118,6 @@ pub fn card_shadow(cx: &App) -> Vec<BoxShadow> {
 }
 
 /// Floating overlay elevation for popovers, pickers, and command overlays.
-#[allow(dead_code)]
 pub fn overlay_shadow(cx: &App) -> Vec<BoxShadow> {
     if Theme::global(cx).is_dark() {
         vec![
@@ -156,6 +154,50 @@ pub fn overlay_shadow(cx: &App) -> Vec<BoxShadow> {
             },
         ]
     }
+}
+
+/// Shared keycap badge used across overlays, quick-select options, and command menus.
+pub fn keycap(label: impl Into<SharedString>, cx: &App) -> Div {
+    div()
+        .flex_shrink_0()
+        .px_1p5()
+        .py(px(1.))
+        .rounded_sm()
+        .bg(Color::Inset.get(cx))
+        .border_1()
+        .border_color(Color::BorderStrong.get(cx))
+        .font_family(Theme::global(cx).mono_font_family.clone())
+        .text_size(px(10.5))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(Color::Secondary.get(cx))
+        .child(label.into())
+}
+
+/// Shared footer hint bar for floating command/mention/picker overlays.
+pub fn overlay_footer(hints: &[(&'static str, &'static str)], cx: &App) -> Div {
+    h_flex()
+        .w_full()
+        .min_w_0()
+        .flex_wrap()
+        .items_center()
+        .gap_3()
+        .px_3()
+        .py_1p5()
+        .border_t_1()
+        .border_color(Color::Divider.get(cx))
+        .bg(Color::Inset.get(cx).opacity(0.45))
+        .children(hints.iter().map(|(keys, action)| {
+            h_flex()
+                .items_center()
+                .gap_1()
+                .child(keycap(*keys, cx))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(Color::Muted.get(cx))
+                        .child(crate::language::tr(action)),
+                )
+        }))
 }
 
 /// Signature T3 Code floating composer elevation: gentle resting lift,

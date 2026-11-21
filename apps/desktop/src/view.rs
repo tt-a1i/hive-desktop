@@ -944,18 +944,6 @@ impl HiveApp {
                                         })),
                                 ))
                             })
-                            .when(self.command_picker.open, |view| {
-                                view.child(
-                                    deferred(
-                                        anchored()
-                                            .anchor(Anchor::BottomLeft)
-                                            .snap_to_window()
-                                            .offset(point(px(14.), px(-8.)))
-                                            .child(self.render_commands(window, cx)),
-                                    )
-                                    .with_priority(1),
-                                )
-                            })
                             .when(self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) && self.attachments.refs(self.draft_target.as_ref()).iter().any(|a| a.is_image()), |body| body.child(div().id("acp-image-unsupported").role(Role::Status).child(if crate::language::english() { "ACP does not support images here. Remove images before sending." } else { "当前 ACP 不支持图片，请移除图片后发送。" })))
                             .when_some(self.render_input_attachments(cx), |body, attachments| {
                                 body.child(crate::focus_scroll::Reveal::new(
@@ -1003,6 +991,7 @@ impl HiveApp {
                                     .capture_action(cx.listener(Self::composer_up))
                                     .capture_action(cx.listener(Self::composer_down))
                                     .capture_action(cx.listener(Self::command_escape))
+                                    .capture_key_down(cx.listener(Self::composer_overlay_key_down))
                                     .child(
                                         Textarea::new(&self.input)
                                             .appearance(false)
@@ -1030,6 +1019,58 @@ impl HiveApp {
                     .flex_shrink_0()
                     .child(self.render_composer_controls(window, welcome, running, can_send, cx)),
             )
+            .when(self.command_picker.open, |view| {
+                view.child(
+                    deferred(
+                        anchored()
+                            .anchor(Anchor::BottomLeft)
+                            .snap_to_window()
+                            .offset(point(px(0.), px(-8.)))
+                            .child(self.render_commands(window, cx)),
+                    )
+                    .with_priority(1),
+                )
+            })
+            .when(!self.command_picker.open && self.mention_picker.open, |view| {
+                view.child(
+                    deferred(
+                        anchored()
+                            .anchor(Anchor::BottomLeft)
+                            .snap_to_window()
+                            .offset(point(px(0.), px(-8.)))
+                            .child(self.render_inline_mentions(window, cx)),
+                    )
+                    .with_priority(1),
+                )
+            })
+    }
+
+    fn composer_overlay_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key != "tab"
+            || event.keystroke.modifiers.modified()
+            || (!self.command_picker.open && !self.mention_picker.open)
+            || !self.composer_key_is_focused(window, cx)
+        {
+            return;
+        }
+        let composing = self
+            .input
+            .update(cx, |input, cx| input.marked_text_range(window, cx).is_some());
+        if composing {
+            return;
+        }
+        if self.command_picker.open {
+            if self.accept_selected_command(window, cx) {
+                cx.stop_propagation();
+            }
+        } else if self.mention_picker.open && self.accept_selected_mention(window, cx) {
+            cx.stop_propagation();
+        }
     }
 
     pub(crate) fn render_composer_status(
@@ -1150,23 +1191,37 @@ impl HiveApp {
                         .when(!ready, |v| v.child(Button::new("skip-worktree-initialization").outline().small().label(tr(if setup.status == "running" {"停止并跳过初始化"} else {"跳过初始化"})).disabled(!can_skip).on_click(cx.listener(|this,_,_,cx| this.change_initialization(false,cx)))))
                         .when(ready, |v| v.child(Button::new("reopen-initialized-session").primary().small().label(tr("打开会话" )).on_click(cx.listener(|this,_,_,cx| { if let Some(id)=this.session.as_ref().map(|s|s.id.clone()) { this.show_session(id,cx); } })))))
             })
-            .when(
-                !self.connected || running || pending > 0 || !self.status.is_background_connected(),
-                |v| {
+            .when_some(
+                {
+                    let inflight = self
+                        .session
+                        .as_ref()
+                        .is_some_and(|session| self.inflight_inputs.contains_key(&session.id));
+                    let mode = crate::general::current(cx).busy_send_mode;
+                    if !self.connected || inflight || running || pending > 0 {
+                        crate::queued_inputs::composer_busy_status_key(
+                            self.connected,
+                            self.status.is_background_connected(),
+                            inflight,
+                            running,
+                            mode,
+                            pending,
+                        )
+                        .map(|key| tr(key).to_string())
+                        .or_else(|| (!self.status.is_background_connected()).then(|| self.status.text()))
+                    } else if !self.status.is_background_connected() {
+                        Some(self.status.text())
+                    } else {
+                        None
+                    }
+                },
+                |v, status_text| {
                     v.child(
                         div()
                             .px_1()
                             .text_xs()
                             .text_color(Color::Muted.get(cx))
-                            .child(if !self.connected {
-                                tr("后台暂不可用 · 可在窗口顶部重新启动后台").to_string()
-                            } else if !self.status.is_background_connected() {
-                                self.status.text()
-                            } else if running {
-                                tr("Agent 正在处理 · 新消息会按顺序排队").to_string()
-                            } else {
-                                tr("有待处理消息，请先继续").to_string()
-                            }),
+                            .child(status_text),
                     )
                 },
             )
@@ -1653,6 +1708,7 @@ impl Render for HiveApp {
                                     }),
                                 )
                                 .key_context("HiveConversation")
+                                .on_key_down(cx.listener(Self::handle_interaction_quick_select_key))
                                 .on_action(cx.listener(
                                     |this, _: &crate::CloseConversationFind, window, cx| {
                                         this.close_conversation_find(window, cx)

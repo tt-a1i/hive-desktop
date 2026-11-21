@@ -108,6 +108,7 @@ impl HiveApp {
         i: usize,
         session: &str,
         card: &InteractionCard,
+        allow_quick_select: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let questions = card.raw.method == "ask-user-question";
@@ -132,6 +133,10 @@ impl HiveApp {
         };
         v_flex()
             .id(("claude-interaction", i))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.focus_interaction_history(window, cx)),
+            )
             .w_full()
             .min_w_0()
             .rounded_2xl()
@@ -390,9 +395,19 @@ impl HiveApp {
                         )
                     })
                     .when(questions && card.waiting(), |view| {
+                        let target_q = allow_quick_select
+                            .then(|| active_quick_select_question_index(card))
+                            .flatten();
                         view.children(card.questions.iter().enumerate().map(|(j, draft)| {
                             self.render_interaction_question(
-                                i, j, &session, &id, draft, disabled, cx,
+                                i,
+                                j,
+                                &session,
+                                &id,
+                                draft,
+                                disabled,
+                                target_q == Some(j),
+                                cx,
                             )
                         }))
                     })

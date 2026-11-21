@@ -19,6 +19,7 @@ impl HiveApp {
         interaction: &str,
         draft: &QuestionDraft,
         disabled: bool,
+        show_quick_select: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let session = session.to_string();
@@ -155,6 +156,15 @@ impl HiveApp {
                                                     .font_weight(FontWeight::MEDIUM)
                                                     .text_color(Color::Text.get(cx))
                                                     .child(option.label.clone()),
+                                            )
+                                            .when(
+                                                show_quick_select && k < 9 && !question.is_secret,
+                                                |row| {
+                                                    row.child(crate::palette::keycap(
+                                                        format!("{}", k + 1),
+                                                        cx,
+                                                    ))
+                                                },
                                             ),
                                     )
                                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -166,7 +176,7 @@ impl HiveApp {
                                         {
                                             return;
                                         }
-                                        if let Some(draft) = this
+                                        if let Some(card) = this
                                             .interactions
                                             .sessions
                                             .get_mut(&session)
@@ -175,13 +185,14 @@ impl HiveApp {
                                                     card.raw.id == interaction && card.waiting()
                                                 })
                                             })
-                                            .and_then(|card| {
-                                                card.questions
-                                                    .iter_mut()
-                                                    .find(|draft| draft.question.id == question_id)
-                                            })
+                                            && let Some(q_idx) = card
+                                                .questions
+                                                .iter()
+                                                .position(|draft| draft.question.id == question_id)
                                         {
-                                            if draft.question.is_secret {
+                                            let draft = &mut card.questions[q_idx];
+                                            let is_secret = draft.question.is_secret;
+                                            if is_secret {
                                                 draft.input.update(cx, |input, cx| {
                                                     input.set_value(label.clone(), window, cx)
                                                 });
@@ -197,6 +208,11 @@ impl HiveApp {
                                             } else {
                                                 draft.selected = Some(label.clone());
                                                 draft.other = false;
+                                            }
+                                            if !is_secret {
+                                                let meta = quick_select_question_meta(&card.questions);
+                                                card.quick_select_question =
+                                                    next_quick_select_pinned_after_choice(&meta, q_idx);
                                             }
                                         }
                                         cx.notify();
@@ -330,7 +346,7 @@ impl HiveApp {
                                             {
                                                 return;
                                             }
-                                            if let Some(draft) = this
+                                            if let Some(card) = this
                                                 .interactions
                                                 .sessions
                                                 .get_mut(&session)
@@ -339,17 +355,22 @@ impl HiveApp {
                                                         card.raw.id == interaction && card.waiting()
                                                     })
                                                 })
-                                                .and_then(|card| {
-                                                    card.questions.iter_mut().find(|draft| {
-                                                        draft.question.id == question_id
-                                                    })
-                                                })
+                                                && let Some(q_idx) = card.questions.iter().position(
+                                                    |draft| draft.question.id == question_id,
+                                                )
                                             {
+                                                let draft = &mut card.questions[q_idx];
                                                 draft.other = if draft.question.multi_select {
                                                     !draft.other
                                                 } else {
                                                     true
                                                 };
+                                                if !draft.question.multi_select
+                                                    && draft.other
+                                                    && card.quick_select_question == Some(q_idx)
+                                                {
+                                                    card.quick_select_question = None;
+                                                }
                                             }
                                             cx.notify();
                                         })

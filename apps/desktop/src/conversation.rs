@@ -429,7 +429,7 @@ impl HiveApp {
                 "chat.setModel",
                 json!({"sessionId":id,"provider":model.provider,"modelId":model.id}),
                 cx,
-                move |this, _, _| {
+                move |this, _, cx| {
                     if this.session.as_ref().map(|s| &s.id) == Some(&id) {
                         let changing_model = this.model.as_ref().is_none_or(|current| {
                             current.provider != model.provider || current.id != model.id
@@ -440,7 +440,11 @@ impl HiveApp {
                             session.inherited_draft_reasoning = None;
                             session.unavailable_reasoning = None;
                         }
-                        this.choosing_model = false;
+                        if !changing_model {
+                            this.choosing_model = false;
+                        }
+                        let had_right = this.model_picker.had_right_column
+                            || this.has_confirmed_model_picker_right_column();
                         this.reasoning_picker = Default::default();
                         this.mode_picker = Default::default();
                         this.reset_usage();
@@ -450,6 +454,12 @@ impl HiveApp {
                             id: model.id,
                             name: Some(model.name),
                         });
+                        if changing_model && this.choosing_model {
+                            this.model_picker.had_right_column = had_right;
+                            this.load_model_picker_contents(cx);
+                        } else {
+                            this.model_picker.had_right_column = false;
+                        }
                     }
                 },
             );

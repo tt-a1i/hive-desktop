@@ -22,12 +22,12 @@ impl HiveApp {
                 cx.notify();
             }))
             .occlude()
-            .shadow_lg()
+            .shadow(crate::palette::overlay_shadow(cx))
             .p_0()
             .rounded_xl()
             .border_1()
-            .border_color(Color::Divider.get(cx))
-            .bg(Color::Card.get(cx))
+            .border_color(Color::BorderStrong.get(cx))
+            .bg(Color::Overlay.get(cx))
             .overflow_hidden()
             .child(
                 h_flex()
@@ -189,7 +189,7 @@ impl HiveApp {
                                 ("native-command-reveal", i),
                                 &self.command_picker.scroll,
                                 Button::new(("native-command", i))
-                                    .ghost()
+                                    .custom(crate::palette::sidebar_item_variant(active, cx))
                                     .compact()
                                     .w_full()
                                     .min_w_0()
@@ -265,10 +265,17 @@ impl HiveApp {
                                             )
                                             .when(active, |row| {
                                                 row.child(
-                                                    Icon::new(Glyph::CornerDownLeft)
-                                                        .size(px(13.))
-                                                        .text_color(Color::Accent.get(cx))
-                                                        .flex_shrink_0(),
+                                                    h_flex()
+                                                        .flex_shrink_0()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .child(crate::palette::keycap("Tab", cx))
+                                                        .child(
+                                                            Icon::new(Glyph::CornerDownLeft)
+                                                                .size(px(13.))
+                                                                .text_color(Color::Accent.get(cx))
+                                                                .flex_shrink_0(),
+                                                        ),
                                                 )
                                             }),
                                     )
@@ -281,17 +288,10 @@ impl HiveApp {
                     ),
                 )
             })
-            .child(
-                div()
-                    .px_3()
-                    .py_1p5()
-                    .border_t_1()
-                    .border_color(Color::Divider.get(cx))
-                    .bg(Color::Inset.get(cx).opacity(0.45))
-                    .text_size(px(11.))
-                    .text_color(Color::Muted.get(cx))
-                    .child(tr("输入 / 搜索 · ↑↓ 选择 · Enter 补入草稿 · Esc 关闭")),
-            )
+            .child(crate::palette::overlay_footer(
+                &[("↑↓", "选择"), ("Tab / Enter", "补入草稿"), ("Esc", "关闭")],
+                cx,
+            ))
             .into_any_element()
     }
 }

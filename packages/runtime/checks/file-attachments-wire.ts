@@ -24,6 +24,15 @@ try{
  for(const invalid of ['', 42, '\uD800', 'x'.repeat(8*1024*1024+1)]){
   assert.ok((await rpc('chat.attachments.clipboardText',{workspaceId:workspaces[0].id,text:invalid})).error);
  }
+ const pasted2=await rpc('chat.attachments.clipboardText',{workspaceId:workspaces[0].id,text:clipboard,name:'pasted-text-2.txt'});
+ assert.equal(pasted2.error,undefined);assert.equal(pasted2.result.attachment.name,'pasted-text-2.txt');
+ const pasted10=await rpc('chat.attachments.clipboardText',{workspaceId:workspaces[0].id,text:clipboard,name:'pasted-text-10.txt'});
+ assert.equal(pasted10.error,undefined);assert.equal(pasted10.result.attachment.name,'pasted-text-10.txt');
+ const pasted19=await rpc('chat.attachments.clipboardText',{workspaceId:workspaces[0].id,text:clipboard,name:'pasted-text-19.txt'});
+ assert.equal(pasted19.error,undefined);assert.equal(pasted19.result.attachment.name,'pasted-text-19.txt');
+ for(const badName of ['../foo.txt','other.txt','pasted-text-1.txt','pasted-text-0.txt','pasted-text-02.txt','pasted-text-010.txt','pasted-text-.txt',42]){
+  assert.ok((await rpc('chat.attachments.clipboardText',{workspaceId:workspaces[0].id,text:clipboard,name:badName})).error);
+ }
  assert.ok((await rpc('chat.attachments.path',{workspaceId:workspaces[1].id,id})).error);assert.ok((await rpc('chat.attachments.path',{workspaceId:workspaces[0].id,id:'../bad'})).error);
  const remote=await rpc('hive.request',{method:'GET',path:`/api/workspaces/${workspaces[0].id}/uploads`});assert.ok(Array.isArray(remote.result));assert.ok(remote.result.some((row:any)=>row.id===id));assert.ok(remote.result.every((row:any)=>!('localPath'in row)&&!('path'in row)&&!('storage_key'in row)),'Internal path must not leak through the unchanged HTTP upload list');
  await unlink(staged.result.filePath);assert.ok((await rpc('chat.attachments.path',{workspaceId:workspaces[0].id,id})).error);

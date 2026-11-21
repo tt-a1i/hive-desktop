@@ -170,12 +170,15 @@ export class ChatAttachments {
       Buffer.from(image.data, 'base64'),
     );
   }
-  async addClipboardText(workspaceId: string, value: unknown): Promise<StagedAttachment> {
+  async addClipboardText(workspaceId: string, value: unknown, name?: unknown): Promise<StagedAttachment> {
     if (typeof value !== 'string' || !value || Buffer.byteLength(value, 'utf8') > MAX_CLIPBOARD_TEXT_BYTES)
       throw new TypeError('粘贴文本必须非空且不能超过 8 MiB。');
+    const resolvedName = name === undefined ? 'pasted-text.txt' : name;
+    if (typeof resolvedName !== 'string' || !/^pasted-text(?:-(?:[2-9]|[1-9]\d+))?\.txt$/.test(resolvedName))
+      throw new TypeError('无效的粘贴文本附件文件名。');
     const bytes = Buffer.from(value, 'utf8');
     if (bytes.toString('utf8') !== value) throw new TypeError('粘贴文本不是有效的 Unicode。');
-    return this.storeFile(workspaceId, 'pasted-text.txt', 'text/plain', bytes);
+    return this.storeFile(workspaceId, resolvedName, 'text/plain', bytes);
   }
   async add(workspaceId: string, path: unknown): Promise<StagedAttachment> {
     if (typeof path !== 'string' || !isAbsolute(path)) throw new TypeError('请选择本地文件的绝对路径。');

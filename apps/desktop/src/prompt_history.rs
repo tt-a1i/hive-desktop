@@ -139,6 +139,9 @@ impl HiveApp {
     ) {
         if self.command_picker.open {
             self.command_up(action, window, cx);
+        } else if self.mention_picker.open {
+            cx.stop_propagation();
+            self.move_mention(-1, cx);
         } else if self.recall_prompt(Direction::Older, window, cx) {
             cx.stop_propagation();
         } else {
@@ -154,6 +157,9 @@ impl HiveApp {
     ) {
         if self.command_picker.open {
             self.command_down(action, window, cx);
+        } else if self.mention_picker.open {
+            cx.stop_propagation();
+            self.move_mention(1, cx);
         } else if self.recall_prompt(Direction::Newer, window, cx) {
             cx.stop_propagation();
         } else {

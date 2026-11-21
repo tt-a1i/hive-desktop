@@ -12,12 +12,30 @@ pub struct ReasoningState {
 }
 #[derive(Default)]
 pub struct ReasoningPicker {
-    pub model_scroll: ScrollHandle,
-    pub(crate) model_search_navigation: crate::model_picker::ModelSearchNavigation,
-    pub scroll: ScrollHandle,
     pub loading: bool,
     state: Option<ReasoningState>,
     error: Option<String>,
+}
+
+impl ReasoningPicker {
+    pub(crate) fn levels(&self) -> &[String] {
+        self.state.as_ref().map_or(&[], |s| s.levels.as_slice())
+    }
+
+    pub(crate) fn current_level(&self) -> Option<&str> {
+        self.state.as_ref().map(|s| s.level.as_str())
+    }
+
+    pub(crate) fn has_recovery_notice(&self) -> bool {
+        self.state
+            .as_ref()
+            .and_then(|s| s.description.as_ref())
+            .is_some_and(|text| text.starts_with("原设置未能恢复："))
+    }
+
+    pub(crate) fn has_error(&self) -> bool {
+        self.error.is_some()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -168,6 +186,7 @@ impl HiveApp {
                 if stepping && let Some(error) = &this.reasoning_picker.error {
                     this.error = Some(ErrorNotice::Detail(STEP_FAILED, error.clone()));
                 }
+                this.sync_model_picker_right_column_after_load();
                 cx.notify();
             });
         })

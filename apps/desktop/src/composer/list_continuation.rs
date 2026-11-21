@@ -238,6 +238,7 @@ impl HiveApp {
         cx: &mut Context<Self>,
     ) -> bool {
         if self.command_picker.open
+            || self.mention_picker.open
             || self.draft_target != self.draft_owner
             || self.conversation_is_read_only()
             || window.has_active_dialog(cx)

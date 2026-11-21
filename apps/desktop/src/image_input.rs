@@ -78,11 +78,37 @@ impl HiveApp {
         if item.entries().iter().any(|entry| !matches!(entry, ClipboardEntry::String(_))) {
             return self.paste_images(item, cx);
         }
-        item.text().is_some_and(|text| {
-            should_stage_text(&text)
-                && !self.input.update(cx, |state, cx| state.marked_text_range(window, cx).is_some())
-                && self.stage_clipboard_text(text, cx)
-        })
+        let Some(text) = item.text() else {
+            return false;
+        };
+        let composing = self.input.update(cx, |state, cx| state.marked_text_range(window, cx).is_some());
+        let existing_count = self.attachments.refs(self.draft_target.as_ref()).len();
+        let has_pending = self.has_pending_clipboard_text();
+        match classify_clipboard_paste(
+            text.len(),
+            self.workspace.is_some(),
+            composing,
+            existing_count,
+            has_pending,
+        ) {
+            ClipboardPasteDecision::Native => false,
+            ClipboardPasteDecision::RejectTooLarge => {
+                self.error = Some("粘贴的文本超过 8 MiB 附件上限，请精简或保存为文件后添加。".into());
+                cx.notify();
+                true
+            }
+            ClipboardPasteDecision::RejectTooManyAttachments => {
+                self.error = Some("每条消息最多添加 10 个附件。".into());
+                cx.notify();
+                true
+            }
+            ClipboardPasteDecision::RejectPendingSave => {
+                self.error = Some("上一份粘贴文本仍在保存中，请稍候或先处理待保存文本。".into());
+                cx.notify();
+                true
+            }
+            ClipboardPasteDecision::Stage => self.stage_clipboard_text(text, cx),
+        }
     }
 
     pub(crate) fn paste_composer_text(
@@ -142,13 +168,48 @@ impl HiveApp {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClipboardPasteDecision {
+    Native,
+    Stage,
+    RejectTooLarge,
+    RejectTooManyAttachments,
+    RejectPendingSave,
+}
+
+pub(crate) fn classify_clipboard_paste(
+    byte_len: usize,
+    workspace_ready: bool,
+    composing: bool,
+    existing_count: usize,
+    has_pending_clipboard_text: bool,
+) -> ClipboardPasteDecision {
+    if !workspace_ready || composing || byte_len < MIN_BYTES {
+        return ClipboardPasteDecision::Native;
+    }
+    if byte_len > MAX_BYTES {
+        return ClipboardPasteDecision::RejectTooLarge;
+    }
+    if existing_count >= 10 {
+        return ClipboardPasteDecision::RejectTooManyAttachments;
+    }
+    if has_pending_clipboard_text {
+        return ClipboardPasteDecision::RejectPendingSave;
+    }
+    ClipboardPasteDecision::Stage
+}
+
+#[cfg(test)]
 fn should_stage_text(text: &str) -> bool {
     (MIN_BYTES..=MAX_BYTES).contains(&text.len())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ImageSource, MIN_BYTES, MAX_BYTES, PrepareError, should_stage_text};
+    use super::{
+        ClipboardPasteDecision, ImageSource, MAX_BYTES, MIN_BYTES, PrepareError,
+        classify_clipboard_paste, should_stage_text,
+    };
     use base64::Engine;
     use gpui_kit::{Image, ImageFormat};
     use std::io::Cursor;
@@ -159,6 +220,42 @@ mod tests {
         assert!(!should_stage_text(&near_limit));
         assert!(should_stage_text(&(near_limit + "ab")));
         assert!(!should_stage_text(&"x".repeat(MAX_BYTES + 1)));
+    }
+
+    #[test]
+    fn clipboard_paste_classification_respects_thresholds_and_limits() {
+        assert_eq!(
+            classify_clipboard_paste(MIN_BYTES - 1, true, false, 0, false),
+            ClipboardPasteDecision::Native
+        );
+        assert_eq!(
+            classify_clipboard_paste(MIN_BYTES, false, false, 0, false),
+            ClipboardPasteDecision::Native
+        );
+        assert_eq!(
+            classify_clipboard_paste(MIN_BYTES, true, true, 0, false),
+            ClipboardPasteDecision::Native
+        );
+        assert_eq!(
+            classify_clipboard_paste(MIN_BYTES, true, false, 0, false),
+            ClipboardPasteDecision::Stage
+        );
+        assert_eq!(
+            classify_clipboard_paste(MAX_BYTES, true, false, 9, false),
+            ClipboardPasteDecision::Stage
+        );
+        assert_eq!(
+            classify_clipboard_paste(MAX_BYTES + 1, true, false, 0, false),
+            ClipboardPasteDecision::RejectTooLarge
+        );
+        assert_eq!(
+            classify_clipboard_paste(MIN_BYTES, true, false, 10, false),
+            ClipboardPasteDecision::RejectTooManyAttachments
+        );
+        assert_eq!(
+            classify_clipboard_paste(MIN_BYTES, true, false, 0, true),
+            ClipboardPasteDecision::RejectPendingSave
+        );
     }
     #[test]
     fn project_file_attachment_pins_optional_session_and_preview_digest() {

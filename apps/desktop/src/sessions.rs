@@ -515,6 +515,9 @@ impl HiveApp {
         self.reasoning_picker = Default::default();
         self.mode_picker = Default::default();
         self.command_picker = Default::default();
+        self.mention_picker = Default::default();
+        self.model_picker.reset_ephemeral();
+        self.queue_expanded = false;
         self.reset_usage();
     }
     // Coalesce event bursts and serialize requests so older lists cannot replace newer ones.
@@ -1264,6 +1267,9 @@ impl HiveApp {
         self.reasoning_picker = Default::default();
         self.mode_picker = Default::default();
         self.command_picker = Default::default();
+        self.mention_picker = Default::default();
+        self.model_picker.reset_ephemeral();
+        self.queue_expanded = false;
         self.reset_usage();
         let request = self.open_request;
         if let Some(session) = self.sessions.iter().find(|s| s.id == id) {

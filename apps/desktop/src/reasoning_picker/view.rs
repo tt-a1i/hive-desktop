@@ -23,6 +23,16 @@ pub(crate) fn reasoning_level_label(level: &str) -> &str {
         _ => level,
     }
 }
+pub(crate) fn should_render_reasoning_panel(
+    levels_len: usize,
+    loading: bool,
+    has_error: bool,
+    has_recovery: bool,
+    keep_while_loading: bool,
+) -> bool {
+    levels_len >= 2 || (loading && keep_while_loading) || has_error || has_recovery
+}
+
 impl HiveApp {
     pub(crate) fn reasoning_label(&self) -> Option<String> {
         self.reasoning_picker.state.as_ref()
@@ -61,24 +71,25 @@ impl HiveApp {
                     text.clone()
                 }
             });
-        if !has_options
-            && !self.reasoning_picker.loading
-            && self.reasoning_picker.error.is_none()
-            && recovery_notice.is_none()
-        {
+        if !should_render_reasoning_panel(
+            state.map_or(0, |s| s.levels.len()),
+            self.reasoning_picker.loading,
+            self.reasoning_picker.error.is_some(),
+            recovery_notice.is_some(),
+            self.model_picker.had_right_column,
+        ) {
             return None;
         }
+        let focused_level = self.model_picker_focused_reasoning();
         let content = v_flex()
             .id("reasoning-picker-content")
             .role(Role::Group)
             .aria_label(tr("推理强度"))
             .w_full()
             .min_w_0()
-            .px_2p5()
-            .py_2()
-            .gap_1p5()
-            .border_t_1()
-            .border_color(Color::Divider.get(cx))
+            .px_1p5()
+            .py_1p5()
+            .gap_1()
             .child(
                 h_flex()
                     .w_full()
@@ -86,6 +97,7 @@ impl HiveApp {
                     .items_center()
                     .justify_between()
                     .gap_2()
+                    .px_1()
                     .child(
                         div()
                             .text_size(px(11.))
@@ -115,6 +127,7 @@ impl HiveApp {
             .when(self.reasoning_picker.loading && !has_options, |view| {
                 view.child(
                     div()
+                        .px_1()
                         .text_size(px(11.5))
                         .text_color(Color::Muted.get(cx))
                         .child(tr("正在读取…")),
@@ -135,6 +148,7 @@ impl HiveApp {
             .when_some(recovery_notice, |view, text| {
                 view.child(
                     div()
+                        .px_1()
                         .text_size(px(11.))
                         .text_color(Color::Muted.get(cx))
                         .child(text),
@@ -142,49 +156,77 @@ impl HiveApp {
             })
             .when_some(state.filter(|s| s.levels.len() >= 2), |view, state| {
                 view.child(
-                    h_flex()
+                    v_flex()
                         .w_full()
                         .min_w_0()
-                        .items_center()
-                        .gap(px(2.))
-                        .p(px(2.))
-                        .rounded_lg()
-                        .bg(Color::Inset.get(cx))
+                        .gap_0p5()
                         .children(state.levels.iter().enumerate().map(|(i, level)| {
                             let active = state.level == *level;
+                            let keyboard_focused = focused_level == Some(level.as_str());
                             let level_label = reasoning_level_label(level).to_owned();
-                            let level = level.clone();
+                            let level_key = level.clone();
+                            let is_default_tag =
+                                !active && matches!(level.as_str(), "default" | "native");
                             Button::new(("reasoning-option", i))
-                                .custom(crate::palette::segment_variant(active, cx))
+                                .custom(crate::palette::sidebar_item_variant(
+                                    active || keyboard_focused,
+                                    cx,
+                                ))
                                 .compact()
-                                .xsmall()
-                                .flex_1()
+                                .w_full()
                                 .min_w_0()
-                                .h(px(24.))
-                                .px_1()
+                                .h(px(28.))
+                                .px_2()
                                 .rounded_md()
-                                .justify_center()
-                                .selected(active)
+                                .justify_start()
+                                .selected(active || keyboard_focused)
                                 .disabled(self.reasoning_picker.loading || disabled)
                                 .accessibility_label(format!("{}: {}", tr("推理强度"), level_label))
                                 .child(
-                                    div()
-                                        .truncate()
-                                        .text_size(px(11.5))
-                                        .font_weight(if active {
-                                            FontWeight::SEMIBOLD
-                                        } else {
-                                            FontWeight::NORMAL
+                                    h_flex()
+                                        .w_full()
+                                        .min_w_0()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_1p5()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_size(px(12.5))
+                                                .font_weight(if active {
+                                                    FontWeight::SEMIBOLD
+                                                } else {
+                                                    FontWeight::NORMAL
+                                                })
+                                                .text_color(if active {
+                                                    Color::Text.get(cx)
+                                                } else {
+                                                    Color::Secondary.get(cx)
+                                                })
+                                                .child(level_label),
+                                        )
+                                        .when(active, |row| {
+                                            row.child(
+                                                Icon::new(Glyph::Check)
+                                                    .size(px(13.))
+                                                    .text_color(Color::Accent.get(cx))
+                                                    .flex_shrink_0(),
+                                            )
                                         })
-                                        .text_color(if active {
-                                            Color::Text.get(cx)
-                                        } else {
-                                            Color::Muted.get(cx)
-                                        })
-                                        .child(level_label),
+                                        .when(is_default_tag, |row| {
+                                            row.child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .text_size(px(10.5))
+                                                    .text_color(Color::Muted.get(cx))
+                                                    .child(tr("默认")),
+                                            )
+                                        }),
                                 )
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.load_reasoning(Some(level.clone()), cx)
+                                    this.load_reasoning(Some(level_key.clone()), cx)
                                 }))
                         })),
                 )
@@ -195,7 +237,7 @@ impl HiveApp {
 
 #[cfg(test)]
 mod tests {
-    use super::reasoning_level_label;
+    use super::{reasoning_level_label, should_render_reasoning_panel};
 
     #[test]
     fn reasoning_level_labels_are_localized() {
@@ -209,5 +251,19 @@ mod tests {
                 "expected localized label for effort `{level}`"
             );
         }
+    }
+
+    #[test]
+    fn reasoning_settings_return_none_when_single_level_and_idle() {
+        assert!(!should_render_reasoning_panel(0, false, false, false, false));
+        assert!(!should_render_reasoning_panel(1, false, false, false, false));
+        assert!(should_render_reasoning_panel(2, false, false, false, false));
+        // Initial/empty loading must not expand a transient right column.
+        assert!(!should_render_reasoning_panel(0, true, false, false, false));
+        assert!(!should_render_reasoning_panel(1, true, false, false, false));
+        // Switching from a model that already had a right column keeps placeholder while loading.
+        assert!(should_render_reasoning_panel(0, true, false, false, true));
+        assert!(should_render_reasoning_panel(0, false, true, false, false));
+        assert!(should_render_reasoning_panel(1, false, false, true, false));
     }
 }

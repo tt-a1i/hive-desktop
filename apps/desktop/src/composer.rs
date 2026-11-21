@@ -49,6 +49,13 @@ impl HiveApp {
             }
             self.command_picker.open = false;
         }
+        if !action.secondary && !action.shift && self.mention_picker.open {
+            if self.accept_selected_mention(window, cx) {
+                cx.stop_propagation();
+                return;
+            }
+            self.mention_picker.close();
+        }
         if action.secondary && !action.shift {
             cx.stop_propagation();
             if let Some(intent) = self.composer_modifier_intent(false, cx) {
@@ -69,6 +76,7 @@ impl HiveApp {
     ) {
         if self.composer_key_is_focused(window, cx)
             && !self.command_picker.open
+            && !self.mention_picker.open
             && let Some(intent) = self.composer_modifier_intent(true, cx)
         {
             cx.stop_propagation();
@@ -120,6 +128,7 @@ impl HiveApp {
             && self.conversation_ready
             && self.viewing_conversation()
             && !self.command_picker.open
+            && !self.mention_picker.open
             && !self.conversation_is_read_only()
             && !source.scratch
             && (source.execution.is_none() || source.can_start_fresh_worktree_draft)

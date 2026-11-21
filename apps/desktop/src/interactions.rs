@@ -13,10 +13,14 @@ use crate::{
     protocol::{AgentInteraction, PiEvent},
 };
 use gpui_kit::{
-    component::input::{InputEvent, InputState},
+    component::{
+        WindowExt,
+        input::{InputEvent, InputState},
+    },
     *,
 };
 use serde::Deserialize;
+use serde_json::json;
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -37,6 +41,7 @@ pub struct InteractionCard {
     pi_input: Option<Entity<InputState>>,
     pi_editor: Option<Entity<gpui_kit::component::input::TextareaState>>,
     questions: Vec<QuestionDraft>,
+    quick_select_question: Option<usize>,
     initialized: bool,
     submitting: bool,
     attachment_save_failed: bool,
@@ -158,6 +163,7 @@ impl InteractionCard {
             pi_input: None,
             pi_editor: None,
             questions: vec![],
+            quick_select_question: None,
             initialized: false,
             submitting: false,
             attachment_save_failed: false,
@@ -333,6 +339,7 @@ impl HiveApp {
             if raw.state == "responding" {
                 card.submitting = true;
                 card.questions.clear();
+                card.quick_select_question = None;
                 card.initialized = true;
             }
             if !card.raw.has_native_identity() && raw.has_native_identity() {
@@ -468,8 +475,468 @@ impl HiveApp {
                         });
                     }
                 }
-                Err(_) => card.error = Some("无法读取 Codex 问题，请取消本轮后重试。".into()),
+        Err(_) => card.error = Some("无法读取 Codex 问题，请取消本轮后重试。".into()),
             }
+        }
+    }
+
+    pub(super) fn focus_interaction_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let card_input_focused = self
+            .session
+            .as_ref()
+            .and_then(|session| self.interactions.sessions.get(&session.id))
+            .is_some_and(|cards| {
+                cards
+                    .iter()
+                    .any(|card| card.has_focused_or_composing_input(window, cx))
+            });
+        if !card_input_focused {
+            self.workspace_focus
+                .region(crate::workspace_focus::Area::History)
+                .focus(window, cx);
+        }
+    }
+
+    pub(crate) fn handle_interaction_quick_select_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(digit_index) = quick_select_digit_index(&event.keystroke.key) else {
+            return;
+        };
+        let has_blocked_context = window.context_stack().iter().any(|ctx| {
+            ctx.contains("PopupMenu")
+                || ctx.contains("Input")
+                || ctx.contains("Editor")
+                || ctx.contains("HiveTerminal")
+                || ctx.contains("HiveGitDiffFind")
+                || ctx.contains("HiveConversationFind")
+                || ctx.contains("HiveSessionName")
+                || ctx.contains("HiveProjectFileSearch")
+        });
+        let any_editor_focused_or_composing = self
+            .workspace_focus
+            .region(crate::workspace_focus::Area::Composer)
+            .contains_focused(window, cx)
+            || self.input.read(cx).focus_handle(cx).is_focused(window)
+            || self
+                .input
+                .update(cx, |i, cx| i.marked_text_range(window, cx).is_some())
+            || self
+                .workspace_focus
+                .region(crate::workspace_focus::Area::Terminal)
+                .contains_focused(window, cx)
+            || self
+                .workspace_focus
+                .region(crate::workspace_focus::Area::Git)
+                .contains_focused(window, cx)
+            || self
+                .workspace_focus
+                .region(crate::workspace_focus::Area::Files)
+                .contains_focused(window, cx)
+            || self
+                .workspace_focus
+                .region(crate::workspace_focus::Area::Sidebar)
+                .contains_focused(window, cx)
+            || self.folder.read(cx).focus_handle(cx).is_focused(window)
+            || self
+                .session
+                .as_ref()
+                .and_then(|s| self.interactions.sessions.get(&s.id))
+                .is_some_and(|cards| {
+                    cards
+                        .iter()
+                        .any(|card| card.has_focused_or_composing_input(window, cx))
+                });
+
+        let allowed = quick_select_guard_allows(QuickSelectGuard {
+            is_held: event.is_held,
+            modifiers_empty: event.keystroke.modifiers == Modifiers::none(),
+            connected: self.connected,
+            closing: self.closing,
+            loading: self.loading,
+            showing_welcome_guide: self.showing_welcome_guide,
+            viewing_conversation: self.viewing_conversation(),
+            has_active_dialog_or_sheet: window.has_active_dialog(cx)
+                || window.has_active_sheet(cx),
+            has_open_overlay: self.choosing_model
+                || self.command_picker.open
+                || self.mention_picker.open
+                || self.usage.visible
+                || self.add_workspace_open
+                || self.session_name_target.is_some()
+                || self.conversation_find.is_some(),
+            has_blocked_context,
+            any_editor_focused_or_composing,
+        });
+        if !allowed {
+            return;
+        }
+        let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) else {
+            return;
+        };
+        let mut pi_submit: Option<(String, String)> = None;
+        let mut handled = false;
+        if let Some(cards) = self.interactions.sessions.get_mut(&session_id)
+            && let Some(card) = cards.iter_mut().find(|c| interaction_supports_quick_select(c))
+        {
+            if card.is_pi() && card.raw.method == "select" {
+                if let Some(option) = card.raw.params["options"]
+                    .as_array()
+                    .and_then(|opts| opts.get(digit_index))
+                    .and_then(|v| v.as_str())
+                {
+                    pi_submit = Some((card.raw.id.clone(), option.to_owned()));
+                    handled = true;
+                }
+            } else if let Some(q_idx) = active_quick_select_question_index(card)
+                && let Some(draft) = card.questions.get_mut(q_idx)
+                && let Some(option) = draft
+                    .question
+                    .options
+                    .as_ref()
+                    .and_then(|opts| opts.get(digit_index))
+            {
+                let label = option.label.clone();
+                if draft.question.multi_select {
+                    if draft.multiple_selected.contains(&label) {
+                        draft.multiple_selected.retain(|s| s != &label);
+                    } else {
+                        draft.multiple_selected.push(label);
+                    }
+                } else {
+                    draft.selected = Some(label);
+                    draft.other = false;
+                }
+                let meta = quick_select_question_meta(&card.questions);
+                card.quick_select_question = next_quick_select_pinned_after_choice(&meta, q_idx);
+                handled = true;
+            }
+        }
+        if let Some((interaction_id, option)) = pi_submit {
+            self.submit_interaction(session_id, interaction_id, json!({"value": option}), cx);
+            cx.stop_propagation();
+        } else if handled {
+            cx.notify();
+            cx.stop_propagation();
+        }
+    }
+}
+
+impl InteractionCard {
+    pub(super) fn has_focused_or_composing_input(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        self.questions.iter().any(|draft| {
+            draft.input.read(cx).focus_handle(cx).is_focused(window)
+                || draft
+                    .input
+                    .update(cx, |i, cx| i.marked_text_range(window, cx).is_some())
+        }) || self.pi_input.as_ref().is_some_and(|input| {
+            input.read(cx).focus_handle(cx).is_focused(window)
+                || input.update(cx, |i, cx| i.marked_text_range(window, cx).is_some())
+        }) || self.pi_editor.as_ref().is_some_and(|editor| {
+            editor.read(cx).focus_handle(cx).is_focused(window)
+                || editor.update(cx, |i, cx| i.marked_text_range(window, cx).is_some())
+        })
+    }
+}
+
+pub(crate) fn quick_select_digit_index(key: &str) -> Option<usize> {
+    match key {
+        "1" => Some(0),
+        "2" => Some(1),
+        "3" => Some(2),
+        "4" => Some(3),
+        "5" => Some(4),
+        "6" => Some(5),
+        "7" => Some(6),
+        "8" => Some(7),
+        "9" => Some(8),
+        _ => None,
+    }
+}
+
+pub(crate) struct QuickSelectGuard {
+    pub is_held: bool,
+    pub modifiers_empty: bool,
+    pub connected: bool,
+    pub closing: bool,
+    pub loading: bool,
+    pub showing_welcome_guide: bool,
+    pub viewing_conversation: bool,
+    pub has_active_dialog_or_sheet: bool,
+    pub has_open_overlay: bool,
+    pub has_blocked_context: bool,
+    pub any_editor_focused_or_composing: bool,
+}
+
+pub(crate) fn quick_select_guard_allows(guard: QuickSelectGuard) -> bool {
+    !guard.is_held
+        && guard.modifiers_empty
+        && guard.connected
+        && !guard.closing
+        && !guard.loading
+        && !guard.showing_welcome_guide
+        && guard.viewing_conversation
+        && !guard.has_active_dialog_or_sheet
+        && !guard.has_open_overlay
+        && !guard.has_blocked_context
+        && !guard.any_editor_focused_or_composing
+}
+
+pub(crate) fn interaction_supports_quick_select(card: &InteractionCard) -> bool {
+    card.waiting()
+        && ((card.raw.backend == "codex" && card.raw.method == "item/tool/requestUserInput")
+            || (card.is_claude() && card.raw.method == "ask-user-question")
+            || (card.is_pi() && card.raw.method == "select"))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct QuickSelectQuestionMeta {
+    is_secret: bool,
+    options_len: usize,
+    other: bool,
+    has_selected: bool,
+    has_multi: bool,
+    multi_select: bool,
+}
+
+fn quick_select_question_meta(questions: &[QuestionDraft]) -> Vec<QuickSelectQuestionMeta> {
+    questions
+        .iter()
+        .map(|draft| QuickSelectQuestionMeta {
+            is_secret: draft.question.is_secret,
+            options_len: draft.question.options.as_ref().map_or(0, Vec::len),
+            other: draft.other,
+            has_selected: draft.selected.is_some(),
+            has_multi: !draft.multiple_selected.is_empty(),
+            multi_select: draft.question.multi_select,
+        })
+        .collect()
+}
+
+fn next_quick_select_pinned_after_choice(
+    questions: &[QuickSelectQuestionMeta],
+    chosen_idx: usize,
+) -> Option<usize> {
+    let chosen = questions.get(chosen_idx)?;
+    if chosen.multi_select {
+        return Some(chosen_idx);
+    }
+    let has_other_unanswered = questions.iter().enumerate().any(|(idx, item)| {
+        idx != chosen_idx
+            && !item.is_secret
+            && item.options_len > 0
+            && !item.other
+            && !item.has_selected
+            && !item.has_multi
+    });
+    if has_other_unanswered {
+        None
+    } else {
+        Some(chosen_idx)
+    }
+}
+
+fn active_quick_select_question_index(card: &InteractionCard) -> Option<usize> {
+    let meta = quick_select_question_meta(&card.questions);
+    active_quick_select_question_index_from_meta(meta.into_iter(), card.quick_select_question)
+}
+
+fn active_quick_select_question_index_from_meta<I>(
+    items: I,
+    pinned: Option<usize>,
+) -> Option<usize>
+where
+    I: Iterator<Item = QuickSelectQuestionMeta> + Clone,
+{
+    if let Some(idx) = pinned
+        && let Some(item) = items.clone().nth(idx)
+        && !item.is_secret
+        && item.options_len > 0
+        && (item.multi_select || !item.other)
+    {
+        return Some(idx);
+    }
+    items
+        .clone()
+        .position(|item| {
+            !item.is_secret
+                && item.options_len > 0
+                && !item.other
+                && !item.has_selected
+                && !item.has_multi
+        })
+        .or_else(|| {
+            items
+                .clone()
+                .position(|item| !item.is_secret && item.options_len > 0)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        InteractionCard, QuickSelectGuard, QuickSelectQuestionMeta,
+        active_quick_select_question_index_from_meta, interaction_supports_quick_select,
+        next_quick_select_pinned_after_choice, quick_select_digit_index, quick_select_guard_allows,
+    };
+    use crate::protocol::AgentInteraction;
+
+    fn sample_interaction(backend: &str, method: &str, state: &str) -> AgentInteraction {
+        let native_request_id = if backend == "claude" {
+            serde_json::json!("req-1")
+        } else {
+            serde_json::json!(1)
+        };
+        let value = serde_json::json!({
+            "id": "int-1",
+            "backend": backend,
+            "method": method,
+            "state": state,
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "itemId": "item-1",
+            "nativeRequestId": native_request_id,
+            "params": {},
+        });
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn quick_select_targets_first_unanswered_non_secret_question_and_parses_1_to_9() {
+        for digit in 1..=9 {
+            assert_eq!(quick_select_digit_index(&digit.to_string()), Some(digit - 1));
+        }
+        for invalid in ["0", "a", "10", "space", "enter"] {
+            assert_eq!(quick_select_digit_index(invalid), None);
+        }
+
+        // Skips secret & already-answered questions, targets first unanswered non-secret.
+        let meta = [
+            QuickSelectQuestionMeta { is_secret: true, options_len: 3, other: false, has_selected: false, has_multi: false, multi_select: false },
+            QuickSelectQuestionMeta { is_secret: false, options_len: 2, other: false, has_selected: true, has_multi: false, multi_select: false },
+            QuickSelectQuestionMeta { is_secret: false, options_len: 4, other: false, has_selected: false, has_multi: false, multi_select: false },
+            QuickSelectQuestionMeta { is_secret: false, options_len: 2, other: false, has_selected: false, has_multi: false, multi_select: false },
+        ];
+        assert_eq!(
+            active_quick_select_question_index_from_meta(meta.into_iter(), None),
+            Some(2)
+        );
+
+        // Falls back to first non-secret optioned question when all are answered without pin.
+        let all_answered = [
+            QuickSelectQuestionMeta { is_secret: true, options_len: 2, other: false, has_selected: false, has_multi: false, multi_select: false },
+            QuickSelectQuestionMeta { is_secret: false, options_len: 3, other: false, has_selected: true, has_multi: false, multi_select: false },
+            QuickSelectQuestionMeta { is_secret: false, options_len: 2, other: false, has_selected: false, has_multi: true, multi_select: true },
+        ];
+        assert_eq!(
+            active_quick_select_question_index_from_meta(all_answered.into_iter(), None),
+            Some(1)
+        );
+
+        // Multi-question Defect D1 regression: Q0(single-select) + Q1(multi-select).
+        let mut flow = [
+            QuickSelectQuestionMeta { is_secret: false, options_len: 3, other: false, has_selected: false, has_multi: false, multi_select: false },
+            QuickSelectQuestionMeta { is_secret: false, options_len: 4, other: false, has_selected: false, has_multi: false, multi_select: true },
+        ];
+        let mut pinned = None;
+        assert_eq!(
+            active_quick_select_question_index_from_meta(flow.iter().copied(), pinned),
+            Some(0)
+        );
+        // Step 1: User presses `1` to answer Q0 (single-select) -> advances cleanly to Q1.
+        flow[0].has_selected = true;
+        pinned = next_quick_select_pinned_after_choice(&flow, 0);
+        assert_eq!(pinned, None);
+        assert_eq!(
+            active_quick_select_question_index_from_meta(flow.iter().copied(), pinned),
+            Some(1)
+        );
+        // Step 2: User presses `1` to toggle Q1 option 1 (multi-select) -> must STAY on Q1!
+        flow[1].has_multi = true;
+        pinned = next_quick_select_pinned_after_choice(&flow, 1);
+        assert_eq!(pinned, Some(1));
+        assert_eq!(
+            active_quick_select_question_index_from_meta(flow.iter().copied(), pinned),
+            Some(1)
+        );
+        // Step 3: User continues pressing `2` -> still targets Q1, never jumps back to overwrite Q0!
+        pinned = next_quick_select_pinned_after_choice(&flow, 1);
+        assert_eq!(
+            active_quick_select_question_index_from_meta(flow.iter().copied(), pinned),
+            Some(1)
+        );
+        // Step 4: Even if user toggles all options off on Q1, focus stays pinned on Q1.
+        flow[1].has_multi = false;
+        pinned = next_quick_select_pinned_after_choice(&flow, 1);
+        assert_eq!(
+            active_quick_select_question_index_from_meta(flow.iter().copied(), pinned),
+            Some(1)
+        );
+
+        // Approval cards must never be quick-selected.
+        let codex_q = InteractionCard::new(sample_interaction(
+            "codex",
+            "item/tool/requestUserInput",
+            "pending",
+        ));
+        let codex_approval = InteractionCard::new(sample_interaction(
+            "codex",
+            "item/commandExecution/requestApproval",
+            "pending",
+        ));
+        let claude_q =
+            InteractionCard::new(sample_interaction("claude", "ask-user-question", "pending"));
+        let claude_tool =
+            InteractionCard::new(sample_interaction("claude", "can-use-tool", "pending"));
+        let pi_select = InteractionCard::new(sample_interaction("pi-rpc", "select", "pending"));
+        let pi_confirm = InteractionCard::new(sample_interaction("pi-rpc", "confirm", "pending"));
+        assert!(interaction_supports_quick_select(&codex_q));
+        assert!(!interaction_supports_quick_select(&codex_approval));
+        assert!(interaction_supports_quick_select(&claude_q));
+        assert!(!interaction_supports_quick_select(&claude_tool));
+        assert!(interaction_supports_quick_select(&pi_select));
+        assert!(!interaction_supports_quick_select(&pi_confirm));
+
+        // Multi-card queue: only the first waiting quick-selectable card receives key routing/badges.
+        let cards = [codex_approval, pi_select, claude_q];
+        assert_eq!(cards.iter().position(interaction_supports_quick_select), Some(1));
+    }
+
+    #[test]
+    fn quick_select_guard_blocks_all_inputs_dialogs_and_popovers() {
+        let base = QuickSelectGuard {
+            is_held: false,
+            modifiers_empty: true,
+            connected: true,
+            closing: false,
+            loading: false,
+            showing_welcome_guide: false,
+            viewing_conversation: true,
+            has_active_dialog_or_sheet: false,
+            has_open_overlay: false,
+            has_blocked_context: false,
+            any_editor_focused_or_composing: false,
+        };
+        assert!(quick_select_guard_allows(base));
+
+        let cases = [
+            QuickSelectGuard { is_held: true, ..QuickSelectGuard { is_held: false, modifiers_empty: true, connected: true, closing: false, loading: false, showing_welcome_guide: false, viewing_conversation: true, has_active_dialog_or_sheet: false, has_open_overlay: false, has_blocked_context: false, any_editor_focused_or_composing: false } },
+            QuickSelectGuard { modifiers_empty: false, is_held: false, connected: true, closing: false, loading: false, showing_welcome_guide: false, viewing_conversation: true, has_active_dialog_or_sheet: false, has_open_overlay: false, has_blocked_context: false, any_editor_focused_or_composing: false },
+            QuickSelectGuard { has_active_dialog_or_sheet: true, is_held: false, modifiers_empty: true, connected: true, closing: false, loading: false, showing_welcome_guide: false, viewing_conversation: true, has_open_overlay: false, has_blocked_context: false, any_editor_focused_or_composing: false },
+            QuickSelectGuard { has_open_overlay: true, is_held: false, modifiers_empty: true, connected: true, closing: false, loading: false, showing_welcome_guide: false, viewing_conversation: true, has_active_dialog_or_sheet: false, has_blocked_context: false, any_editor_focused_or_composing: false },
+            QuickSelectGuard { has_blocked_context: true, is_held: false, modifiers_empty: true, connected: true, closing: false, loading: false, showing_welcome_guide: false, viewing_conversation: true, has_active_dialog_or_sheet: false, has_open_overlay: false, any_editor_focused_or_composing: false },
+            QuickSelectGuard { any_editor_focused_or_composing: true, is_held: false, modifiers_empty: true, connected: true, closing: false, loading: false, showing_welcome_guide: false, viewing_conversation: true, has_active_dialog_or_sheet: false, has_open_overlay: false, has_blocked_context: false },
+            QuickSelectGuard { viewing_conversation: false, is_held: false, modifiers_empty: true, connected: true, closing: false, loading: false, showing_welcome_guide: false, has_active_dialog_or_sheet: false, has_open_overlay: false, has_blocked_context: false, any_editor_focused_or_composing: false },
+        ];
+        for guard in cases {
+            assert!(!quick_select_guard_allows(guard));
         }
     }
 }
