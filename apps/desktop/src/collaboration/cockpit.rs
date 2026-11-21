@@ -441,22 +441,102 @@ impl HiveApp {
             )
     }
 
+    fn build_split_peek_meta(&self, session: &crate::protocol::Session) -> (
+        String,
+        String,
+        Option<String>,
+        &'static str,
+        Option<String>,
+        bool,
+        bool,
+        Option<String>,
+        bool,
+        bool,
+        bool,
+    ) {
+        let title = self.session_title(session).to_owned();
+        let backend_label = tr(session.backend.label()).to_owned();
+        let branch = session
+            .execution
+            .as_ref()
+            .filter(|e| e.kind == "worktree")
+            .map(|e| e.branch.trim().to_owned())
+            .filter(|b| !b.is_empty());
+        let role_key = session.display_role_key();
+        let agent_id = session.display_agent_id();
+        let member_name = agent_id.and_then(|id| {
+            self.members
+                .iter()
+                .find(|m| m.id == id)
+                .map(|m| m.name.clone())
+        });
+        let identity_unknown = session.identity_state.as_deref() == Some("unknown");
+        let member_missing = agent_id.is_some_and(|id| {
+            !id.ends_with(":orchestrator")
+                && !id.ends_with(":__workflow__")
+                && !self.members.iter().any(|m| m.id == id)
+        });
+        let execution_path = session
+            .execution
+            .as_ref()
+            .map(|e| e.path.clone())
+            .or_else(|| session.execution_path.clone())
+            .filter(|p| !p.trim().is_empty());
+        let shared_worktree = session
+            .execution
+            .as_ref()
+            .is_some_and(|e| e.kind == "worktree" && e.owner_session_id.is_some());
+        (
+            title,
+            backend_label,
+            branch,
+            role_key,
+            member_name,
+            identity_unknown,
+            member_missing,
+            execution_path,
+            shared_worktree,
+            session.worktree_released,
+            session.archived,
+        )
+    }
+
     pub(crate) fn open_split_peek_session(&mut self, session_id: String, cx: &mut Context<Self>) {
         if !self.connected || self.closing {
             return;
         }
-        let session_meta = self.sessions.iter().find(|s| s.id == session_id);
-        let title = session_meta
-            .map(|s| self.session_title(s).to_owned())
-            .unwrap_or_else(|| tr("成员会话").to_owned());
-        let backend_label = session_meta
-            .map(|s| tr(s.backend.label()).to_owned())
-            .unwrap_or_default();
-        let branch = session_meta
-            .and_then(|s| s.execution.as_ref())
-            .filter(|e| e.kind == "worktree")
-            .map(|e| e.branch.trim().to_owned())
-            .filter(|b| !b.is_empty());
+        let session_meta = self.sessions.iter().find(|s| s.id == session_id).cloned();
+        let (
+            title,
+            backend_label,
+            branch,
+            role_key,
+            member_name,
+            identity_unknown,
+            member_missing,
+            execution_path,
+            shared_worktree,
+            worktree_released,
+            archived,
+        ) = if let Some(s) = session_meta.as_ref() {
+            self.build_split_peek_meta(s)
+        } else {
+            (
+                tr("成员会话").to_owned(),
+                String::new(),
+                None,
+                "会话",
+                None,
+                false,
+                false,
+                None,
+                false,
+                false,
+                false,
+            )
+        };
+        let remote_busy = self.busy.contains(&session_id);
+        let pending_count = self.pending.get(&session_id).copied().unwrap_or(0);
 
         self.git_drawer_open = false;
         self.close_collaboration();
@@ -465,6 +545,18 @@ impl HiveApp {
             title,
             backend_label,
             branch,
+            role_key,
+            member_name,
+            identity_unknown,
+            member_missing,
+            execution_path,
+            shared_worktree,
+            worktree_released,
+            archived,
+            remote_busy,
+            pending_count,
+            interaction_count: 0,
+            session_snapshot: session_meta,
             loading: true,
             error: None,
             messages: vec![],
@@ -506,6 +598,15 @@ impl HiveApp {
                 if this.connection_generation != generation {
                     return;
                 }
+                let parsed_session = res
+                    .as_ref()
+                    .ok()
+                    .and_then(|value| {
+                        serde_json::from_value::<crate::protocol::Session>(value.clone()).ok()
+                    });
+                let meta_tuple = parsed_session
+                    .as_ref()
+                    .map(|s| this.build_split_peek_meta(s));
                 let Some(peek) = this.split_peek.as_mut() else {
                     return;
                 };
@@ -515,6 +616,67 @@ impl HiveApp {
                 peek.loading = false;
                 match res {
                     Ok(value) => {
+                        if let Some((
+                            title,
+                            backend_label,
+                            branch,
+                            role_key,
+                            member_name,
+                            identity_unknown,
+                            member_missing,
+                            execution_path,
+                            shared_worktree,
+                            worktree_released,
+                            archived,
+                        )) = meta_tuple
+                        {
+                            peek.title = title;
+                            peek.backend_label = backend_label;
+                            peek.branch = branch;
+                            peek.role_key = role_key;
+                            peek.member_name = member_name;
+                            peek.identity_unknown = identity_unknown;
+                            peek.member_missing = member_missing;
+                            peek.execution_path = execution_path;
+                            peek.shared_worktree = shared_worktree;
+                            peek.worktree_released = worktree_released;
+                            peek.archived = archived;
+                        }
+                        if let Some(session) = parsed_session {
+                            peek.session_snapshot = Some(session);
+                        }
+                        peek.remote_busy = value
+                            .get("busy")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        peek.pending_count = value
+                            .get("pending")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as usize;
+                        peek.interaction_count = value
+                            .get("interactions")
+                            .and_then(|v| v.as_array())
+                            .map_or(0, Vec::len);
+
+                        let extract_text = |item: &serde_json::Value| -> String {
+                            let mut text = String::new();
+                            if let Some(s) = item.get("content").and_then(|c| c.as_str()) {
+                                text.push_str(s);
+                            } else if let Some(blocks) =
+                                item.get("content").and_then(|c| c.as_array())
+                            {
+                                for b in blocks {
+                                    if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
+                                        if !text.is_empty() {
+                                            text.push('\n');
+                                        }
+                                        text.push_str(t);
+                                    }
+                                }
+                            }
+                            text
+                        };
+
                         let mut msgs = Vec::new();
                         if let Some(arr) = value.get("history").and_then(|h| h.as_array()) {
                             for item in arr.iter().rev().take(30).rev() {
@@ -523,19 +685,7 @@ impl HiveApp {
                                     .and_then(|r| r.as_str())
                                     .unwrap_or("assistant")
                                     .to_owned();
-                                let mut text = String::new();
-                                if let Some(s) = item.get("content").and_then(|c| c.as_str()) {
-                                    text.push_str(s);
-                                } else if let Some(blocks) = item.get("content").and_then(|c| c.as_array()) {
-                                    for b in blocks {
-                                        if let Some(t) = b.get("text").and_then(|t| t.as_str()) {
-                                            if !text.is_empty() {
-                                                text.push('\n');
-                                            }
-                                            text.push_str(t);
-                                        }
-                                    }
-                                }
+                                let text = extract_text(item);
                                 let trimmed = text.trim();
                                 if trimmed.is_empty() {
                                     continue;
@@ -546,6 +696,28 @@ impl HiveApp {
                                     trimmed.to_owned()
                                 };
                                 msgs.push(crate::app::SplitPeekMessage { role, text: bounded });
+                            }
+                        }
+                        if let Some(active) = value
+                            .get("activeMessage")
+                            .and_then(|am| am.get("message").or(Some(am)))
+                        {
+                            let text = extract_text(active);
+                            let trimmed = text.trim();
+                            if !trimmed.is_empty() {
+                                let bounded: String = if trimmed.chars().count() > 800 {
+                                    format!("{}…", trimmed.chars().take(800).collect::<String>())
+                                } else {
+                                    trimmed.to_owned()
+                                };
+                                msgs.push(crate::app::SplitPeekMessage {
+                                    role: active
+                                        .get("role")
+                                        .and_then(|r| r.as_str())
+                                        .unwrap_or("assistant")
+                                        .to_owned(),
+                                    text: bounded,
+                                });
                             }
                         }
                         peek.messages = msgs;
@@ -566,9 +738,89 @@ impl HiveApp {
         cx.notify();
     }
 
+    pub(crate) fn split_peek_origin_label(peek: &crate::app::SplitPeekState) -> String {
+        if peek.identity_unknown {
+            tr("只读历史 · 归属未知").to_owned()
+        } else if let Some(name) = &peek.member_name {
+            if name == &peek.title {
+                tr(peek.role_key).to_owned()
+            } else {
+                format!("{} · {name}", tr(peek.role_key))
+            }
+        } else if peek.member_missing {
+            format!("{} · {}", tr(peek.role_key), tr("已移除成员"))
+        } else {
+            tr(peek.role_key).to_owned()
+        }
+    }
+
     pub(crate) fn render_split_peek_panel(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let peek = self.split_peek.as_ref()?;
         let sid_promote = peek.session_id.clone();
+        let is_current_main = self.session.as_ref().is_some_and(|s| s.id == sid_promote);
+        let can_resolve_session = self.sessions.iter().any(|s| s.id == sid_promote)
+            || peek.session_snapshot.as_ref().is_some_and(|s| {
+                self.workspace.as_deref() == Some(s.workspace_id.as_str())
+                    && !self.removed_sessions.contains(&s.id)
+            });
+        let can_promote_write =
+            self.connected && !self.closing && self.workspace_writes_allowed();
+        let can_promote = is_current_main || (can_promote_write && can_resolve_session);
+        let promote_tooltip = if is_current_main {
+            tr("已为主会话，点击关闭分屏")
+        } else if !can_promote_write {
+            tr("当前只读或未连接，无法切换主会话")
+        } else if !can_resolve_session {
+            tr("会话快照尚未就绪或不属于当前工作区")
+        } else {
+            tr("切为主会话")
+        };
+        let is_busy = peek.remote_busy || self.busy.contains(&peek.session_id);
+        let status_dot = if peek.interaction_count > 0 {
+            crate::chrome::attention_dot(cx)
+        } else if is_busy {
+            Color::Accent.get(cx)
+        } else if peek.error.is_some() {
+            Color::Error.get(cx)
+        } else if peek.archived {
+            Color::Muted.get(cx)
+        } else {
+            Color::Success.get(cx)
+        };
+        let origin_label = Self::split_peek_origin_label(peek);
+        let state_label = if peek.interaction_count > 0 {
+            Some((tr("等待确认"), crate::chrome::attention_dot(cx)))
+        } else if is_busy {
+            Some((tr("运行中"), Color::Accent.get(cx)))
+        } else if peek.archived {
+            Some((tr("已归档"), Color::Muted.get(cx)))
+        } else {
+            None
+        };
+        let exec_label = if peek.worktree_released {
+            Some(tr("worktree 已解除").to_owned())
+        } else if let Some(branch) = &peek.branch {
+            if peek.shared_worktree {
+                Some(format!("{} · {branch}", tr("共享 worktree")))
+            } else {
+                Some(format!("{} · {branch}", tr("独立 worktree")))
+            }
+        } else {
+            peek.execution_path.as_deref().map(|path| {
+                let base = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(path);
+                format!("{} · {base}", tr("目录"))
+            })
+        };
+        let exec_tooltip = peek
+            .execution_path
+            .as_deref()
+            .map(palette::display_path);
+        let snapshot_for_promote = peek.session_snapshot.clone();
+
         Some(
             v_flex()
                 .id("split-peek-right-drawer")
@@ -584,34 +836,33 @@ impl HiveApp {
                 .border_color(Color::Divider.get(cx))
                 .bg(Color::Surface.get(cx))
                 .child(
-                    h_flex()
+                    v_flex()
                         .w_full()
-                        .items_center()
-                        .justify_between()
-                        .gap_2()
+                        .gap_1()
                         .px_3()
                         .py_2()
                         .bg(Color::Sidebar.get(cx))
                         .border_b_1()
                         .border_color(Color::Divider.get(cx))
                         .child(
-                            v_flex()
-                                .flex_1()
+                            h_flex()
+                                .w_full()
                                 .min_w_0()
-                                .gap_0p5()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
                                 .child(
                                     h_flex()
+                                        .flex_1()
+                                        .min_w_0()
                                         .items_center()
                                         .gap_1p5()
                                         .child(
                                             div()
-                                                .px_1p5()
-                                                .py(px(0.5))
-                                                .rounded_sm()
-                                                .bg(Color::AccentSoft.get(cx))
-                                                .text_size(px(10.))
-                                                .text_color(Color::Accent.get(cx))
-                                                .child(tr("分屏对照")),
+                                                .size(px(6.))
+                                                .flex_shrink_0()
+                                                .rounded_full()
+                                                .bg(status_dot),
                                         )
                                         .child(
                                             div()
@@ -625,67 +876,149 @@ impl HiveApp {
                                         ),
                                 )
                                 .child(
-                                    div()
-                                        .text_size(px(10.5))
-                                        .text_color(Color::Muted.get(cx))
-                                        .truncate()
-                                        .child(match &peek.branch {
-                                            Some(b) => format!("{} · {}", peek.backend_label, b),
-                                            None => peek.backend_label.clone(),
-                                        }),
+                                    h_flex()
+                                        .flex_shrink_0()
+                                        .items_center()
+                                        .gap_1()
+                                        .when(cfg!(test), |row| {
+                                            row.on_children_prepainted(|bounds, _, _| {
+                                                #[cfg(test)]
+                                                if let Some(promote) = bounds.get(1) {
+                                                    crate::app::record_test_bounds(
+                                                        "split-peek-promote",
+                                                        *promote,
+                                                    );
+                                                }
+                                                let _ = bounds;
+                                            })
+                                        })
+                                        .child(
+                                            Button::new("split-peek-refresh")
+                                                .custom(palette::quiet_icon_variant(cx))
+                                                .compact()
+                                                .xsmall()
+                                                .h(px(24.))
+                                                .w(px(24.))
+                                                .rounded_md()
+                                                .icon(Glyph::RefreshCw)
+                                                .tooltip(tr("刷新分屏会话"))
+                                                .accessibility_label(tr("刷新分屏会话"))
+                                                .disabled(peek.loading)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.refresh_split_peek(cx);
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("split-peek-promote")
+                                                .custom(palette::history_nav_variant(cx))
+                                                .compact()
+                                                .xsmall()
+                                                .h(px(24.))
+                                                .px_2()
+                                                .rounded_md()
+                                                .label(if is_current_main {
+                                                    tr("当前主会话")
+                                                } else {
+                                                    tr("切为主会话")
+                                                })
+                                                .tooltip(promote_tooltip)
+                                                .accessibility_label(tr("切为主会话"))
+                                                .disabled(!can_promote)
+                                                .on_click(cx.listener(move |this, _, window, cx| {
+                                                    if is_current_main {
+                                                        this.split_peek = None;
+                                                        let focus = this.input.read(cx).focus_handle(cx);
+                                                        window.on_next_frame(move |window, cx| {
+                                                            focus.focus(window, cx);
+                                                        });
+                                                        cx.notify();
+                                                        return;
+                                                    }
+                                                    if !this.connected
+                                                        || this.closing
+                                                        || !this.workspace_writes_allowed()
+                                                    {
+                                                        return;
+                                                    }
+                                                    if !this.sessions.iter().any(|s| s.id == sid_promote) {
+                                                        if let Some(snapshot) = snapshot_for_promote.clone() {
+                                                            if this.workspace.as_deref() == Some(snapshot.workspace_id.as_str())
+                                                                && !this.removed_sessions.contains(&snapshot.id)
+                                                            {
+                                                                this.sessions.push(snapshot);
+                                                            }
+                                                        }
+                                                    }
+                                                    if this.sessions.iter().any(|s| s.id == sid_promote) {
+                                                        this.open_member_session(sid_promote.clone(), window, cx);
+                                                        if this.session.as_ref().is_some_and(|s| s.id == sid_promote) {
+                                                            this.split_peek = None;
+                                                        }
+                                                    }
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("split-peek-close")
+                                                .custom(palette::quiet_icon_variant(cx))
+                                                .compact()
+                                                .xsmall()
+                                                .h(px(24.))
+                                                .w(px(24.))
+                                                .rounded_md()
+                                                .icon(Glyph::X)
+                                                .tooltip(tr("关闭分屏"))
+                                                .accessibility_label(tr("关闭分屏"))
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.close_split_peek(cx);
+                                                })),
+                                        ),
                                 ),
                         )
                         .child(
                             h_flex()
-                                .flex_shrink_0()
+                                .id("split-peek-meta-strip")
+                                .w_full()
+                                .min_w_0()
+                                .flex_wrap()
                                 .items_center()
-                                .gap_1()
+                                .gap_1p5()
+                                .text_size(px(10.5))
+                                .text_color(Color::Muted.get(cx))
+                                .when_some(exec_tooltip, |row, tip| {
+                                    row.tooltip(move |window, cx| {
+                                        gpui_kit::component::tooltip::Tooltip::new(tip.clone())
+                                            .build(window, cx)
+                                    })
+                                })
                                 .child(
-                                    Button::new("split-peek-refresh")
-                                        .custom(palette::quiet_icon_variant(cx))
-                                        .compact()
-                                        .xsmall()
-                                        .h(px(24.))
-                                        .w(px(24.))
-                                        .rounded_md()
-                                        .icon(Glyph::RefreshCw)
-                                        .tooltip(tr("刷新分屏会话"))
-                                        .accessibility_label(tr("刷新分屏会话"))
-                                        .disabled(peek.loading)
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.refresh_split_peek(cx);
-                                        })),
+                                    div()
+                                        .px_1p5()
+                                        .py(px(0.5))
+                                        .rounded_sm()
+                                        .bg(Color::AccentSoft.get(cx))
+                                        .text_color(Color::Accent.get(cx))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(origin_label),
                                 )
-                                .child(
-                                    Button::new("split-peek-promote")
-                                        .custom(palette::subtle_icon_variant(cx))
-                                        .compact()
-                                        .xsmall()
-                                        .h(px(24.))
-                                        .px_2()
-                                        .rounded_md()
-                                        .label(tr("切为主会话"))
-                                        .accessibility_label(tr("切为主会话"))
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.split_peek = None;
-                                            this.open_member_session(sid_promote.clone(), window, cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new("split-peek-close")
-                                        .custom(palette::quiet_icon_variant(cx))
-                                        .compact()
-                                        .xsmall()
-                                        .h(px(24.))
-                                        .w(px(24.))
-                                        .rounded_md()
-                                        .icon(Glyph::X)
-                                        .tooltip(tr("关闭分屏"))
-                                        .accessibility_label(tr("关闭分屏"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.close_split_peek(cx);
-                                        })),
-                                ),
+                                .when(!peek.backend_label.is_empty(), |row| {
+                                    row.child(div().child(peek.backend_label.clone()))
+                                })
+                                .when_some(state_label, |row, (label, color)| {
+                                    row.child(
+                                        div()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(color)
+                                            .child(format!("· {label}")),
+                                    )
+                                })
+                                .when_some(exec_label, |row, label| {
+                                    row.child(
+                                        div()
+                                            .min_w_0()
+                                            .truncate()
+                                            .child(format!("· {label}")),
+                                    )
+                                }),
                         ),
                 )
                 .child(
@@ -1057,5 +1390,117 @@ mod tests {
         );
         assert_eq!(errored.live_state(), "error");
         assert_eq!(errored.activity_summary().as_deref(), Some("connection reset"));
+    }
+
+    #[gpui_kit::test]
+    fn split_peek_orchestrator_in_members_uses_orchestrator_badge_and_offline_promote_is_blocked(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use crate::app::{HiveApp, clear_test_bounds, get_test_bounds, init_test_globals};
+        use crate::protocol::{Session, Workspace};
+        use gpui_kit::{
+            AppContext as _, Bounds, MouseButton, VisualTestContext, WindowBounds, WindowOptions,
+            open_window,
+        };
+        use serde_json::json;
+
+        let _locale = init_test_globals(cx);
+        clear_test_bounds();
+        let (window, app) = cx.update(|cx| {
+            let bounds = Bounds::maximized(None, cx);
+            open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| HiveApp::new_for_test(window, cx)),
+            )
+            .unwrap()
+        });
+
+        let lead_session: Session = serde_json::from_value(json!({
+            "id": "s-lead",
+            "title": "主会话",
+            "workspaceId": "w1",
+            "agentId": "w1:orchestrator",
+            "originAgentId": "w1:orchestrator"
+        }))
+        .unwrap();
+        let main_session: Session = serde_json::from_value(json!({
+            "id": "s-main",
+            "title": "Other Session",
+            "workspaceId": "w1"
+        }))
+        .unwrap();
+
+        app.update(cx, |app, cx| {
+            app.workspaces = vec![Workspace {
+                id: "w1".into(),
+                name: "Alpha".into(),
+                path: "/tmp/a".into(),
+            }];
+            app.workspace = Some("w1".into());
+            app.members = vec![Member {
+                id: "w1:orchestrator".into(),
+                description: String::new(),
+                name: "Lead Codex".into(),
+                role: "orchestrator".into(),
+                status: "idle".into(),
+                pending_task_count: 0,
+                configured_command: None,
+                desktop_model: None,
+                desktop_profile: None,
+                desktop_launch_error: None,
+                desktop_activity: None,
+            }];
+            app.sessions = vec![main_session.clone(), lead_session.clone()];
+            app.session = Some(main_session);
+            app.connected = true;
+            app.open_split_peek_session("s-lead".into(), cx);
+
+            let peek = app.split_peek.as_ref().expect("split_peek opened");
+            assert_eq!(peek.role_key, "主控");
+            let origin_zh = HiveApp::split_peek_origin_label(peek);
+            assert!(
+                origin_zh.starts_with("主控"),
+                "expected orchestrator label starting with 主控, got {origin_zh:?}"
+            );
+            assert!(!origin_zh.contains("成员"));
+
+            gpui_kit::component::set_locale("en");
+            let origin_en = HiveApp::split_peek_origin_label(peek);
+            assert!(
+                origin_en.starts_with("Orchestrator"),
+                "expected English orchestrator label, got {origin_en:?}"
+            );
+            gpui_kit::component::set_locale("zh-CN");
+
+            // Simulate backend disconnect while SplitPeek is open.
+            app.connected = false;
+            cx.notify();
+        });
+
+        let mut vcx = VisualTestContext::from_window(window, cx);
+        vcx.run_until_parked();
+
+        let promote_bounds =
+            get_test_bounds("split-peek-promote").expect("split-peek-promote button must render");
+        vcx.simulate_mouse_down(promote_bounds.center(), MouseButton::Left, Default::default());
+        vcx.simulate_mouse_up(promote_bounds.center(), MouseButton::Left, Default::default());
+        vcx.run_until_parked();
+
+        vcx.read(|cx| {
+            let app = app.read(cx);
+            assert!(
+                app.split_peek.is_some(),
+                "clicking split-peek-promote while disconnected must preserve split_peek"
+            );
+            assert_eq!(
+                app.session.as_ref().map(|s| s.id.as_str()),
+                Some("s-main"),
+                "disconnected split-peek-promote must not switch active session"
+            );
+        });
     }
 }

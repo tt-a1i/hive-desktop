@@ -903,14 +903,15 @@ enum TreeGitStatus {
     Failed(String),
 }
 
-fn git_mark_appearance(mark: ChangeMark) -> (&'static str, &'static str, Color) {
+fn git_mark_appearance(mark: ChangeMark, cx: &App) -> (&'static str, &'static str, Rgba) {
+    let diff_palette = crate::diffs_settings::current_palette(cx);
     match mark {
-        ChangeMark::Added => ("A", "Git：已添加", Color::Success),
-        ChangeMark::Deleted => ("D", "Git：已删除", Color::Error),
-        ChangeMark::Renamed => ("R", "Git：已重命名", Color::Secondary),
-        ChangeMark::Conflicted => ("U", "Git：有冲突", Color::Error),
-        ChangeMark::Modified => ("M", "Git：已修改", Color::Accent),
-        ChangeMark::Descendant => ("•", "包含 Git 改动", Color::Accent),
+        ChangeMark::Added => ("A", "Git：已添加", diff_palette.added),
+        ChangeMark::Deleted => ("D", "Git：已删除", diff_palette.removed),
+        ChangeMark::Renamed => ("R", "Git：已重命名", Color::Secondary.get(cx)),
+        ChangeMark::Conflicted => ("U", "Git：有冲突", Color::Error.get(cx)),
+        ChangeMark::Modified => ("M", "Git：已修改", Color::Accent.get(cx)),
+        ChangeMark::Descendant => ("•", "包含 Git 改动", Color::Accent.get(cx)),
     }
 }
 
@@ -3673,7 +3674,7 @@ impl FileBrowser {
             }
             _ => None,
         };
-        let mark = change.map(git_mark_appearance);
+        let mark = change.map(|m| git_mark_appearance(m, cx));
         let (id, item, label, title, depth, enabled, icon, expanded) = match row {
             TreeRow::Entry(entry, depth) => {
                 let path = entry.path.clone();
@@ -3771,7 +3772,7 @@ impl FileBrowser {
                                             .ml_auto()
                                             .flex_shrink_0()
                                             .text_xs()
-                                            .text_color(color.get(cx))
+                                            .text_color(color)
                                             .child(marker),
                                     )
                                 },
@@ -3796,7 +3797,7 @@ impl FileBrowser {
                                 .flex_shrink_0()
                                 .tooltip(title.clone())
                                 .accessibility_label(title)
-                                .child(div().text_xs().text_color(color.get(cx)).child(marker))
+                                .child(div().text_xs().text_color(color).child(marker))
                                 .on_click(cx.listener(move |_, _, window, cx| {
                                     Self::open_changed_file_diff(
                                         cx.weak_entity(),

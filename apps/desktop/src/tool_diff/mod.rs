@@ -16,6 +16,118 @@ use gpui_kit::{
 use crate::git_workspace::patch_reader::PatchReader;
 use serde_json::Value;
 
+struct ThemeDiffColorGuard<'a> {
+    cx: &'a mut App,
+    prev_success: Hsla,
+    prev_danger: Hsla,
+}
+
+impl<'a> ThemeDiffColorGuard<'a> {
+    fn enter(palette: crate::diffs_settings::DiffPalette, cx: &'a mut App) -> Self {
+        let (prev_success, prev_danger) = {
+            let theme = Theme::global_mut(cx);
+            let prev_success = theme.colors.success;
+            let prev_danger = theme.colors.danger;
+            theme.colors.success = palette.added.into();
+            theme.colors.danger = palette.removed.into();
+            (prev_success, prev_danger)
+        };
+        Self {
+            cx,
+            prev_success,
+            prev_danger,
+        }
+    }
+}
+
+impl Drop for ThemeDiffColorGuard<'_> {
+    fn drop(&mut self) {
+        let theme = Theme::global_mut(self.cx);
+        theme.colors.success = self.prev_success;
+        theme.colors.danger = self.prev_danger;
+    }
+}
+
+pub(crate) struct DiffPaletteScope {
+    child: AnyElement,
+    palette: crate::diffs_settings::DiffPalette,
+}
+
+impl DiffPaletteScope {
+    pub(crate) fn wrap(child: impl IntoElement, cx: &App) -> AnyElement {
+        let scheme = cx
+            .try_global::<crate::diffs_settings::DiffPreferences>()
+            .map(|prefs| prefs.settings.color_scheme)
+            .unwrap_or_default();
+        if scheme == crate::diffs_settings::DiffColorScheme::RedGreen {
+            return child.into_any_element();
+        }
+        Self {
+            child: child.into_any_element(),
+            palette: crate::diffs_settings::palette(scheme, cx),
+        }
+        .into_any_element()
+    }
+}
+
+impl IntoElement for DiffPaletteScope {
+    type Element = Self;
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for DiffPaletteScope {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        let guard = ThemeDiffColorGuard::enter(self.palette, cx);
+        (self.child.request_layout(window, guard.cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let guard = ThemeDiffColorGuard::enter(self.palette, cx);
+        self.child.prepaint(window, guard.cx);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let guard = ThemeDiffColorGuard::enter(self.palette, cx);
+        self.child.paint(window, guard.cx);
+    }
+}
+
 struct ToolDiff {
     state: Entity<DiffState>,
     document: Option<data::Document>,
@@ -291,6 +403,7 @@ impl Render for ToolDiff {
                                     ),
                             )
                             .when(has_files, |header| {
+                                let diff_palette = crate::diffs_settings::current_palette(cx);
                                 header.child(
                                     h_flex()
                                         .items_center()
@@ -312,13 +425,13 @@ impl Render for ToolDiff {
                                         .child(
                                             div()
                                                 .font_weight(FontWeight::MEDIUM)
-                                                .text_color(Color::Success.get(cx))
+                                                .text_color(diff_palette.added)
                                                 .child(format!("+{total_additions}")),
                                         )
                                         .child(
                                             div()
                                                 .font_weight(FontWeight::MEDIUM)
-                                                .text_color(Color::Error.get(cx))
+                                                .text_color(diff_palette.removed)
                                                 .child(format!("−{total_deletions}")),
                                         ),
                                 )
@@ -598,7 +711,7 @@ impl Render for ToolDiff {
                         .rounded_xl()
                         .bg(Color::Card.get(cx))
                         .overflow_hidden()
-                        .child(
+                        .child(DiffPaletteScope::wrap(
                             Diff::new(&self.state)
                                 .soft_wrap(code_wrap)
                                 .hover_highlight(DiffHoverHighlight::Both)
@@ -607,7 +720,8 @@ impl Render for ToolDiff {
                                 .rounded_xl()
                                 .overflow_hidden()
                                 .border_color(Color::Divider.get(cx)),
-                        ),
+                            cx,
+                        )),
                 )
             })
             .when(self.raw, |view| {
@@ -695,5 +809,78 @@ mod tests {
         let whitespace = "--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+ old\n";
         assert_eq!(raw_patch_text(whitespace, true), crate::language::tr("忽略空白后没有代码内容变更。"));
         assert!(raw_patch_text("", true).is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn diff_palette_scope_restores_global_theme_colors_after_render(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use gpui_kit::{AppContext as _, BorrowAppContext as _, Bounds, ParentElement as _, Styled as _, WindowBounds, WindowOptions, component::{Theme, diff::*}, div, px};
+        let _locale = crate::app::init_test_globals(cx);
+
+        struct ScopeProbe {
+            state: gpui_kit::Entity<DiffState>,
+            captured_inside: std::rc::Rc<std::cell::Cell<Option<(gpui_kit::Hsla, gpui_kit::Hsla)>>>,
+        }
+        impl gpui_kit::Render for ScopeProbe {
+            fn render(&mut self, _: &mut gpui_kit::Window, cx: &mut gpui_kit::Context<Self>) -> impl gpui_kit::IntoElement {
+                let captured = self.captured_inside.clone();
+                div().size(px(400.)).child(super::DiffPaletteScope::wrap(
+                    div()
+                        .size_full()
+                        .child(Diff::new(&self.state))
+                        .child(gpui_kit::canvas(
+                            move |_, _, cx| {
+                                let t = Theme::global(cx);
+                                captured.set(Some((t.colors.success, t.colors.danger)));
+                            },
+                            |_, _, _, _| {},
+                        )),
+                    cx,
+                ))
+            }
+        }
+
+        let captured = std::rc::Rc::new(std::cell::Cell::new(None));
+        let (orig_success, orig_danger) = cx.update(|cx| {
+            cx.update_global::<crate::diffs_settings::DiffPreferences, _>(|prefs, _| {
+                prefs.settings.color_scheme = crate::diffs_settings::DiffColorScheme::BlueOrange;
+            });
+            let t = Theme::global(cx);
+            (t.colors.success, t.colors.danger)
+        });
+        let captured_clone = captured.clone();
+        let (window, _) = cx.update(|cx| {
+            let bounds = Bounds::maximized(None, cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                cx,
+                |_, cx| {
+                    let files = DiffFile::parse("--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n").unwrap();
+                    let state = cx.new(|cx| DiffState::new(files, cx));
+                    cx.new(|_| ScopeProbe {
+                        state,
+                        captured_inside: captured_clone,
+                    })
+                },
+            )
+            .unwrap()
+        });
+        let vcx = gpui_kit::VisualTestContext::from_window(window, cx).into_mut();
+        vcx.run_until_parked();
+
+        let (expected_added, expected_removed) = cx.read(|cx| {
+            let pal = crate::diffs_settings::current_palette(cx);
+            (gpui_kit::Hsla::from(pal.added), gpui_kit::Hsla::from(pal.removed))
+        });
+        assert_eq!(captured.get(), Some((expected_added, expected_removed)));
+        cx.read(|cx| {
+            let t = Theme::global(cx);
+            assert_eq!(t.colors.success, orig_success);
+            assert_eq!(t.colors.danger, orig_danger);
+        });
     }
 }

@@ -82,8 +82,37 @@ impl Color {
         }
     }
 
+    pub fn for_mode_with_contrast(self, dark: bool, contrast: crate::appearance::Contrast) -> Rgba {
+        match contrast {
+            crate::appearance::Contrast::Standard => self.for_mode(dark),
+            crate::appearance::Contrast::Enhanced => match self {
+                Self::Sidebar => rgb(if dark { 0x09090b } else { 0xf0f0f4 }),
+                Self::Inset => rgb(if dark { 0x1d1d24 } else { 0xe6e6ec }),
+                Self::Surface => rgb(if dark { 0x101014 } else { 0xf5f5f8 }),
+                Self::Card => rgb(if dark { 0x1a1a20 } else { 0xffffff }),
+                Self::Overlay => rgb(if dark { 0x22222a } else { 0xffffff }),
+                Self::Bubble => rgb(if dark { 0x262630 } else { 0xe4e4eb }),
+                Self::Divider => rgba(if dark { 0xffffff28 } else { 0x00000028 }),
+                Self::BorderStrong => rgba(if dark { 0xffffff3c } else { 0x0000003a }),
+                Self::Text => rgb(if dark { 0xfafafa } else { 0x09090b }),
+                Self::Secondary => rgb(if dark { 0xc4c4cd } else { 0x3f3f46 }),
+                Self::Muted => rgb(if dark { 0xa6a6b2 } else { 0x52525b }),
+                Self::Accent => rgb(if dark { 0x6b96ff } else { 0x1644c4 }),
+                Self::AccentSoft => rgb(if dark { 0x1b2440 } else { 0xeef2ff }),
+                Self::Attention => rgb(if dark { 0x332914 } else { 0xfef3c7 }),
+                Self::Success => rgb(if dark { 0x10e5a3 } else { 0x00704a }),
+                Self::Error => rgb(if dark { 0xf87171 } else { 0xb91c1c }),
+                Self::ErrorSurface => rgb(if dark { 0x2d191c } else { 0xfee2e2 }),
+            },
+        }
+    }
+
     pub fn get(self, cx: &App) -> Rgba {
-        self.for_mode(Theme::global(cx).is_dark())
+        let contrast = cx
+            .try_global::<crate::appearance::Appearance>()
+            .map(|appearance| appearance.contrast())
+            .unwrap_or_default();
+        self.for_mode_with_contrast(Theme::global(cx).is_dark(), contrast)
     }
 }
 
@@ -260,6 +289,38 @@ pub fn composer_shadow(focused: bool, cx: &App) -> Vec<BoxShadow> {
     }
 }
 
+/// Composer card border color, tuned for both Standard and Enhanced contrast.
+pub fn composer_border(focused: bool, cx: &App) -> gpui_kit::Hsla {
+    let dark = Theme::global(cx).is_dark();
+    let enhanced = cx
+        .try_global::<crate::appearance::Appearance>()
+        .is_some_and(|a| a.contrast() == crate::appearance::Contrast::Enhanced);
+    let alpha = match (focused, dark, enhanced) {
+        (true, true, true) => 0.28,
+        (true, true, false) => 0.14,
+        (true, false, true) => 0.30,
+        (true, false, false) => 0.15,
+        (false, true, true) => 0.18,
+        (false, true, false) => 0.08,
+        (false, false, true) => 0.18,
+        (false, false, false) => 0.08,
+    };
+    if dark {
+        hsla(0., 0., 1., alpha)
+    } else {
+        hsla(0., 0., 0., alpha)
+    }
+}
+
+/// High-clarity icon button variant for sidebar history back/forward controls when enabled.
+pub fn history_nav_variant(cx: &App) -> ButtonCustomVariant {
+    ButtonCustomVariant::new(cx)
+        .color(rgba(0).into())
+        .foreground(Color::Secondary.get(cx).into())
+        .hover(Color::Inset.get(cx).into())
+        .active(Color::Divider.get(cx).into())
+}
+
 /// T3 Code–style muted chrome button variant: calm grey icon/label at rest,
 /// crisp foreground & soft inset surface on hover.
 pub fn quiet_icon_variant(cx: &App) -> ButtonCustomVariant {
@@ -273,9 +334,17 @@ pub fn quiet_icon_variant(cx: &App) -> ButtonCustomVariant {
 /// Ultra-quiet icon variant for secondary row actions (`...`, copy, quote)
 /// so dense lists and chat streams remain visually serene.
 pub fn subtle_icon_variant(cx: &App) -> ButtonCustomVariant {
+    let enhanced = cx
+        .try_global::<crate::appearance::Appearance>()
+        .is_some_and(|a| a.contrast() == crate::appearance::Contrast::Enhanced);
     ButtonCustomVariant::new(cx)
         .color(rgba(0).into())
-        .foreground(Color::Muted.get(cx).opacity(0.68).into())
+        .foreground(
+            Color::Muted
+                .get(cx)
+                .opacity(if enhanced { 0.88 } else { 0.68 })
+                .into(),
+        )
         .hover(Color::Inset.get(cx).into())
         .active(Color::Divider.get(cx).into())
 }
@@ -301,9 +370,22 @@ pub fn segment_variant(active: bool, cx: &App) -> ButtonCustomVariant {
 /// while keeping calm cool-zinc / soft-graphite contrast.
 pub fn sidebar_item_variant(selected: bool, cx: &App) -> ButtonCustomVariant {
     let dark = Theme::global(cx).is_dark();
+    let enhanced = cx
+        .try_global::<crate::appearance::Appearance>()
+        .is_some_and(|a| a.contrast() == crate::appearance::Contrast::Enhanced);
     if selected {
-        let bg = rgb(if dark { 0x26262e } else { 0xe7e7ec });
-        let hover = rgb(if dark { 0x2e2e38 } else { 0xdfe0e6 });
+        let bg = rgb(match (dark, enhanced) {
+            (true, true) => 0x2c2c38,
+            (true, false) => 0x26262e,
+            (false, true) => 0xdddde6,
+            (false, false) => 0xe7e7ec,
+        });
+        let hover = rgb(match (dark, enhanced) {
+            (true, true) => 0x363644,
+            (true, false) => 0x2e2e38,
+            (false, true) => 0xd4d4df,
+            (false, false) => 0xdfe0e6,
+        });
         ButtonCustomVariant::new(cx)
             .color(bg.into())
             .foreground(Color::Text.get(cx).into())
@@ -311,7 +393,12 @@ pub fn sidebar_item_variant(selected: bool, cx: &App) -> ButtonCustomVariant {
             .active(bg.into())
     } else {
         let hover = rgb(if dark { 0x1b1b21 } else { 0xededf1 });
-        let active = rgb(if dark { 0x26262e } else { 0xe7e7ec });
+        let active = rgb(match (dark, enhanced) {
+            (true, true) => 0x2c2c38,
+            (true, false) => 0x26262e,
+            (false, true) => 0xdddde6,
+            (false, false) => 0xe7e7ec,
+        });
         ButtonCustomVariant::new(cx)
             .color(rgba(0).into())
             .foreground(Color::Secondary.get(cx).into())
@@ -867,6 +954,79 @@ mod tests {
             assert!(
                 contrast(muted, Color::Surface.for_mode(dark)) >= 4.5,
                 "Color::Muted contrast on Surface failed for dark={dark}"
+            );
+        }
+
+        // Standard contrast MUST remain 100% locked to M1/219a093 values;
+        // Enhanced contrast MUST preserve surface hierarchy and pass WCAG 2.1 AA >= 4.5:1.
+        assert_eq!(
+            Color::Surface.for_mode_with_contrast(true, crate::appearance::Contrast::Standard),
+            rgb(0x141418)
+        );
+        assert_eq!(
+            Color::Surface.for_mode_with_contrast(false, crate::appearance::Contrast::Standard),
+            rgb(0xf7f7f9)
+        );
+        let enhanced = crate::appearance::Contrast::Enhanced;
+        assert!(
+            luma(Color::Sidebar.for_mode_with_contrast(true, enhanced))
+                < luma(Color::Surface.for_mode_with_contrast(true, enhanced))
+        );
+        assert!(
+            luma(Color::Surface.for_mode_with_contrast(true, enhanced))
+                < luma(Color::Card.for_mode_with_contrast(true, enhanced))
+        );
+        assert!(
+            luma(Color::Card.for_mode_with_contrast(true, enhanced))
+                < luma(Color::Overlay.for_mode_with_contrast(true, enhanced))
+        );
+        assert!(
+            luma(Color::Sidebar.for_mode_with_contrast(false, enhanced))
+                < luma(Color::Surface.for_mode_with_contrast(false, enhanced))
+        );
+        assert!(
+            luma(Color::Surface.for_mode_with_contrast(false, enhanced))
+                < luma(Color::Card.for_mode_with_contrast(false, enhanced))
+        );
+        assert_eq!(
+            Color::Inset.for_mode_with_contrast(true, enhanced).a,
+            1.0
+        );
+        assert_eq!(
+            Color::Inset.for_mode_with_contrast(false, enhanced).a,
+            1.0
+        );
+        for dark in [false, true] {
+            let text = Color::Text.for_mode_with_contrast(dark, enhanced);
+            let secondary = Color::Secondary.for_mode_with_contrast(dark, enhanced);
+            let muted = Color::Muted.for_mode_with_contrast(dark, enhanced);
+            let accent = Color::Accent.for_mode_with_contrast(dark, enhanced);
+            let success = Color::Success.for_mode_with_contrast(dark, enhanced);
+            let error = Color::Error.for_mode_with_contrast(dark, enhanced);
+            for bg in [
+                Color::Sidebar.for_mode_with_contrast(dark, enhanced),
+                Color::Surface.for_mode_with_contrast(dark, enhanced),
+                Color::Card.for_mode_with_contrast(dark, enhanced),
+                Color::Overlay.for_mode_with_contrast(dark, enhanced),
+                Color::Inset.for_mode_with_contrast(dark, enhanced),
+                Color::Bubble.for_mode_with_contrast(dark, enhanced),
+            ] {
+                assert!(contrast(text, bg) >= 4.5, "Enhanced Text WCAG failed dark={dark}");
+                assert!(contrast(secondary, bg) >= 4.5, "Enhanced Secondary WCAG failed dark={dark}");
+                assert!(contrast(muted, bg) >= 4.5, "Enhanced Muted WCAG failed dark={dark}");
+                assert!(contrast(accent, bg) >= 4.5, "Enhanced Accent WCAG failed dark={dark}");
+            }
+            assert!(
+                contrast(accent, Color::AccentSoft.for_mode_with_contrast(dark, enhanced)) >= 4.5,
+                "Enhanced Accent on AccentSoft failed dark={dark}"
+            );
+            assert!(
+                contrast(success, Color::Card.for_mode_with_contrast(dark, enhanced)) >= 4.5,
+                "Enhanced Success on Card failed dark={dark}"
+            );
+            assert!(
+                contrast(error, Color::ErrorSurface.for_mode_with_contrast(dark, enhanced)) >= 4.5,
+                "Enhanced Error on ErrorSurface failed dark={dark}"
             );
         }
 

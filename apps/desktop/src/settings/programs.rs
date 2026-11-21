@@ -180,6 +180,33 @@ impl HiveApp {
                         ))
                     },
                 )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .items_center()
+                        .gap_1p5()
+                        .px_3()
+                        .py_1p5()
+                        .rounded_lg()
+                        .bg(Color::Inset.get(cx))
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
+                        .child(
+                            Icon::new(gpui_kit::assets::IconName::Info)
+                                .size(px(12.5))
+                                .flex_shrink_0()
+                                .text_color(Color::Secondary.get(cx)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_xs()
+                                .text_color(Color::Secondary.get(cx))
+                                .child(tr("解析优先级：环境变量 > 应用设置 > Agent 配置 > 系统 PATH")),
+                        ),
+                )
                 .child(super::settings_card(cx).flex_shrink_0().children(entries.into_iter().enumerate().map(
                     |(index, (backend, label, input, effective))| {
                         div()
@@ -384,6 +411,7 @@ impl HiveApp {
                         h_flex()
                             .flex_1()
                             .min_w_0()
+                            .flex_wrap()
                             .items_center()
                             .gap_2()
                             .child(
@@ -396,7 +424,22 @@ impl HiveApp {
                                     .text_color(Color::Text.get(cx))
                                     .child(label),
                             )
-                            .child(super::status_pill(pill_dot, pill_label, cx)),
+                            .child(super::status_pill(pill_dot, pill_label, cx))
+                            .when(effective.is_some_and(|e| e.source == "env"), |row| {
+                                row.child(
+                                    div()
+                                        .px_2()
+                                        .py(px(1.5))
+                                        .rounded_full()
+                                        .bg(Color::Attention.get(cx))
+                                        .border_1()
+                                        .border_color(Color::Divider.get(cx))
+                                        .text_size(px(11.))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(Color::Text.get(cx))
+                                        .child(tr("环境变量覆盖")),
+                                )
+                            }),
                     )
                     .child(
                         Button::new(SharedString::from(format!("probe-{backend}")))
@@ -867,6 +910,17 @@ impl HiveApp {
                                     .text_xs()
                                     .text_color(Color::Muted.get(cx))
                                     .child(tr("只读检查各后端路径、凭据存在性与已配置 MCP 服务器，不发起模型推理或修改全局配置。")),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(Color::Secondary.get(cx))
+                                    .child(match self.workspace.as_ref().and_then(|id| {
+                                        self.workspaces.iter().find(|w| &w.id == id)
+                                    }) {
+                                        Some(ws) => format!("{}（{}）", tr("当前作用域：全局 + 项目"), ws.name),
+                                        None => tr("未选择项目 · 仅扫描全局目录").to_owned(),
+                                    }),
                             ),
                     )
                     .child({
@@ -1601,6 +1655,17 @@ impl HiveApp {
                                     } else {
                                         format!("已发现 {rule_count} 份规则文件 · {skill_count} 个 Skill（只读扫描，支持定位文件或一键引用到对话）")
                                     }),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(Color::Secondary.get(cx))
+                                    .child(match self.workspace.as_ref().and_then(|id| {
+                                        self.workspaces.iter().find(|w| &w.id == id)
+                                    }) {
+                                        Some(ws) => format!("{}（{}）", tr("当前作用域：全局 + 项目"), ws.name),
+                                        None => tr("未选择项目 · 仅扫描全局目录").to_owned(),
+                                    }),
                             ),
                     ),
             )
@@ -1628,7 +1693,8 @@ impl HiveApp {
                             let is_project = item.scope == "project";
                             let reveal_path = item.path.clone();
                             let cite_snippet = if english() {
-                                format!("Please follow {} `{}` ({}).", kind_label, item.name, item.path)
+                                let en_kind = if kind_label == "规则" { "rule" } else { kind_label };
+                                format!("Please follow {} `{}` ({}).", en_kind, item.name, item.path)
                             } else {
                                 format!("请参考并遵循{} `{}`（{}）。", kind_label, item.name, item.path)
                             };

@@ -189,6 +189,56 @@ impl HiveApp {
                                                 .text_color(Color::Text.get(cx))
                                                 .child(title),
                                         )
+                                        .child({
+                                            let ws_name = self
+                                                .workspace
+                                                .as_ref()
+                                                .and_then(|id| {
+                                                    self.workspaces
+                                                        .iter()
+                                                        .find(|w| &w.id == id)
+                                                        .map(|w| w.name.as_str())
+                                                });
+                                            let (scope_kind, scope_label, scope_tip) =
+                                                super::section_scope_meta(
+                                                    self.settings_section,
+                                                    self.roles.visible,
+                                                    ws_name,
+                                                );
+                                            let (bg, fg) = match scope_kind {
+                                                super::SettingsScopeKind::Project => {
+                                                    (Color::AccentSoft.get(cx), Color::Accent.get(cx))
+                                                }
+                                                super::SettingsScopeKind::Layered
+                                                | super::SettingsScopeKind::Context => {
+                                                    (Color::Inset.get(cx), Color::Secondary.get(cx))
+                                                }
+                                                super::SettingsScopeKind::Global => {
+                                                    (Color::Inset.get(cx), Color::Muted.get(cx))
+                                                }
+                                            };
+                                            div()
+                                                .id("settings-scope-pill")
+                                                .flex_shrink_0()
+                                                .max_w(px(180.))
+                                                .truncate()
+                                                .px_2()
+                                                .py(px(2.))
+                                                .rounded_full()
+                                                .bg(bg)
+                                                .border_1()
+                                                .border_color(Color::Divider.get(cx))
+                                                .text_size(px(11.))
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(fg)
+                                                .child(scope_label)
+                                                .tooltip(move |window, cx| {
+                                                    gpui_kit::component::tooltip::Tooltip::new(
+                                                        scope_tip.clone(),
+                                                    )
+                                                    .build(window, cx)
+                                                })
+                                        })
                                         .child(
                                             Button::new("close-settings-modal")
                                                 .ghost()

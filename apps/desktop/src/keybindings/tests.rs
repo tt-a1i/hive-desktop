@@ -557,3 +557,185 @@ fn existing_shortcut_files_get_workspace_focus_defaults_and_keep_disabled_overri
         assert_eq!(load(root.path(), os, identity).unwrap(), bindings);
     }
 }
+
+#[test]
+fn context_aware_conflict_analysis_detects_same_and_overlapping_scopes_and_allows_disjoint() {
+    use super::{ConflictKind, ContextScope, analyze_conflicts, predicate_overlaps_scope};
+    use gpui_kit::KeyBindingContextPredicate;
+
+    let _locale = crate::language::test_locale_guard();
+    let os = OperatingSystem::Mac;
+    let defaults = Bindings::defaults(os);
+    assert!(analyze_conflicts(&defaults, os, identity, |_, _| None).is_empty());
+
+    // 1. SameScope: two Global targets sharing cmd-f.
+    let mut same_scope = defaults.clone();
+    same_scope.set(Target::Search, Some("cmd-f".into()));
+    let conflicts = analyze_conflicts(&same_scope, os, identity, |_, _| None);
+    assert!(conflicts.iter().any(|c| {
+        c.target == Target::Search && c.kind == ConflictKind::SameScope(Target::Find)
+    }));
+    assert!(conflicts.iter().any(|c| {
+        c.target == Target::Find && c.kind == ConflictKind::SameScope(Target::Search)
+    }));
+
+    // 2. OverlappingScope: Global (Search) vs Composer (IncreaseReasoningEffort).
+    let mut overlap = defaults.clone();
+    overlap.set(Target::IncreaseReasoningEffort, Some("cmd-k".into()));
+    let conflicts = analyze_conflicts(&overlap, os, identity, |_, _| None);
+    assert!(conflicts.iter().any(|c| {
+        c.target == Target::IncreaseReasoningEffort
+            && c.kind == ConflictKind::OverlappingScope(Target::Search)
+    }));
+    assert!(conflicts.iter().any(|c| {
+        c.target == Target::Search
+            && c.kind == ConflictKind::OverlappingScope(Target::IncreaseReasoningEffort)
+    }));
+
+    // 3. Disjoint contexts: HiveTerminal predicate does NOT overlap WorkspaceNonTerminal or Composer,
+    // while it DOES overlap Global and Terminal.
+    let terminal_pred = KeyBindingContextPredicate::parse("HiveTerminal").unwrap();
+    assert!(!predicate_overlaps_scope(
+        Some(&terminal_pred),
+        ContextScope::WorkspaceNonTerminal
+    ));
+    assert!(!predicate_overlaps_scope(
+        Some(&terminal_pred),
+        ContextScope::Composer
+    ));
+    assert!(predicate_overlaps_scope(
+        Some(&terminal_pred),
+        ContextScope::Global
+    ));
+    assert!(predicate_overlaps_scope(
+        Some(&terminal_pred),
+        ContextScope::Terminal
+    ));
+
+    // 4. Reset-shortcut conflict scenario: Search reassigned to cmd-shift-g (OpenGitWorkspace's default),
+    // then OpenGitWorkspace restored to default after rebinding -> both targets surface in analyze_conflicts.
+    let mut reset_conflict = defaults.clone();
+    reset_conflict.set(Target::OpenGitWorkspace, None);
+    reset_conflict.set(Target::Search, Some("cmd-shift-g".into()));
+    assert!(analyze_conflicts(&reset_conflict, os, identity, |_, _| None).is_empty());
+    reset_conflict.set(
+        Target::OpenGitWorkspace,
+        Target::OpenGitWorkspace.default(os).map(str::to_owned),
+    );
+    let conflicts = analyze_conflicts(&reset_conflict, os, identity, |_, _| None);
+    assert_eq!(conflicts.len(), 2);
+    assert!(reset_conflict.normalized(os).is_err());
+}
+
+#[test]
+fn predicate_overlaps_scope_matches_ancestor_contexts_and_queued_inputs() {
+    use super::{ConflictKind, ContextScope, analyze_conflicts, predicate_overlaps_scope};
+    use gpui_kit::KeyBindingContextPredicate;
+
+    let _locale = crate::language::test_locale_guard();
+
+    let composer_pred = KeyBindingContextPredicate::parse("HiveComposer").unwrap();
+    let input_pred = KeyBindingContextPredicate::parse("Input").unwrap();
+    let diff_find_pred = KeyBindingContextPredicate::parse("HiveGitDiffFind").unwrap();
+    let diff_find_input_pred =
+        KeyBindingContextPredicate::parse("HiveGitDiffFind > Input").unwrap();
+    let queued_pred = KeyBindingContextPredicate::parse("HiveQueuedInputs").unwrap();
+
+    // `HiveComposer` sits below `Input > Textarea` in the canonical composer stack, so
+    // `depth_of` (matching GPUI runtime dispatch) must match Global, WorkspaceNonTerminal, and Composer.
+    for scope in [
+        ContextScope::Global,
+        ContextScope::WorkspaceNonTerminal,
+        ContextScope::Composer,
+    ] {
+        assert!(
+            predicate_overlaps_scope(Some(&composer_pred), scope),
+            "HiveComposer must overlap {scope:?}"
+        );
+        assert!(
+            predicate_overlaps_scope(Some(&input_pred), scope),
+            "Input must overlap {scope:?}"
+        );
+    }
+    assert!(!predicate_overlaps_scope(
+        Some(&composer_pred),
+        ContextScope::Terminal
+    ));
+    assert!(!predicate_overlaps_scope(
+        Some(&input_pred),
+        ContextScope::Terminal
+    ));
+
+    // `HiveGitDiffFind` and `HiveGitDiffFind > Input` overlap Global & WorkspaceNonTerminal, not Composer/Terminal.
+    for pred in [&diff_find_pred, &diff_find_input_pred] {
+        assert!(predicate_overlaps_scope(Some(pred), ContextScope::Global));
+        assert!(predicate_overlaps_scope(
+            Some(pred),
+            ContextScope::WorkspaceNonTerminal
+        ));
+        assert!(!predicate_overlaps_scope(
+            Some(pred),
+            ContextScope::Composer
+        ));
+        assert!(!predicate_overlaps_scope(
+            Some(pred),
+            ContextScope::Terminal
+        ));
+    }
+
+    // `HiveQueuedInputs` overlaps Global & WorkspaceNonTerminal (e.g., SteerPendingInput cmd-shift-enter).
+    assert!(predicate_overlaps_scope(
+        Some(&queued_pred),
+        ContextScope::Global
+    ));
+    assert!(predicate_overlaps_scope(
+        Some(&queued_pred),
+        ContextScope::WorkspaceNonTerminal
+    ));
+    assert!(!predicate_overlaps_scope(
+        Some(&queued_pred),
+        ContextScope::Composer
+    ));
+    assert!(!predicate_overlaps_scope(
+        Some(&queued_pred),
+        ContextScope::Terminal
+    ));
+
+    // Verify end-to-end protected conflict detection catches bindings in HiveComposer,
+    // Input, and HiveQueuedInputs across Global / WorkspaceNonTerminal / Composer.
+    let os = OperatingSystem::Mac;
+    let mut bindings = Bindings::defaults(os);
+    bindings.set(Target::Search, Some("cmd-shift-l".into()));
+    bindings.set(Target::IncreaseReasoningEffort, Some("cmd-]".into()));
+    bindings.set(Target::OpenGitWorkspace, Some("cmd-shift-t".into()));
+    let protected = vec![
+        KeyBinding::new("cmd-shift-l", crate::PasteComposerText, Some("HiveComposer")),
+        KeyBinding::new("cmd-]", gpui_kit::base::input::Indent, Some("Input")),
+        KeyBinding::new(
+            "cmd-shift-t",
+            crate::queued_inputs::SteerPendingInput,
+            Some("HiveQueuedInputs"),
+        ),
+    ];
+    let conflicts = analyze_conflicts(&bindings, os, identity, |key, scope| {
+        protected
+            .iter()
+            .find(|b| {
+                b.keystrokes().first().is_some_and(|ks| ks.inner() == key)
+                    && predicate_overlaps_scope(b.predicate().as_deref(), scope)
+            })
+            .map(|_| "现有组件或终端")
+    });
+    for target in [
+        Target::Search,
+        Target::IncreaseReasoningEffort,
+        Target::OpenGitWorkspace,
+    ] {
+        assert!(
+            conflicts
+                .iter()
+                .any(|c| c.target == target && matches!(c.kind, ConflictKind::ProtectedComponent(_))),
+            "expected protected component conflict for {target:?}"
+        );
+    }
+}

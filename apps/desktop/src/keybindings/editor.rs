@@ -166,10 +166,17 @@ impl Editor {
         let target = recording.target;
         let os = cx.platform_info().os;
         let validation = target.validate(&key.unparse(os), os).and_then(|candidate| {
-            let mut draft = cx.global::<Preferences>().draft.clone();
-            draft.set(target, Some(candidate.unparse(os)));
-            let normalized = draft.normalized(os)?;
-            check_registered(&normalized, cx)?;
+            let existing_default = Some(candidate.unparse(os).as_str()) == target.default(os);
+            if !existing_default
+                && protected_reason_in_scope(
+                    &dispatch_key(candidate.clone(), cx),
+                    target.context_scope(),
+                    cx,
+                )
+                .is_some()
+            {
+                return Err("此组合键已用于现有组件或文字编辑，请选择其他组合。");
+            }
             Ok(candidate)
         });
         match validation {
@@ -253,6 +260,43 @@ impl Render for Editor {
             .normalized(os)
             .and_then(|normalized| check_registered(&normalized, cx))
             .err();
+        let conflicts = analyze_conflicts(
+            &draft,
+            os,
+            |key| dispatch_key(key, cx),
+            |key, scope| protected_reason_in_scope(key, scope, cx),
+        );
+        let conflict_summary = if conflicts.is_empty() {
+            validation.map(|err| tr(err).to_owned())
+        } else {
+            let mut pairs: Vec<String> = Vec::new();
+            for c in &conflicts {
+                let desc = match c.kind {
+                    ConflictKind::SameScope(other) | ConflictKind::OverlappingScope(other) => {
+                        if c.target.index() < other.index() {
+                            Some(format!("「{}」↔「{}」", c.target.label(), other.label()))
+                        } else {
+                            None
+                        }
+                    }
+                    ConflictKind::ProtectedComponent(comp) => {
+                        Some(format!("「{}」↔ {}", c.target.label(), tr(comp)))
+                    }
+                };
+                if let Some(d) = desc
+                    && !pairs.contains(&d)
+                {
+                    pairs.push(d);
+                }
+            }
+            let count = pairs.len().max(1);
+            let joined = pairs.join("、");
+            Some(if crate::language::english() {
+                format!("{count} shortcut conflict(s): {joined}. Reassign or disable before saving.")
+            } else {
+                format!("检测到 {count} 处快捷键冲突：{joined}。请调整或停用冲突项后再保存。")
+            })
+        };
         let message = state.notice.as_ref().map(|notice| match notice {
             Notice::Read(error) => (
                 true,
@@ -357,10 +401,10 @@ impl Render for Editor {
                         cx,
                     ))
                 })
-                .when_some(validation, |view, error| {
+                .when_some(conflict_summary, |view, error| {
                     view.child(crate::settings::settings_notice_box(
                         "keybindings-config-error",
-                        tr(error),
+                        error,
                         true,
                         cx,
                     ))
@@ -409,6 +453,12 @@ impl Render for Editor {
                                 current_chord.as_deref() == target.default(os);
                             let is_dirty = current_chord != saved.get(target);
                             let is_highlighted = highlighted_target == Some(target);
+                            let scope = target.context_scope();
+                            let row_conflicts: Vec<&TargetConflict> = conflicts
+                                .iter()
+                                .filter(|c| c.target == target)
+                                .collect();
+                            let has_conflict = !row_conflicts.is_empty();
                             let row_content = v_flex()
                                 .id(target.anchor_id())
                                 .gap_1p5()
@@ -430,6 +480,7 @@ impl Render for Editor {
                                                 .gap_0p5()
                                                 .child(
                                                     h_flex()
+                                                        .flex_wrap()
                                                         .items_center()
                                                         .gap_2()
                                                         .child(
@@ -437,6 +488,32 @@ impl Render for Editor {
                                                                 .text_sm()
                                                                 .font_weight(FontWeight::MEDIUM)
                                                                 .child(target.label()),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .id(SharedString::from(format!(
+                                                                    "keybinding-scope-{}",
+                                                                    target.index()
+                                                                )))
+                                                                .px_1p5()
+                                                                .py(px(1.))
+                                                                .rounded_sm()
+                                                                .bg(Color::Inset.get(cx))
+                                                                .border_1()
+                                                                .border_color(Color::Divider.get(cx))
+                                                                .text_size(px(10.5))
+                                                                .text_color(Color::Secondary.get(cx))
+                                                                .child(tr(scope.badge_key()))
+                                                                .tooltip(move |window, cx| {
+                                                                    gpui_kit::component::tooltip::Tooltip::new(
+                                                                        format!(
+                                                                            "{} ({})",
+                                                                            tr(scope.detail_key()),
+                                                                            scope.when_expr()
+                                                                        ),
+                                                                    )
+                                                                    .build(window, cx)
+                                                                }),
                                                         )
                                                         .when(is_dirty, |row| {
                                                             row.child(
@@ -450,6 +527,23 @@ impl Render for Editor {
                                                                         Color::Accent.get(cx),
                                                                     )
                                                                     .child(tr("待保存")),
+                                                            )
+                                                        })
+                                                        .when(has_conflict, |row| {
+                                                            row.child(
+                                                                div()
+                                                                    .id(SharedString::from(format!(
+                                                                        "keybinding-conflict-badge-{}",
+                                                                        target.index()
+                                                                    )))
+                                                                    .px_1p5()
+                                                                    .py_0p5()
+                                                                    .rounded_sm()
+                                                                    .bg(Color::ErrorSurface.get(cx))
+                                                                    .text_xs()
+                                                                    .font_weight(FontWeight::MEDIUM)
+                                                                    .text_color(Color::Error.get(cx))
+                                                                    .child(tr("冲突")),
                                                             )
                                                         }),
                                                 )
@@ -471,7 +565,11 @@ impl Render for Editor {
                                                         .py_1()
                                                         .rounded_md()
                                                         .border_1()
-                                                        .border_color(Color::Divider.get(cx))
+                                                        .border_color(if has_conflict {
+                                                            Color::Error.get(cx)
+                                                        } else {
+                                                            Color::Divider.get(cx)
+                                                        })
                                                         .bg(Color::Inset.get(cx))
                                                         .text_xs()
                                                         .font_family(
@@ -479,7 +577,9 @@ impl Render for Editor {
                                                                 .mono_font_family
                                                                 .clone(),
                                                         )
-                                                        .text_color(if current_chord.is_some() {
+                                                        .text_color(if has_conflict {
+                                                            Color::Error.get(cx)
+                                                        } else if current_chord.is_some() {
                                                             Color::Text.get(cx)
                                                         } else {
                                                             Color::Muted.get(cx)
@@ -571,6 +671,93 @@ impl Render for Editor {
                                                 }),
                                         ),
                                 )
+                                .when(has_conflict, |row| {
+                                    row.children(row_conflicts.iter().enumerate().map(|(ci, conflict)| {
+                                        let chord_label = display(&Some(conflict.chord.clone()), os);
+                                        let (explanation, jump_target) = match conflict.kind {
+                                            ConflictKind::SameScope(other) => {
+                                                let msg = if crate::language::english() {
+                                                    format!(
+                                                        "Same-scope conflict ({}): shares {} with \"{}\"",
+                                                        tr(scope.badge_key()),
+                                                        chord_label,
+                                                        other.label()
+                                                    )
+                                                } else {
+                                                    format!(
+                                                        "同作用域（{}）冲突：与「{}」共享 {}",
+                                                        tr(scope.badge_key()),
+                                                        other.label(),
+                                                        chord_label
+                                                    )
+                                                };
+                                                (msg, Some(other))
+                                            }
+                                            ConflictKind::OverlappingScope(other) => {
+                                                let other_scope = other.context_scope();
+                                                let msg = tr("重叠作用域冲突：「{scope}」与「{other_scope}」（{target}）在 {chord} 上重叠")
+                                                    .replace("{scope}", tr(scope.badge_key()))
+                                                    .replace("{other_scope}", tr(other_scope.badge_key()))
+                                                    .replace("{target}", other.label())
+                                                    .replace("{chord}", &chord_label);
+                                                (msg, Some(other))
+                                            }
+                                            ConflictKind::ProtectedComponent(comp) => {
+                                                let msg = if crate::language::english() {
+                                                    format!(
+                                                        "Conflicts with built-in {} binding ({})",
+                                                        tr(comp),
+                                                        chord_label
+                                                    )
+                                                } else {
+                                                    format!(
+                                                        "与内置「{}」快捷键（{}）冲突",
+                                                        tr(comp),
+                                                        chord_label
+                                                    )
+                                                };
+                                                (msg, None)
+                                            }
+                                        };
+                                        h_flex()
+                                            .w_full()
+                                            .min_w_0()
+                                            .flex_wrap()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_2()
+                                            .px_2p5()
+                                            .py_1()
+                                            .rounded_md()
+                                            .bg(Color::ErrorSurface.get(cx))
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .text_xs()
+                                                    .text_color(Color::Error.get(cx))
+                                                    .child(explanation),
+                                            )
+                                            .when_some(jump_target, |line, other| {
+                                                line.child(
+                                                    Button::new((
+                                                        "jump-conflict-target",
+                                                        target.index() * 16 + ci,
+                                                    ))
+                                                    .ghost()
+                                                    .xsmall()
+                                                    .h(px(20.))
+                                                    .px_1p5()
+                                                    .label(tr("查看冲突项"))
+                                                    .on_click(cx.listener(
+                                                        move |this, _, window, cx| {
+                                                            this.focus_target(other, window, cx)
+                                                        },
+                                                    )),
+                                                )
+                                            })
+                                    }))
+                                })
                                 .when(active.get(target) != current_chord, |row| {
                                     row.child(
                                         div()

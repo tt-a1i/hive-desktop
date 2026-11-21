@@ -187,11 +187,13 @@ impl HiveApp {
             .and_then(|snapshot| snapshot.context.as_ref())
             .and_then(|context| context.percent);
 
-        let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
+        let chat_max_w = cx
+            .global::<crate::appearance::Appearance>()
+            .chat_width_max_px();
         h_flex()
             .w_full()
             .min_w_0()
-            .max_w(px(chat_width))
+            .when_some(chat_max_w, |bar, w| bar.max_w(px(w)))
             .mx_auto()
             .flex_wrap()
             .items_center()
@@ -516,7 +518,9 @@ impl HiveApp {
             normalize_hero_line_text(tr("准备构建什么？"))
         };
 
-        let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
+        let chat_max_w = cx
+            .global::<crate::appearance::Appearance>()
+            .chat_width_max_px();
         let sidebar_w = if self.sidebar_open && !narrow {
             f32::from(self.sidebar.resolved(window.viewport_size().width))
         } else {
@@ -532,10 +536,12 @@ impl HiveApp {
             0.
         };
         let horizontal_pad = if narrow { 32. } else { 64. };
-        let available_hero_w =
-            (f32::from(window.viewport_size().width) - sidebar_w - right_w - horizontal_pad)
-                .min(chat_width)
-                .max(200.);
+        let raw_avail = f32::from(window.viewport_size().width) - sidebar_w - right_w - horizontal_pad;
+        let available_hero_w = match chat_max_w {
+            Some(limit) => raw_avail.min(limit),
+            None => raw_avail,
+        }
+        .max(200.);
         let title_style = window.text_style();
         let measure_text = |text: &str, weight: FontWeight| -> f32 {
             if text.is_empty() {
@@ -579,7 +585,8 @@ impl HiveApp {
             .child(
                 v_flex()
                     .w_full()
-                    .max_w(px(chat_width))
+                    .min_w_0()
+                    .when_some(chat_max_w, |col, w| col.max_w(px(w)))
                     .mx_auto()
                     .child(
                         v_flex()

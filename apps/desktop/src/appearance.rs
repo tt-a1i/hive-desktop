@@ -49,14 +49,16 @@ pub enum ChatWidth {
     Standard,
     Comfortable,
     Wide,
+    Full,
 }
 
 impl ChatWidth {
-    pub fn px(self) -> f32 {
+    pub fn max_width_px(self) -> Option<f32> {
         match self {
-            Self::Standard => crate::conversation_list::CHAT_COLUMN_WIDTH,
-            Self::Comfortable => 896.,
-            Self::Wide => 1080.,
+            Self::Standard => Some(crate::conversation_list::CHAT_COLUMN_WIDTH),
+            Self::Comfortable => Some(896.),
+            Self::Wide => Some(1080.),
+            Self::Full => None,
         }
     }
 
@@ -65,6 +67,24 @@ impl ChatWidth {
             Self::Standard => crate::language::tr("标准"),
             Self::Comfortable => crate::language::tr("宽松"),
             Self::Wide => crate::language::tr("宽屏"),
+            Self::Full => crate::language::tr("全宽"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Contrast {
+    #[default]
+    Standard,
+    Enhanced,
+}
+
+impl Contrast {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Standard => crate::language::tr("标准"),
+            Self::Enhanced => crate::language::tr("增强"),
         }
     }
 }
@@ -137,6 +157,7 @@ struct Preferences {
     #[serde(default = "default_font_size")]
     font_size: u8,
     chat_width: ChatWidth,
+    contrast: Contrast,
     code_font_family: MonoFontPreset,
     #[serde(default = "default_code_font_size")]
     code_font_size: u8,
@@ -152,6 +173,7 @@ impl Default for Preferences {
             mode: Mode::System,
             font_size: DEFAULT_FONT_SIZE,
             chat_width: ChatWidth::Standard,
+            contrast: Contrast::Standard,
             code_font_family: MonoFontPreset::System,
             code_font_size: DEFAULT_CODE_FONT_SIZE,
             code_word_wrap: false,
@@ -203,8 +225,11 @@ impl Appearance {
     pub fn chat_width(&self) -> ChatWidth {
         self.preferences.chat_width
     }
-    pub fn chat_width_px(&self) -> f32 {
-        self.preferences.chat_width.px()
+    pub fn chat_width_max_px(&self) -> Option<f32> {
+        self.preferences.chat_width.max_width_px()
+    }
+    pub fn contrast(&self) -> Contrast {
+        self.preferences.contrast
     }
     pub fn code_font_family(&self) -> MonoFontPreset {
         self.preferences.code_font_family
@@ -319,10 +344,11 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
         let initial_mono = Theme::global(cx).mono_font_family.clone();
         cx.global_mut::<Appearance>().default_mono_font = Some(initial_mono);
     }
-    let (font_size, code_font_family, code_font_size, base_mono) = {
+    let (font_size, contrast, code_font_family, code_font_size, base_mono) = {
         let state = cx.global::<Appearance>();
         (
             state.font_size(),
+            state.contrast(),
             state.code_font_family(),
             state.code_font_size(),
             state
@@ -334,6 +360,7 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
     Theme::update(cx, |theme| {
         use crate::palette::Color;
         let dark = theme.is_dark();
+        let enhanced = contrast == Contrast::Enhanced;
         theme.font_size = px(f32::from(font_size));
         theme.mono_font_size = px(f32::from(code_font_size));
         theme.mono_font_family = code_font_family
@@ -342,44 +369,61 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
             .unwrap_or(base_mono);
         theme.radius = px(8.0);
         theme.radius_lg = px(16.0);
-        theme.background = Color::Surface.for_mode(dark).into();
-        theme.foreground = Color::Text.for_mode(dark).into();
-        theme.border = Color::Divider.for_mode(dark).into();
-        theme.input = gpui_kit::rgba(if dark { 0xffffff1c } else { 0x0000001e }).into();
-        theme.popover = Color::Overlay.for_mode(dark).into();
-        theme.popover_foreground = Color::Text.for_mode(dark).into();
-        theme.group_box = Color::Card.for_mode(dark).into();
-        theme.group_box_foreground = Color::Text.for_mode(dark).into();
-        theme.muted = Color::Inset.for_mode(dark).into();
-        theme.muted_foreground = Color::Muted.for_mode(dark).into();
-        theme.secondary = Color::Inset.for_mode(dark).into();
-        theme.secondary_foreground = Color::Text.for_mode(dark).into();
-        theme.accent_foreground = Color::Text.for_mode(dark).into();
-        theme.sidebar = Color::Sidebar.for_mode(dark).into();
-        theme.sidebar_border = Color::Divider.for_mode(dark).into();
-        theme.sidebar_foreground = Color::Text.for_mode(dark).into();
-        theme.sidebar_accent_foreground = Color::Text.for_mode(dark).into();
-        theme.colors.list = Color::Surface.for_mode(dark).into();
-        theme.list_hover = Color::Inset.for_mode(dark).into();
-        theme.button = Color::Inset.for_mode(dark).into();
-        theme.button_foreground = Color::Text.for_mode(dark).into();
-        theme.ring = Color::Muted.for_mode(dark).into();
-        theme.caret = Color::Accent.for_mode(dark).into();
-        theme.title_bar = Color::Surface.for_mode(dark).into();
-        theme.title_bar_border = Color::Divider.for_mode(dark).into();
+        theme.background = Color::Surface.for_mode_with_contrast(dark, contrast).into();
+        theme.foreground = Color::Text.for_mode_with_contrast(dark, contrast).into();
+        theme.border = Color::Divider.for_mode_with_contrast(dark, contrast).into();
+        theme.input = gpui_kit::rgba(match (dark, enhanced) {
+            (true, true) => 0xffffff34,
+            (true, false) => 0xffffff1c,
+            (false, true) => 0x00000038,
+            (false, false) => 0x0000001e,
+        })
+        .into();
+        theme.popover = Color::Overlay.for_mode_with_contrast(dark, contrast).into();
+        theme.popover_foreground = Color::Text.for_mode_with_contrast(dark, contrast).into();
+        theme.group_box = Color::Card.for_mode_with_contrast(dark, contrast).into();
+        theme.group_box_foreground = Color::Text.for_mode_with_contrast(dark, contrast).into();
+        theme.muted = Color::Inset.for_mode_with_contrast(dark, contrast).into();
+        theme.muted_foreground = Color::Muted.for_mode_with_contrast(dark, contrast).into();
+        theme.secondary = Color::Inset.for_mode_with_contrast(dark, contrast).into();
+        theme.secondary_foreground = Color::Text.for_mode_with_contrast(dark, contrast).into();
+        theme.accent_foreground = Color::Text.for_mode_with_contrast(dark, contrast).into();
+        theme.sidebar = Color::Sidebar.for_mode_with_contrast(dark, contrast).into();
+        theme.sidebar_border = Color::Divider.for_mode_with_contrast(dark, contrast).into();
+        theme.sidebar_foreground = Color::Text.for_mode_with_contrast(dark, contrast).into();
+        theme.sidebar_accent_foreground = Color::Text.for_mode_with_contrast(dark, contrast).into();
+        theme.colors.list = Color::Surface.for_mode_with_contrast(dark, contrast).into();
+        theme.list_hover = Color::Inset.for_mode_with_contrast(dark, contrast).into();
+        theme.button = Color::Inset.for_mode_with_contrast(dark, contrast).into();
+        theme.button_foreground = Color::Text.for_mode_with_contrast(dark, contrast).into();
+        theme.ring = Color::Muted.for_mode_with_contrast(dark, contrast).into();
+        theme.caret = Color::Accent.for_mode_with_contrast(dark, contrast).into();
+        theme.title_bar = Color::Surface.for_mode_with_contrast(dark, contrast).into();
+        theme.title_bar_border = Color::Divider.for_mode_with_contrast(dark, contrast).into();
         theme.overlay = gpui_kit::rgba(if dark { 0x00000048 } else { 0x00000012 }).into();
         theme.scrollbar = gpui_kit::rgba(if dark { 0x14141800 } else { 0xf7f7f900 }).into();
-        theme.scrollbar_thumb = gpui_kit::rgba(if dark { 0xffffff18 } else { 0x00000022 }).into();
-        theme.scrollbar_thumb_hover =
-            gpui_kit::rgba(if dark { 0xffffff2e } else { 0x00000038 }).into();
+        theme.scrollbar_thumb = gpui_kit::rgba(match (dark, enhanced) {
+            (true, true) => 0xffffff28,
+            (true, false) => 0xffffff18,
+            (false, true) => 0x00000034,
+            (false, false) => 0x00000022,
+        })
+        .into();
+        theme.scrollbar_thumb_hover = gpui_kit::rgba(match (dark, enhanced) {
+            (true, true) => 0xffffff42,
+            (true, false) => 0xffffff2e,
+            (false, true) => 0x0000004c,
+            (false, false) => 0x00000038,
+        })
+        .into();
         if dark {
             theme.secondary_hover = rgb(0x2a2a31).into();
             theme.secondary_active = rgb(0x32323a).into();
             // Button::Ghost multiplies accent by 0.5 opacity in dark mode.
             theme.accent = rgb(0x2c2c34).into();
-            theme.sidebar_accent = rgb(0x26262e).into();
-            theme.list_active = rgb(0x28282f).into();
-            theme.list_active_border = rgb(0x52525e).into();
+            theme.sidebar_accent = rgb(if enhanced { 0x2c2c38 } else { 0x26262e }).into();
+            theme.list_active = rgb(if enhanced { 0x2d2d39 } else { 0x28282f }).into();
+            theme.list_active_border = rgb(if enhanced { 0x7c7c8c } else { 0x52525e }).into();
             theme.primary = rgb(0xf4f4f5).into();
             theme.primary_hover = rgb(0xffffff).into();
             theme.primary_active = rgb(0xd4d4dc).into();
@@ -393,10 +437,10 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
         } else {
             theme.secondary_hover = rgb(0xe6e6eb).into();
             theme.secondary_active = rgb(0xdfdfe6).into();
-            theme.accent = Color::Inset.for_mode(false).into();
-            theme.sidebar_accent = rgb(0xe7e7ec).into();
-            theme.list_active = rgb(0xe7e7ec).into();
-            theme.list_active_border = rgb(0x18181b).into();
+            theme.accent = Color::Inset.for_mode_with_contrast(false, contrast).into();
+            theme.sidebar_accent = rgb(if enhanced { 0xdddde6 } else { 0xe7e7ec }).into();
+            theme.list_active = rgb(if enhanced { 0xdddde6 } else { 0xe7e7ec }).into();
+            theme.list_active_border = rgb(if enhanced { 0x09090b } else { 0x18181b }).into();
             theme.primary = rgb(0x18181b).into();
             theme.primary_hover = rgb(0x27272a).into();
             theme.primary_active = rgb(0x3f3f46).into();
@@ -430,6 +474,14 @@ pub fn choose_font_size(font_size: u8, window: &mut Window, cx: &mut App) {
 pub fn choose_chat_width(chat_width: ChatWidth, window: &mut Window, cx: &mut App) {
     let preferences = Preferences {
         chat_width,
+        ..cx.global::<Appearance>().preferences
+    };
+    choose_preferences(preferences, window, cx);
+}
+
+pub fn choose_contrast(contrast: Contrast, window: &mut Window, cx: &mut App) {
+    let preferences = Preferences {
+        contrast,
         ..cx.global::<Appearance>().preferences
     };
     choose_preferences(preferences, window, cx);
@@ -601,6 +653,7 @@ mod tests {
                 mode,
                 font_size: 20,
                 chat_width: ChatWidth::Wide,
+                contrast: Contrast::Enhanced,
                 code_font_family: MonoFontPreset::JetBrainsMono,
                 code_font_size: 14,
                 code_word_wrap: true,
@@ -707,5 +760,35 @@ mod tests {
         fs::create_dir(&file).unwrap();
         assert!(save(root.path(), expected).is_err());
         assert!(file.is_dir());
+    }
+
+    #[test]
+    fn full_chat_width_and_contrast_serialize_with_legacy_defaults() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(ChatWidth::Standard.max_width_px(), Some(736.));
+        assert_eq!(ChatWidth::Comfortable.max_width_px(), Some(896.));
+        assert_eq!(ChatWidth::Wide.max_width_px(), Some(1080.));
+        assert_eq!(ChatWidth::Full.max_width_px(), None);
+
+        let full = Preferences {
+            chat_width: ChatWidth::Full,
+            contrast: Contrast::Enhanced,
+            ..Default::default()
+        };
+        save(root.path(), full).unwrap();
+        let raw = fs::read_to_string(root.path().join("desktop-appearance.json")).unwrap();
+        assert!(raw.contains("\"full\""));
+        assert!(raw.contains("\"enhanced\""));
+        assert_eq!(load(root.path()).unwrap(), full);
+
+        // Legacy file without contrast or chat_width still defaults to Standard.
+        fs::write(
+            root.path().join("desktop-appearance.json"),
+            r#"{"mode":"light","font_size":16}"#,
+        )
+        .unwrap();
+        let loaded = load(root.path()).unwrap();
+        assert_eq!(loaded.chat_width, ChatWidth::Standard);
+        assert_eq!(loaded.contrast, Contrast::Standard);
     }
 }

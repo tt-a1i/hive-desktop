@@ -202,7 +202,16 @@ impl HiveApp {
                     .border_color(Color::Accent.get(cx).opacity(0.32))
             })
             .when(is_plain_user, |bubble| {
-                bubble.ml_auto().max_w(px(580.)).items_end()
+                let bubble = bubble.ml_auto().items_end();
+                if cx
+                    .global::<crate::appearance::Appearance>()
+                    .chat_width_max_px()
+                    .is_some()
+                {
+                    bubble.max_w(px(580.))
+                } else {
+                    bubble.max_w(relative(0.8))
+                }
             })
             .when(is_plain_user && message.steered && !merge_prev, |view| {
                 view.child(
@@ -848,7 +857,8 @@ impl HiveApp {
                                         format!("· {file_count} 个文件")
                                     }),
                             )
-                            .child(
+                            .child({
+                                let diff_palette = crate::diffs_settings::current_palette(cx);
                                 h_flex()
                                     .flex_shrink_0()
                                     .items_center()
@@ -859,16 +869,16 @@ impl HiveApp {
                                     .child(
                                         div()
                                             .font_weight(FontWeight::MEDIUM)
-                                            .text_color(Color::Success.get(cx))
+                                            .text_color(diff_palette.added)
                                             .child(format!("+{}", summary.total_additions)),
                                     )
                                     .child(
                                         div()
                                             .font_weight(FontWeight::MEDIUM)
-                                            .text_color(Color::Error.get(cx))
+                                            .text_color(diff_palette.removed)
                                             .child(format!("-{}", summary.total_deletions)),
-                                    ),
-                            ),
+                                    )
+                            }),
                     )
                     .child(
                         h_flex()
@@ -963,7 +973,8 @@ impl HiveApp {
                                         .text_color(Color::Secondary.get(cx))
                                         .child(file.display_path.clone()),
                                 )
-                                .child(
+                                .child({
+                                    let diff_palette = crate::diffs_settings::current_palette(cx);
                                     h_flex()
                                         .flex_shrink_0()
                                         .items_center()
@@ -973,15 +984,15 @@ impl HiveApp {
                                         .text_size(px(11.))
                                         .child(
                                             div()
-                                                .text_color(Color::Success.get(cx))
+                                                .text_color(diff_palette.added)
                                                 .child(format!("+{}", file.additions)),
                                         )
                                         .child(
                                             div()
-                                                .text_color(Color::Error.get(cx))
+                                                .text_color(diff_palette.removed)
                                                 .child(format!("-{}", file.deletions)),
-                                        ),
-                                ),
+                                        )
+                                }),
                         )
                         .on_click(cx.listener(move |this, _, window, cx| {
                             if this.can_browse_project_files() && !window.has_active_dialog(cx) {

@@ -72,6 +72,182 @@ pub(crate) struct TurnDiffSummary {
     pub tool_changes: Vec<(String, serde_json::Value, Option<String>)>,
 }
 
+#[derive(Clone)]
+pub(crate) struct LatestTurnFile {
+    pub display_path: String,
+    pub git_path: String,
+    pub additions: usize,
+    pub deletions: usize,
+    pub diff_files: Vec<gpui_kit::component::diff::DiffFile>,
+    pub raw_patch: String,
+    pub from_real_patch: bool,
+}
+
+#[derive(Clone)]
+pub(crate) enum LatestTurnSnapshot {
+    Empty {
+        has_active_turn: bool,
+        session_open: bool,
+    },
+    Ready {
+        anchor_id: String,
+        files: Vec<LatestTurnFile>,
+        total_additions: usize,
+        total_deletions: usize,
+        in_progress: bool,
+    },
+}
+
+pub(crate) fn collect_latest_turn_snapshot(
+    messages: &[crate::app::Message],
+    tool_inputs: &HashMap<String, serde_json::Value>,
+    session_open: bool,
+    session_busy: bool,
+    english_labels: bool,
+) -> LatestTurnSnapshot {
+    if !session_open || messages.is_empty() {
+        return LatestTurnSnapshot::Empty {
+            has_active_turn: false,
+            session_open,
+        };
+    }
+    let last_turn_start = messages
+        .iter()
+        .rposition(|m| m.role == "user" || m.delivery.is_some())
+        .map_or(0, |idx| idx + 1);
+    let slice = &messages[last_turn_start..];
+    let in_progress = session_busy
+        || slice
+            .iter()
+            .any(|m| m.tool.as_ref().is_some_and(|t| t.status == "执行中"));
+    if slice.is_empty() {
+        return LatestTurnSnapshot::Empty {
+            has_active_turn: in_progress,
+            session_open: true,
+        };
+    }
+
+    let mut file_indices: HashMap<String, usize> = HashMap::new();
+    let mut files: Vec<LatestTurnFile> = Vec::new();
+    let mut total_additions = 0usize;
+    let mut total_deletions = 0usize;
+
+    for msg in slice {
+        let Some(tool) = &msg.tool else {
+            continue;
+        };
+        if tool.status != "完成" {
+            continue;
+        }
+        let args = tool_inputs
+            .get(&msg.id)
+            .unwrap_or(&serde_json::Value::Null);
+        if !crate::tool_diff::data::available(&tool.name, args, tool.patch.as_deref()) {
+            continue;
+        }
+        let from_real_patch = tool.patch.as_deref().is_some_and(|p| !p.is_empty());
+        let changes =
+            crate::tool_diff::data::changes(&tool.name, args, tool.patch.as_deref(), english_labels);
+        let explicit_arg_path = args["file_path"]
+            .as_str()
+            .or_else(|| args["path"].as_str())
+            .filter(|p| !p.trim().is_empty());
+        let is_edit_tool = matches!(
+            tool.name.to_ascii_lowercase().as_str(),
+            "edit" | "multiedit"
+        );
+        for change in changes {
+            let doc = crate::tool_diff::data::build(vec![change]);
+            if doc.files.is_empty() {
+                continue;
+            }
+            let single_file = doc.files.len() == 1;
+            let sectioned_patches: Vec<(Vec<gpui_kit::component::diff::DiffFile>, String)> =
+                if single_file {
+                    Vec::new()
+                } else {
+                    crate::diffs_settings::split_patch_by_file(&doc.raw)
+                        .into_iter()
+                        .filter_map(|section| {
+                            gpui_kit::component::diff::DiffFile::parse(&section)
+                                .ok()
+                                .map(|parsed| (parsed, section))
+                        })
+                        .collect()
+                };
+            for diff_file in doc.files {
+                let raw_path = diff_file.path().to_string();
+                let key_path = if is_edit_tool {
+                    explicit_arg_path.unwrap_or(&raw_path).to_owned()
+                } else {
+                    raw_path.clone()
+                };
+                let additions = diff_file.additions();
+                let deletions = diff_file.deletions();
+                total_additions += additions;
+                total_deletions += deletions;
+                let file_patch = if single_file {
+                    doc.raw.clone()
+                } else {
+                    let target_path = diff_file.path().as_ref();
+                    let target_orig = diff_file.original_path().map(|p| p.as_ref().to_owned());
+                    sectioned_patches
+                        .iter()
+                        .filter(|(parsed, _)| {
+                            parsed.iter().any(|p| {
+                                p.path().as_ref() == target_path
+                                    && p.original_path().map(|o| o.as_ref())
+                                        == target_orig.as_deref()
+                            })
+                        })
+                        .map(|(_, section)| section.as_str())
+                        .collect::<String>()
+                };
+                if let Some(&idx) = file_indices.get(&key_path) {
+                    files[idx].additions += additions;
+                    files[idx].deletions += deletions;
+                    files[idx].diff_files.push(diff_file);
+                    files[idx].from_real_patch |= from_real_patch;
+                    if !file_patch.is_empty() {
+                        if !files[idx].raw_patch.is_empty() && !files[idx].raw_patch.ends_with('\n')
+                        {
+                            files[idx].raw_patch.push('\n');
+                        }
+                        files[idx].raw_patch.push_str(&file_patch);
+                    }
+                } else {
+                    file_indices.insert(key_path.clone(), files.len());
+                    files.push(LatestTurnFile {
+                        display_path: key_path.clone(),
+                        git_path: key_path,
+                        additions,
+                        deletions,
+                        diff_files: vec![diff_file],
+                        raw_patch: file_patch,
+                        from_real_patch,
+                    });
+                }
+            }
+        }
+    }
+
+    if files.is_empty() {
+        return LatestTurnSnapshot::Empty {
+            has_active_turn: in_progress,
+            session_open: true,
+        };
+    }
+
+    let anchor_id = slice[slice.len() - 1].id.clone();
+    LatestTurnSnapshot::Ready {
+        anchor_id,
+        files,
+        total_additions,
+        total_deletions,
+        in_progress,
+    }
+}
+
 pub(crate) fn is_plain_user_message(message: &crate::app::Message) -> bool {
     message.role == "user"
         && message.delivery.is_none()
@@ -258,6 +434,21 @@ impl ConversationList {
 }
 
 impl HiveApp {
+    pub(crate) fn latest_turn_diff(&self) -> LatestTurnSnapshot {
+        let session_open = self.session.is_some();
+        let session_busy = self
+            .session
+            .as_ref()
+            .is_some_and(|s| self.busy.contains(&s.id));
+        collect_latest_turn_snapshot(
+            &self.messages,
+            &self.tool_inputs,
+            session_open,
+            session_busy,
+            crate::language::english(),
+        )
+    }
+
     fn conversation_message_groups(&self) -> impl Iterator<Item = &[crate::app::Message]> {
         let (history, live) = self.messages.split_at(
             self.history_navigation.live_start.unwrap_or(self.messages.len()),
@@ -696,6 +887,9 @@ impl HiveApp {
                     }
                     _ => false,
                 };
+                let chat_max_w = cx
+                    .global::<crate::appearance::Appearance>()
+                    .chat_width_max_px();
                 v_flex()
                     .w_full()
                     .px(if narrow { px(16.) } else { px(32.) })
@@ -704,9 +898,8 @@ impl HiveApp {
                     .child(
                         v_flex()
                             .w_full()
-                            .max_w(px(cx
-                                .global::<crate::appearance::Appearance>()
-                                .chat_width_px()))
+                            .min_w_0()
+                            .when_some(chat_max_w, |col, w| col.max_w(px(w)))
                             .mx_auto()
                             .pb(if is_tail {
                                 px(0.)
@@ -1030,6 +1223,103 @@ mod tests {
         assert_eq!(summary.files.len(), 2);
         assert_eq!(summary.total_additions, 3);
         assert_eq!(summary.total_deletions, 1);
+    }
+
+    #[test]
+    fn latest_turn_snapshot_strictly_reads_last_turn_without_falling_back() {
+        use super::{LatestTurnSnapshot, collect_latest_turn_snapshot};
+        let mut inputs = HashMap::new();
+        inputs.insert(
+            "t1-edit".into(),
+            json!({"file_path": "src/a.rs", "oldText": "a1\n", "newText": "a2\n"}),
+        );
+        inputs.insert("t2-read".into(), json!({"file_path": "README.md"}));
+        inputs.insert(
+            "t3-edit-1".into(),
+            json!({"file_path": "src/b.rs", "oldText": "b1\n", "newText": "b2\nb3\n"}),
+        );
+        inputs.insert(
+            "t3-edit-2".into(),
+            json!({"file_path": "src/b.rs", "oldText": "b3\n", "newText": "b4\n"}),
+        );
+
+        let no_session = collect_latest_turn_snapshot(&[], &inputs, false, false, false);
+        assert!(matches!(
+            no_session,
+            LatestTurnSnapshot::Empty {
+                session_open: false,
+                ..
+            }
+        ));
+
+        // Turn 1 had an edit, Turn 2 is read-only -> MUST return Empty, never Turn 1.
+        let read_only_last = vec![
+            user_msg("u1", "edit a", false),
+            tool_msg("t1-edit", "edit", "完成", None),
+            user_msg("u2", "read readme", false),
+            tool_msg("t2-read", "read", "完成", None),
+        ];
+        let snap = collect_latest_turn_snapshot(&read_only_last, &inputs, true, false, false);
+        assert!(matches!(
+            snap,
+            LatestTurnSnapshot::Empty {
+                session_open: true,
+                has_active_turn: false
+            }
+        ));
+
+        // Turn 3 edits src/b.rs twice -> Ready with 1 file and 2 DiffFiles.
+        let mut multi_edit_last = read_only_last;
+        multi_edit_last.push(user_msg("u3", "edit b", false));
+        multi_edit_last.push(tool_msg("t3-edit-1", "edit", "完成", None));
+        multi_edit_last.push(tool_msg("t3-edit-2", "edit", "完成", None));
+        match collect_latest_turn_snapshot(&multi_edit_last, &inputs, true, false, false) {
+            LatestTurnSnapshot::Ready {
+                files,
+                total_additions,
+                total_deletions,
+                ..
+            } => {
+                assert_eq!(files.len(), 1);
+                assert_eq!(files[0].git_path, "src/b.rs");
+                assert_eq!(files[0].diff_files.len(), 2);
+                assert_eq!(total_additions, 3);
+                assert_eq!(total_deletions, 2);
+            }
+            _ => panic!("expected Ready snapshot for latest turn"),
+        }
+
+        // Multi-file tool.patch must slice per-file raw_patch without leaking sibling files.
+        let multi_file_patch = concat!(
+            "diff --git a/src/ws_only.rs b/src/ws_only.rs\n",
+            "--- a/src/ws_only.rs\n",
+            "+++ b/src/ws_only.rs\n",
+            "@@ -1,1 +1,1 @@\n",
+            "-  let a = 1;\n",
+            "+    let a = 1;\n",
+            "diff --git a/src/real.rs b/src/real.rs\n",
+            "--- a/src/real.rs\n",
+            "+++ b/src/real.rs\n",
+            "@@ -1,1 +1,1 @@\n",
+            "-let b = 1;\n",
+            "+let b = 2;\n",
+        );
+        let multi_file_turn = vec![
+            user_msg("u4", "patch both", false),
+            tool_msg("t4-patch", "apply_patch", "完成", Some(multi_file_patch)),
+        ];
+        match collect_latest_turn_snapshot(&multi_file_turn, &inputs, true, false, false) {
+            LatestTurnSnapshot::Ready { files, .. } => {
+                assert_eq!(files.len(), 2);
+                assert_eq!(files[0].git_path, "src/ws_only.rs");
+                assert!(files[0].raw_patch.contains("src/ws_only.rs"));
+                assert!(!files[0].raw_patch.contains("src/real.rs"));
+                assert_eq!(files[1].git_path, "src/real.rs");
+                assert!(files[1].raw_patch.contains("src/real.rs"));
+                assert!(!files[1].raw_patch.contains("src/ws_only.rs"));
+            }
+            _ => panic!("expected Ready snapshot for multi-file patch"),
+        }
     }
 
     fn setup_conversation_window(

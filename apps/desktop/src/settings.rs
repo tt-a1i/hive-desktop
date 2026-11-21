@@ -29,6 +29,80 @@ pub mod pi_models;
 pub mod programs;
 pub mod codex_account;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SettingsScopeKind {
+    Global,
+    Context,
+    Layered,
+    Project,
+}
+
+pub(super) fn section_scope_meta(
+    section: SettingsSection,
+    roles_visible: bool,
+    workspace_name: Option<&str>,
+) -> (SettingsScopeKind, String, String) {
+    if roles_visible {
+        return (
+            SettingsScopeKind::Global,
+            tr("全局配置").to_owned(),
+            tr("全局角色模板，新建团队成员时可继承并按成员调整职责。").to_owned(),
+        );
+    }
+    match section {
+        SettingsSection::ProjectScripts => (
+            SettingsScopeKind::Project,
+            match workspace_name {
+                Some(name) => format!("{} · {name}", tr("项目级")),
+                None => tr("项目级").to_owned(),
+            },
+            tr("按当前工作区独立保存，运行于项目根目录或选中会话的执行目录。").to_owned(),
+        ),
+        SettingsSection::Keybindings => (
+            SettingsScopeKind::Context,
+            tr("全局 · 分作用域").to_owned(),
+            tr("保存于本地配置；支持全局、!HiveTerminal 与 HiveComposer 上下文作用域及冲突检测。").to_owned(),
+        ),
+        SettingsSection::Programs => (
+            SettingsScopeKind::Layered,
+            tr("全局 · 可覆盖").to_owned(),
+            tr("解析优先级：环境变量 > 应用设置 > Agent 配置 > 系统 PATH；MCP 与规则同时扫描全局与当前项目。").to_owned(),
+        ),
+        SettingsSection::Models => (
+            SettingsScopeKind::Layered,
+            tr("全局 · 可覆盖").to_owned(),
+            tr("全局模型配置支持按模型覆写参数，并可随时恢复为继承值。").to_owned(),
+        ),
+        SettingsSection::Profiles => (
+            SettingsScopeKind::Layered,
+            tr("全局 · 可覆盖").to_owned(),
+            tr("全局版本化模板：已创建会话锁定初始版本，新建会话继承当前最新版本。").to_owned(),
+        ),
+        SettingsSection::PiAccounts => (
+            SettingsScopeKind::Layered,
+            tr("全局 · 可覆盖").to_owned(),
+            tr("读取本机 Pi 凭据目录，优先受当前环境配置约束。").to_owned(),
+        ),
+        SettingsSection::Diffs => (
+            SettingsScopeKind::Global,
+            tr("全局配置").to_owned(),
+            tr("保存于本地 Diff 偏好；查看器工具栏中的临时切换不影响已保存默认值。").to_owned(),
+        ),
+        SettingsSection::General
+        | SettingsSection::Appearance
+        | SettingsSection::Chat
+        | SettingsSection::Notifications
+        | SettingsSection::Team
+        | SettingsSection::Archive
+        | SettingsSection::About
+        | SettingsSection::Remote => (
+            SettingsScopeKind::Global,
+            tr("全局配置").to_owned(),
+            tr("全局桌面与运行配置，对所有工作区生效。").to_owned(),
+        ),
+    }
+}
+
 #[derive(Clone)]
 pub enum SettingsNotice { Message(&'static str), Error(&'static str, String) }
 impl SettingsNotice {
@@ -461,6 +535,8 @@ where
 pub(super) fn settings_segmented_bar(cx: &App) -> Div {
     h_flex()
         .flex_shrink_0()
+        .max_w_full()
+        .min_w_0()
         .items_center()
         .gap_0p5()
         .p_0p5()

@@ -588,4 +588,56 @@ mod tests {
         assert_eq!(fs::read(file.join("preserved")).unwrap(), b"owned target");
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
     }
+
+    #[test]
+    fn m4_and_baseline_locale_keys_translate_with_locale_guard() {
+        let _locale = test_locale_guard();
+        component::set_locale(Locale::En.component_locale());
+        for (zh, en) in [
+            ("分支", "Branch"),
+            ("当前", "Current"),
+            ("切换", "Switch"),
+            ("保存中…", "Saving…"),
+            ("禁用", "Disable"),
+            (
+                "当前仍有会话任务正在运行；退出将中断进行中的连接并关闭桌面端。",
+                "A session task is still running. Quitting will interrupt active connections and close the desktop app.",
+            ),
+            ("全宽", "Full (100%)"),
+            ("增强", "Enhanced"),
+            ("界面对比度", "Interface contrast"),
+            ("默认（红绿）", "Default (Red / Green)"),
+            ("蓝橙（色盲友好）", "Blue / Orange (Colorblind-friendly)"),
+            ("Diff 配色方案", "Diff color scheme"),
+            ("工作区变更", "Workspace"),
+            ("最新一轮", "Latest turn"),
+            ("当前筛选范围内没有净改动。", "No net changes in this selection."),
+            ("查看工作区变更", "View workspace changes"),
+            ("调整文件树分栏宽度，双击恢复默认", "Drag to resize file tree split, double-click to reset"),
+            ("收起文件树", "Collapse file tree"),
+            ("展开文件树", "Expand file tree"),
+            ("暂无可后退的历史记录", "No back history available"),
+            ("暂无可前进的历史记录", "No forward history available"),
+            ("非终端", "Non-terminal"),
+            ("输入框", "Composer"),
+            ("终端", "Terminal"),
+            ("冲突", "Conflict"),
+            ("查看冲突项", "View conflict"),
+            ("全局配置", "Global"),
+            ("全局 · 分作用域", "Global · Scoped"),
+            ("全局 · 可覆盖", "Global · Overridable"),
+            ("项目级", "Project"),
+            ("环境变量覆盖", "Env override"),
+            ("未选择项目 · 仅扫描全局目录", "No project selected · Scanning global directories only"),
+            (
+                "重叠作用域冲突：「{scope}」与「{other_scope}」（{target}）在 {chord} 上重叠",
+                "Overlapping scope conflict: \"{scope}\" overlaps \"{other_scope}\" ({target}) on {chord}",
+            ),
+        ] {
+            assert_eq!(tr(zh), en, "missing or mismatched English translation for {zh}");
+        }
+        component::set_locale(Locale::Zh.component_locale());
+        assert_eq!(tr("最新一轮"), "最新一轮");
+        assert_eq!(tr("分支"), "分支");
+    }
 }

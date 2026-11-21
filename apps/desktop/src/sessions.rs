@@ -326,23 +326,125 @@ impl HiveApp {
         self.reset_conversation_view(cx);
     }
 
+    fn valid_history_entry(
+        &self,
+        ws: &Option<String>,
+        sess: &Option<String>,
+        current: &(Option<String>, Option<String>),
+    ) -> bool {
+        let Some(ws_id) = ws.as_ref() else {
+            return false;
+        };
+        if self.workspace_removing.as_ref() == Some(ws_id)
+            || !self.workspaces.iter().any(|w| &w.id == ws_id)
+        {
+            return false;
+        }
+        if sess
+            .as_ref()
+            .is_some_and(|id| self.removed_sessions.contains(id))
+        {
+            return false;
+        }
+        (ws, sess) != (&current.0, &current.1)
+    }
+
+    pub(crate) fn peek_history_target(
+        &self,
+        stack: &[(Option<String>, Option<String>)],
+    ) -> Option<(Option<String>, Option<String>)> {
+        let current = (
+            self.workspace.clone(),
+            self.session.as_ref().map(|s| s.id.clone()),
+        );
+        stack
+            .iter()
+            .rev()
+            .find(|(ws, sess)| self.valid_history_entry(ws, sess, &current))
+            .cloned()
+    }
+
+    pub(crate) fn history_entry_label(
+        &self,
+        target: &(Option<String>, Option<String>),
+    ) -> Option<String> {
+        let ws_id = target.0.as_ref()?;
+        let ws_name = self
+            .workspaces
+            .iter()
+            .find(|w| &w.id == ws_id)
+            .map(|w| w.name.as_str())?;
+        let session_label = match target.1.as_deref() {
+            Some(id) => self
+                .sessions
+                .iter()
+                .find(|s| s.id == id)
+                .or_else(|| {
+                    self.project_sessions
+                        .get(ws_id)
+                        .and_then(|list| list.iter().find(|s| s.id == id))
+                })
+                .or_else(|| {
+                    self.pinned_sessions
+                        .records
+                        .iter()
+                        .map(|hit| &hit.session)
+                        .find(|s| s.id == id)
+                })
+                .map(|s| self.session_title(s).to_owned())
+                .unwrap_or_else(|| crate::language::tr("会话").to_owned()),
+            None => crate::language::tr("新对话").to_owned(),
+        };
+        if self.workspace.as_deref() == Some(ws_id.as_str()) {
+            Some(session_label)
+        } else {
+            Some(format!("{ws_name} · {session_label}"))
+        }
+    }
+
     fn apply_history_entry(
         &mut self,
         target_ws: Option<String>,
         target_sess: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        self.close_collaboration();
+        self.close_settings();
+        self.close_memory();
+        self.close_roles();
+        self.close_workflows();
+        self.member_panel = false;
+        self.pending_history_blank_workspace = None;
+        self.pending_history_target_session = None;
         self.nav_suppress_record = true;
         if let Some(ws) = target_ws {
+            if target_sess.is_none() {
+                self.pending_history_blank_workspace = Some(ws.clone());
+            } else if let Some(sess) = target_sess.as_ref() {
+                self.pending_history_target_session = Some((ws.clone(), sess.clone()));
+            }
             if self.workspace.as_ref() != Some(&ws) {
                 self.select_workspace(ws.clone(), cx);
             }
             if let Some(sess) = target_sess {
+                if !self.sessions.iter().any(|s| s.id == sess) {
+                    if let Some(pinned) = self
+                        .pinned_sessions
+                        .records
+                        .iter()
+                        .find(|hit| hit.session.id == sess && hit.session.workspace_id == ws)
+                        .map(|hit| hit.session.clone())
+                    {
+                        self.sessions.push(pinned);
+                    }
+                }
                 if self.sessions.iter().any(|s| s.id == sess) {
+                    self.pending_history_target_session = None;
                     self.open_session(sess, cx);
                 } else {
                     self.remember_conversation_position(cx);
                     self.clear_active_session_only(cx);
+                    self.refresh_sessions(cx);
                 }
             } else if self.session.is_some() {
                 self.remember_conversation_position(cx);
@@ -361,10 +463,7 @@ impl HiveApp {
             self.session.as_ref().map(|s| s.id.clone()),
         );
         while let Some((ws, sess)) = self.nav_back.pop() {
-            let valid_ws = ws
-                .as_ref()
-                .is_some_and(|id| self.workspaces.iter().any(|w| &w.id == id));
-            if !valid_ws || (&ws, &sess) == (&current.0, &current.1) {
+            if !self.valid_history_entry(&ws, &sess, &current) {
                 continue;
             }
             if current.0.is_some() && self.nav_forward.last() != Some(&current) {
@@ -381,10 +480,7 @@ impl HiveApp {
             self.session.as_ref().map(|s| s.id.clone()),
         );
         while let Some((ws, sess)) = self.nav_forward.pop() {
-            let valid_ws = ws
-                .as_ref()
-                .is_some_and(|id| self.workspaces.iter().any(|w| &w.id == id));
-            if !valid_ws || (&ws, &sess) == (&current.0, &current.1) {
+            if !self.valid_history_entry(&ws, &sess, &current) {
                 continue;
             }
             if current.0.is_some() && self.nav_back.last() != Some(&current) {
@@ -398,6 +494,10 @@ impl HiveApp {
     pub fn select_workspace(&mut self, id: String, cx: &mut Context<Self>) {
         if self.workspace_removing.as_ref() == Some(&id) {
             return;
+        }
+        if !self.nav_suppress_record {
+            self.pending_history_blank_workspace = None;
+            self.pending_history_target_session = None;
         }
         if self.workspace.as_ref() != Some(&id) || self.session.is_some() {
             self.record_nav_snapshot();
@@ -566,53 +666,7 @@ impl HiveApp {
                         match result {
                             Ok(value) => match serde_json::from_value::<Vec<Session>>(value) {
                                 Ok(sessions) => {
-                                    this.sessions = sessions;
-                                    this.sync_pinned_project();
-                                    if let Some(selected) = &mut this.session {
-                                        if let Some(record) =
-                                            this.sessions.iter().find(|s| s.id == selected.id)
-                                        {
-                                            *selected = record.clone();
-                                        }
-                                    } else {
-                                        this.loading = false;
-                                        if this.connected
-                                            && !this.closing
-                                            && this.workspace_writes_allowed()
-                                        {
-                                            this.status = if this
-                                                .sessions
-                                                .iter()
-                                                .all(|session| session.archived)
-                                            {
-                                                "工作区已就绪，新建会话开始工作"
-                                            } else {
-                                                "工作区已就绪"
-                                            }
-                                            .into();
-                                        }
-                                        if !this.memory.visible
-                                            && !this.workflows.visible
-                                            && !this.member_panel
-                                            && !this.collaboration.visible
-                                            && !this.settings_panel
-                                            && !this.roles.visible
-                                            && !this.showing_welcome_guide
-                                        {
-                                            let saved =
-                                                this.navigation.sessions.get(&workspace).and_then(
-                                                    |id| this.sessions.iter().find(|s| &s.id == id),
-                                                );
-                                            if let Some(first) = saved.or_else(|| {
-                                                this.sessions
-                                                    .iter()
-                                                    .find(|session| !session.archived)
-                                            }) {
-                                                this.open_session(first.id.clone(), cx);
-                                                this.focus_project_input = true;
-                                            }
-                                        }
-                                    }
+                                    this.apply_refreshed_sessions(&workspace, sessions, cx);
                                 }
                                 Err(error) => {
                                     if this.session.is_none() {
@@ -648,6 +702,65 @@ impl HiveApp {
         })
         .detach();
     }
+    pub(crate) fn apply_refreshed_sessions(
+        &mut self,
+        workspace: &str,
+        sessions: Vec<Session>,
+        cx: &mut Context<Self>,
+    ) {
+        self.sessions = sessions;
+        self.sync_pinned_project();
+        if let Some(selected) = &mut self.session {
+            self.pending_history_blank_workspace = None;
+            if let Some(record) = self.sessions.iter().find(|s| s.id == selected.id) {
+                *selected = record.clone();
+            }
+        } else {
+            self.loading = false;
+            if self.connected && !self.closing && self.workspace_writes_allowed() {
+                self.status = if self.sessions.iter().all(|session| session.archived) {
+                    "工作区已就绪，新建会话开始工作"
+                } else {
+                    "工作区已就绪"
+                }
+                .into();
+            }
+            let history_target = self
+                .pending_history_target_session
+                .as_ref()
+                .is_some_and(|(ws, _)| ws == workspace)
+                .then(|| self.pending_history_target_session.take())
+                .flatten()
+                .map(|(_, id)| id);
+            let history_blank =
+                self.pending_history_blank_workspace.as_deref() == Some(workspace);
+            if let Some(target_id) = history_target {
+                self.pending_history_blank_workspace = None;
+                if self.sessions.iter().any(|s| s.id == target_id) {
+                    self.open_session(target_id, cx);
+                }
+            } else if !history_blank
+                && !self.memory.visible
+                && !self.workflows.visible
+                && !self.member_panel
+                && !self.collaboration.visible
+                && !self.settings_panel
+                && !self.roles.visible
+                && !self.showing_welcome_guide
+            {
+                let saved = self
+                    .navigation
+                    .sessions
+                    .get(workspace)
+                    .and_then(|id| self.sessions.iter().find(|s| &s.id == id));
+                if let Some(first) = saved.or_else(|| self.sessions.iter().find(|s| !s.archived)) {
+                    self.open_session(first.id.clone(), cx);
+                    self.focus_project_input = true;
+                }
+            }
+        }
+    }
+
     pub(crate) fn new_session_in_project(
         &mut self,
         project: String,
@@ -1245,12 +1358,17 @@ impl HiveApp {
         let Some(request_workspace) = self.workspace.clone() else {
             return;
         };
+        if !self.nav_suppress_record {
+            self.pending_history_blank_workspace = None;
+            self.pending_history_target_session = None;
+        }
         self.focus_project_input = false;
         self.showing_welcome_guide = false;
         self.close_workflows();
         if self.removed_sessions.contains(&id) || !self.workspace_writes_allowed() {
             return;
         }
+        self.pending_history_blank_workspace = None;
         if self.session.as_ref().map(|s| &s.id) != Some(&id) {
             self.record_nav_snapshot();
         }
@@ -1713,5 +1831,147 @@ mod tests {
         assert!(matches(draft.clone()));
         draft["execution"]["ownerSessionId"] = json!("source");
         assert!(!matches(draft));
+    }
+
+    #[gpui_kit::test]
+    fn history_navigation_skips_invalid_entries_closes_subviews_and_preserves_blank_workspace(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use crate::app::{HiveApp, init_test_globals};
+        use crate::protocol::Workspace;
+        use gpui_kit::{AppContext as _, Bounds, TestAppContext, WindowBounds, WindowOptions, open_window};
+
+        fn open_app(cx: &mut TestAppContext) -> (gpui_kit::Entity<HiveApp>, crate::language::TestLocaleGuard) {
+            let locale = init_test_globals(cx);
+            let (window, app) = cx.update(|cx| {
+                let bounds = Bounds::maximized(None, cx);
+                open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(bounds)),
+                        ..Default::default()
+                    },
+                    cx,
+                    |window, cx| cx.new(|cx| HiveApp::new_for_test(window, cx)),
+                )
+                .unwrap()
+            });
+            let _ = window;
+            (app, locale)
+        }
+
+        let (app, _locale) = open_app(cx);
+        app.update(cx, |app, cx| {
+            let s1: Session = serde_json::from_value(json!({
+                "id": "s1", "title": "Alpha Chat", "workspaceId": "w1"
+            }))
+            .unwrap();
+            let s2: Session = serde_json::from_value(json!({
+                "id": "s2", "title": "Beta Chat", "workspaceId": "w2"
+            }))
+            .unwrap();
+            app.workspaces = vec![
+                Workspace { id: "w1".into(), name: "Alpha".into(), path: "/tmp/a".into() },
+                Workspace { id: "w2".into(), name: "Beta".into(), path: "/tmp/b".into() },
+            ];
+            app.workspace = Some("w2".into());
+            app.sessions = vec![s2.clone()];
+            app.session = Some(s2);
+            app.project_sessions.insert("w1".into(), vec![s1]);
+
+            // Stack has: valid (w1, None), invalid removed session (w1, s-removed), invalid deleted workspace (w-gone, None).
+            app.removed_sessions.insert("s-removed".into());
+            app.nav_back = vec![
+                (Some("w1".into()), None),
+                (Some("w1".into()), Some("s-removed".into())),
+                (Some("w-gone".into()), None),
+            ];
+
+            // peek_history_target skips w-gone and s-removed, resolving directly to (w1, None).
+            let target = app.peek_history_target(&app.nav_back).unwrap();
+            assert_eq!(target, (Some("w1".into()), None));
+            let label = app.history_entry_label(&target).unwrap();
+            assert!(label.contains("Alpha"));
+
+            // Open subviews and navigate back -> must close all subviews and mark pending_history_blank_workspace.
+            app.settings_panel = true;
+            app.member_panel = true;
+            app.collaboration.visible = true;
+            app.navigate_history_back(cx);
+            assert!(!app.settings_panel);
+            assert!(!app.member_panel);
+            assert!(!app.collaboration.visible);
+            assert_eq!(app.workspace.as_deref(), Some("w1"));
+            assert!(app.session.is_none());
+            assert_eq!(app.pending_history_blank_workspace.as_deref(), Some("w1"));
+            assert_eq!(app.nav_forward.len(), 1);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn second_refresh_sessions_preserves_pending_history_blank_workspace(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use crate::app::{HiveApp, init_test_globals};
+        use crate::protocol::Workspace;
+        use gpui_kit::{AppContext as _, Bounds, WindowBounds, WindowOptions, open_window};
+        let _locale = init_test_globals(cx);
+        let (_, app) = cx.update(|cx| {
+            let bounds = Bounds::maximized(None, cx);
+            open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| HiveApp::new_for_test(window, cx)),
+            )
+            .unwrap()
+        });
+
+        app.update(cx, |app, cx| {
+            let s1: Session = serde_json::from_value(json!({
+                "id": "s1", "title": "Alpha Chat", "workspaceId": "w1"
+            }))
+            .unwrap();
+            let s2: Session = serde_json::from_value(json!({
+                "id": "s2", "title": "Beta Chat", "workspaceId": "w2"
+            }))
+            .unwrap();
+            app.workspaces = vec![
+                Workspace { id: "w1".into(), name: "Alpha".into(), path: "/tmp/a".into() },
+                Workspace { id: "w2".into(), name: "Beta".into(), path: "/tmp/b".into() },
+            ];
+            app.workspace = Some("w2".into());
+            app.sessions = vec![s2.clone()];
+            app.session = Some(s2);
+            app.navigation.sessions.insert("w1".into(), "s1".into());
+            app.nav_back = vec![(Some("w1".into()), None)];
+
+            app.navigate_history_back(cx);
+            assert_eq!(app.workspace.as_deref(), Some("w1"));
+            assert!(app.session.is_none());
+            assert_eq!(app.pending_history_blank_workspace.as_deref(), Some("w1"));
+
+            // First refresh_sessions delivery preserves blank workspace and keeps the flag sticky.
+            app.apply_refreshed_sessions("w1", vec![s1.clone()], cx);
+            assert!(app.session.is_none());
+            assert_eq!(app.pending_history_blank_workspace.as_deref(), Some("w1"));
+
+            // Second refresh_sessions delivery (e.g. list_dirty loop or background event) must NOT
+            // auto-open saved `s1` or first session while `session` is still None.
+            app.apply_refreshed_sessions("w1", vec![s1.clone()], cx);
+            assert!(app.session.is_none());
+            assert_eq!(app.pending_history_blank_workspace.as_deref(), Some("w1"));
+
+            // Explicit session open clears pending_history_blank_workspace.
+            app.open_session("s1".into(), cx);
+            assert_eq!(app.session.as_ref().map(|s| s.id.as_str()), Some("s1"));
+            assert!(app.pending_history_blank_workspace.is_none());
+
+            // Switching workspace via user action also clears pending_history_blank_workspace.
+            app.pending_history_blank_workspace = Some("w1".into());
+            app.select_workspace("w2".into(), cx);
+            assert!(app.pending_history_blank_workspace.is_none());
+        });
     }
 }

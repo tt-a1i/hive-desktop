@@ -41,12 +41,24 @@ pub struct SplitPeekMessage {
     pub text: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SplitPeekState {
     pub session_id: String,
     pub title: String,
     pub backend_label: String,
     pub branch: Option<String>,
+    pub role_key: &'static str,
+    pub member_name: Option<String>,
+    pub identity_unknown: bool,
+    pub member_missing: bool,
+    pub execution_path: Option<String>,
+    pub shared_worktree: bool,
+    pub worktree_released: bool,
+    pub archived: bool,
+    pub remote_busy: bool,
+    pub pending_count: usize,
+    pub interaction_count: usize,
+    pub session_snapshot: Option<Session>,
     pub loading: bool,
     pub error: Option<String>,
     pub messages: Vec<SplitPeekMessage>,
@@ -182,6 +194,8 @@ pub struct HiveApp {
     pub nav_back: Vec<(Option<String>, Option<String>)>,
     pub nav_forward: Vec<(Option<String>, Option<String>)>,
     pub nav_suppress_record: bool,
+    pub(crate) pending_history_blank_workspace: Option<String>,
+    pub(crate) pending_history_target_session: Option<(String, String)>,
     pub git_drawer_open: bool,
     pub(crate) project_file_dock: Option<Entity<crate::project_files::FileBrowser>>,
     pub(crate) project_file_dock_width: Option<Pixels>,
@@ -801,6 +815,8 @@ impl HiveApp {
             nav_back: Vec::new(),
             nav_forward: Vec::new(),
             nav_suppress_record: false,
+            pending_history_blank_workspace: None,
+            pending_history_target_session: None,
             git_drawer_open: false,
             project_file_dock: None,
             project_file_dock_width: None,
@@ -1272,6 +1288,29 @@ impl HiveApp {
         })
         .detach();
     }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static TEST_BOUNDS: std::cell::RefCell<HashMap<String, Bounds<Pixels>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+#[cfg(test)]
+pub(crate) fn clear_test_bounds() {
+    TEST_BOUNDS.with(|map| map.borrow_mut().clear());
+}
+
+#[cfg(test)]
+pub(crate) fn record_test_bounds(key: impl Into<String>, bounds: Bounds<Pixels>) {
+    TEST_BOUNDS.with(|map| {
+        map.borrow_mut().insert(key.into(), bounds);
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn get_test_bounds(key: &str) -> Option<Bounds<Pixels>> {
+    TEST_BOUNDS.with(|map| map.borrow().get(key).copied())
 }
 
 #[cfg(test)]

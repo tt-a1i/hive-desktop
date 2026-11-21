@@ -830,19 +830,10 @@ impl HiveApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let composer_focused = self.input.read(cx).focus_handle(cx).is_focused(window);
-        let is_dark = Theme::global(cx).is_dark();
-        let composer_border = if composer_focused {
-            if is_dark {
-                hsla(0., 0., 1., 0.14)
-            } else {
-                hsla(0., 0., 0., 0.15)
-            }
-        } else if is_dark {
-            hsla(0., 0., 1., 0.08)
-        } else {
-            hsla(0., 0., 0., 0.08)
-        };
-        let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
+        let composer_border = crate::palette::composer_border(composer_focused, cx);
+        let chat_max_w = cx
+            .global::<crate::appearance::Appearance>()
+            .chat_width_max_px();
         v_flex()
             .track_focus(self.workspace_focus.region(Area::Composer))
             .tab_stop(false)
@@ -850,7 +841,7 @@ impl HiveApp {
             .w_full()
             .min_w_0()
             .min_h_0()
-            .max_w(px(chat_width))
+            .when_some(chat_max_w, |card, w| card.max_w(px(w)))
             .mx_auto()
             .flex_shrink_1()
             .gap_1p5()
@@ -1131,10 +1122,12 @@ impl HiveApp {
         needs_pi_model: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
+        let chat_max_w = cx
+            .global::<crate::appearance::Appearance>()
+            .chat_width_max_px();
         v_flex()
             .w_full()
-            .max_w(px(chat_width))
+            .when_some(chat_max_w, |col, w| col.max_w(px(w)))
             .mx_auto()
             .gap_1p5()
             .when_some(self.unavailable_inherited_model(), |surface, model| {
@@ -2161,13 +2154,15 @@ impl Render for HiveApp {
                                                             },
                                                         )
                                 .when(self.error.is_some(), |view| {
-                                    let chat_width = cx
+                                    let chat_max_w = cx
                                         .global::<crate::appearance::Appearance>()
-                                        .chat_width_px();
+                                        .chat_width_max_px();
                                     view.child(
                                         div()
                                             .w_full()
-                                            .max_w(px(chat_width + 64.))
+                                            .when_some(chat_max_w, |banner, w| {
+                                                banner.max_w(px(w + 64.))
+                                            })
                                             .mx_auto()
                                             .px_5()
                                             .pt_2()

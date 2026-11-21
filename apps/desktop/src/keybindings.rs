@@ -3,8 +3,8 @@ pub(crate) use editor::Editor;
 
 use crate::language::tr;
 use gpui_kit::{
-    Action, App, Global, KeyBinding, KeyBindingContextPredicate, KeybindingKeystroke, Keymap, Keystroke, Modifiers,
-    OperatingSystem, component::kbd::Kbd,
+    Action, App, Global, KeyBinding, KeyBindingContextPredicate, KeyContext, KeybindingKeystroke,
+    Keymap, Keystroke, Modifiers, OperatingSystem, component::kbd::Kbd,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -23,6 +23,72 @@ gpui_kit::actions!(
 
 pub(crate) const FILE: &str = "desktop-keybindings.json";
 const CHORD_CONFLICT: &str = "快捷键与另一个操作冲突，请选择不同的组合键。";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ContextScope {
+    Global,
+    WorkspaceNonTerminal,
+    Composer,
+    #[cfg(test)]
+    Terminal,
+}
+
+impl ContextScope {
+    pub(crate) fn badge_key(self) -> &'static str {
+        match self {
+            Self::Global => "全局",
+            Self::WorkspaceNonTerminal => "非终端",
+            Self::Composer => "输入框",
+            #[cfg(test)]
+            Self::Terminal => "终端",
+        }
+    }
+
+    pub(crate) fn detail_key(self) -> &'static str {
+        match self {
+            Self::Global => "全局可用（所有窗口与输入区域）",
+            Self::WorkspaceNonTerminal => "仅非终端工作区生效（when: !HiveTerminal）",
+            Self::Composer => "仅消息输入框内生效（when: HiveComposer）",
+            #[cfg(test)]
+            Self::Terminal => "仅内置终端内生效（when: HiveTerminal）",
+        }
+    }
+
+    pub(crate) fn when_expr(self) -> &'static str {
+        match self {
+            Self::Global => "Global",
+            Self::WorkspaceNonTerminal => "!HiveTerminal",
+            Self::Composer => "HiveComposer",
+            #[cfg(test)]
+            Self::Terminal => "HiveTerminal",
+        }
+    }
+
+    pub(crate) fn overlaps(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Global, _) | (_, Self::Global) => true,
+            #[cfg(test)]
+            (Self::Terminal, Self::Terminal) => true,
+            #[cfg(test)]
+            (Self::Terminal, _) | (_, Self::Terminal) => false,
+            _ => true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ConflictKind {
+    SameScope(Target),
+    OverlappingScope(Target),
+    ProtectedComponent(&'static str),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TargetConflict {
+    pub target: Target,
+    pub kind: ConflictKind,
+    pub chord: String,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TargetGroup {
@@ -290,6 +356,16 @@ impl Target {
         )
     }
 
+    pub(crate) fn context_scope(self) -> ContextScope {
+        if self.composer_only() {
+            ContextScope::Composer
+        } else if self.workspace_focus() {
+            ContextScope::WorkspaceNonTerminal
+        } else {
+            ContextScope::Global
+        }
+    }
+
     fn action(self) -> Box<dyn Action> {
         match self {
             Self::NewSession => Box::new(crate::NewSessionShortcut),
@@ -539,14 +615,18 @@ impl Bindings {
 
     pub(crate) fn normalized(&self, os: OperatingSystem) -> Result<Self, &'static str> {
         let mut next = self.clone();
-        let mut seen: Vec<Keystroke> = Vec::with_capacity(TARGETS.len());
+        let mut seen: Vec<(Keystroke, ContextScope)> = Vec::with_capacity(TARGETS.len());
         for target in TARGETS {
             if let Some(raw) = self.get(target) {
                 let key = target.validate(raw, os)?;
-                if seen.contains(&key) {
+                let scope = target.context_scope();
+                if seen
+                    .iter()
+                    .any(|(existing, existing_scope)| existing == &key && scope.overlaps(*existing_scope))
+                {
                     return Err(CHORD_CONFLICT);
                 }
-                seen.push(key.clone());
+                seen.push((key.clone(), scope));
                 next.set(target, Some(key.unparse(os)));
             }
         }
@@ -742,17 +822,133 @@ fn dispatch_key(key: Keystroke, cx: &App) -> Keystroke {
         .clone()
 }
 
+fn canonical_stacks_for_scope(scope: ContextScope) -> Vec<Vec<KeyContext>> {
+    let parse = |names: &[&str]| -> Vec<KeyContext> {
+        names
+            .iter()
+            .filter_map(|name| KeyContext::parse(name).ok())
+            .collect()
+    };
+    let ws = parse(&["HiveWorkspace"]);
+    let ws_conv = parse(&["HiveWorkspace", "HiveConversation"]);
+    let composer = parse(&["HiveWorkspace", "HiveConversation", "HiveComposer", "Input", "Textarea"]);
+    let queued_inputs = parse(&["HiveWorkspace", "HiveConversation", "HiveQueuedInputs"]);
+    let diff_find = parse(&["HiveWorkspace", "HiveConversation", "HiveGitDiff", "HiveGitDiffFind", "Input"]);
+    let terminal = parse(&["HiveWorkspace", "HiveConversation", "HiveTerminal"]);
+    match scope {
+        ContextScope::Global => vec![ws, ws_conv, composer, queued_inputs, diff_find, terminal],
+        ContextScope::WorkspaceNonTerminal => {
+            vec![ws, ws_conv, composer, queued_inputs, diff_find]
+        }
+        ContextScope::Composer => vec![composer],
+        #[cfg(test)]
+        ContextScope::Terminal => vec![terminal],
+    }
+}
+
+pub(crate) fn predicate_overlaps_scope(
+    pred: Option<&KeyBindingContextPredicate>,
+    scope: ContextScope,
+) -> bool {
+    let Some(pred) = pred else {
+        return true;
+    };
+    canonical_stacks_for_scope(scope)
+        .iter()
+        .any(|stack| pred.depth_of(stack).is_some())
+}
+
+fn protected_reason_in_scope(
+    key: &Keystroke,
+    scope: ContextScope,
+    cx: &App,
+) -> Option<&'static str> {
+    cx.all_bindings_for_input(std::slice::from_ref(key))
+        .iter()
+        .find(|binding| {
+            protected_binding(binding) && predicate_overlaps_scope(binding.predicate().as_deref(), scope)
+        })
+        .map(|binding| {
+            let name = binding.action().name();
+            if name.contains("Quit") {
+                "退出应用"
+            } else if name.contains("input") || name.contains("textarea") {
+                "文本编辑组件"
+            } else {
+                "现有组件或终端"
+            }
+        })
+}
+
+pub(crate) fn analyze_conflicts(
+    bindings: &Bindings,
+    os: OperatingSystem,
+    dispatch_key: impl Fn(Keystroke) -> Keystroke,
+    protected_for: impl Fn(&Keystroke, ContextScope) -> Option<&'static str>,
+) -> Vec<TargetConflict> {
+    let mut resolved: Vec<(Target, Keystroke, ContextScope, String)> = Vec::new();
+    for target in TARGETS {
+        let Some(chord) = bindings.get(target) else {
+            continue;
+        };
+        let Ok(validated) = target.validate(chord, os) else {
+            continue;
+        };
+        resolved.push((
+            target,
+            dispatch_key(validated),
+            target.context_scope(),
+            chord.clone(),
+        ));
+    }
+
+    let mut conflicts = Vec::new();
+    for (i, (target_a, key_a, scope_a, chord_a)) in resolved.iter().enumerate() {
+        for (j, (target_b, key_b, scope_b, _)) in resolved.iter().enumerate() {
+            if i == j || key_a != key_b || !scope_a.overlaps(*scope_b) {
+                continue;
+            }
+            let kind = if scope_a == scope_b {
+                ConflictKind::SameScope(*target_b)
+            } else {
+                ConflictKind::OverlappingScope(*target_b)
+            };
+            conflicts.push(TargetConflict {
+                target: *target_a,
+                kind,
+                chord: chord_a.clone(),
+            });
+        }
+        let existing_default = TARGETS
+            .into_iter()
+            .any(|existing| Some(chord_a.as_str()) == existing.default(os));
+        if !existing_default && let Some(component_label) = protected_for(key_a, *scope_a) {
+            conflicts.push(TargetConflict {
+                target: *target_a,
+                kind: ConflictKind::ProtectedComponent(component_label),
+                chord: chord_a.clone(),
+            });
+        }
+    }
+    conflicts
+}
+
+#[cfg(test)]
 fn check_conflicts(
     bindings: &Bindings,
     os: OperatingSystem,
     dispatch_key: impl Fn(Keystroke) -> Keystroke,
     is_protected: impl Fn(&Keystroke) -> bool,
 ) -> Result<(), &'static str> {
-    let mut claimed = Vec::with_capacity(TARGETS.len());
+    let mut claimed: Vec<(Keystroke, ContextScope)> = Vec::with_capacity(TARGETS.len());
     for target in TARGETS {
         if let Some(chord) = bindings.get(target) {
             let key = dispatch_key(target.validate(chord, os)?);
-            if claimed.contains(&key) {
+            let scope = target.context_scope();
+            if claimed
+                .iter()
+                .any(|(existing, existing_scope)| existing == &key && scope.overlaps(*existing_scope))
+            {
                 return Err(CHORD_CONFLICT);
             }
             // These existing Hive global defaults already own their chords.
@@ -762,23 +958,33 @@ fn check_conflicts(
             if !existing_default && is_protected(&key) {
                 return Err("此组合键已用于现有组件或文字编辑，请选择其他组合。");
             }
-            claimed.push(key);
+            claimed.push((key, scope));
         }
     }
     Ok(())
 }
 
 fn check_registered(bindings: &Bindings, cx: &App) -> Result<(), &'static str> {
-    check_conflicts(
+    for target in TARGETS {
+        if let Some(chord) = bindings.get(target) {
+            target.validate(chord, cx.platform_info().os)?;
+        }
+    }
+    let conflicts = analyze_conflicts(
         bindings,
         cx.platform_info().os,
         |key| dispatch_key(key, cx),
-        |key| {
-            cx.all_bindings_for_input(std::slice::from_ref(key))
-                .iter()
-                .any(protected_binding)
-        },
-    )
+        |key, scope| protected_reason_in_scope(key, scope, cx),
+    );
+    if let Some(first) = conflicts.first() {
+        return Err(match first.kind {
+            ConflictKind::ProtectedComponent(_) => {
+                "此组合键已用于现有组件或文字编辑，请选择其他组合。"
+            }
+            ConflictKind::SameScope(_) | ConflictKind::OverlappingScope(_) => CHORD_CONFLICT,
+        });
+    }
+    Ok(())
 }
 
 type BindingChanges = Vec<(&'static str, Option<KeyBinding>)>;

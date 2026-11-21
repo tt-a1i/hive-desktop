@@ -1,7 +1,7 @@
 use crate::language::tr;
 use crate::{
     app::HiveApp,
-    appearance::{self, Appearance, ChatWidth, Mode, MonoFontPreset},
+    appearance::{self, Appearance, ChatWidth, Contrast, Mode, MonoFontPreset},
     palette::Color,
 };
 use gpui_kit::{
@@ -274,8 +274,27 @@ impl HiveApp {
                                 .child(
                                     h_flex()
                                         .flex_shrink_0()
+                                        .max_w_full()
+                                        .min_w_0()
+                                        .flex_wrap()
                                         .items_center()
                                         .gap_1p5()
+                                        .when(cfg!(test), |row| {
+                                            let has_reset =
+                                                saved.chat_width() != ChatWidth::default();
+                                            row.on_children_prepainted(move |bounds, _, _| {
+                                                #[cfg(test)]
+                                                if has_reset
+                                                    && let Some(reset) = bounds.first()
+                                                {
+                                                    crate::app::record_test_bounds(
+                                                        "reset-appearance-chat-width",
+                                                        *reset,
+                                                    );
+                                                }
+                                                let _ = (bounds, has_reset);
+                                            })
+                                        })
                                         .when(saved.chat_width() != ChatWidth::default(), |row| {
                                             row.child(crate::focus_scroll::Reveal::new(
                                                 "reset-appearance-chat-width-reveal",
@@ -297,11 +316,34 @@ impl HiveApp {
                                         .child(crate::focus_scroll::Reveal::new(
                                             "appearance-chat-width-reveal",
                                             &self.appearance_scroll,
-                                            super::settings_segmented_bar(cx).children(
+                                            super::settings_segmented_bar(cx)
+                                                .flex_wrap()
+                                                .when(cfg!(test), |bar| {
+                                                    bar.on_children_prepainted(|bounds, _, _| {
+                                                        #[cfg(test)]
+                                                        {
+                                                            if let Some(first) = bounds.first() {
+                                                                crate::app::record_test_bounds(
+                                                                    "appearance-chat-width-standard",
+                                                                    *first,
+                                                                );
+                                                            }
+                                                            if let Some(last) = bounds.last() {
+                                                                crate::app::record_test_bounds(
+                                                                    "appearance-chat-width-full",
+                                                                    *last,
+                                                                );
+                                                            }
+                                                        }
+                                                        let _ = bounds;
+                                                    })
+                                                })
+                                                .children(
                                                 [
                                                     (ChatWidth::Standard, "standard"),
                                                     (ChatWidth::Comfortable, "comfortable"),
                                                     (ChatWidth::Wide, "wide"),
+                                                    (ChatWidth::Full, "full"),
                                                 ]
                                                 .into_iter()
                                                 .map(|(width, key)| {
@@ -320,6 +362,103 @@ impl HiveApp {
                                                     .on_click(move |_, window, cx| {
                                                         appearance::choose_chat_width(
                                                             width, window, cx,
+                                                        );
+                                                    })
+                                                }),
+                                            ),
+                                        )),
+                                ),
+                        )
+                    })
+                    .child({
+                        let hl = highlight_gen("appearance-contrast");
+                        super::settings_anchor_row(
+                            "appearance-contrast",
+                            true,
+                            hl.is_some(),
+                            hl.unwrap_or(0),
+                            cx,
+                        )
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .items_center()
+                                .justify_between()
+                                .gap_4()
+                                .flex_wrap()
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w(px(200.))
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Text.get(cx))
+                                                .child(tr("界面对比度")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(tr(
+                                                    "在默认护眼对比度与高清晰增强对比度间切换，同时保持深浅表面层次。",
+                                                )),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .flex_shrink_0()
+                                        .max_w_full()
+                                        .min_w_0()
+                                        .flex_wrap()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .when(saved.contrast() != Contrast::default(), |row| {
+                                            row.child(crate::focus_scroll::Reveal::new(
+                                                "reset-appearance-contrast-reveal",
+                                                &self.appearance_scroll,
+                                                super::settings_reset_button(
+                                                    "reset-appearance-contrast",
+                                                    "恢复默认值",
+                                                    cx,
+                                                    |_, window, cx| {
+                                                        appearance::choose_contrast(
+                                                            Contrast::default(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                ),
+                                            ))
+                                        })
+                                        .child(crate::focus_scroll::Reveal::new(
+                                            "appearance-contrast-reveal",
+                                            &self.appearance_scroll,
+                                            super::settings_segmented_bar(cx).children(
+                                                [
+                                                    (Contrast::Standard, "standard"),
+                                                    (Contrast::Enhanced, "enhanced"),
+                                                ]
+                                                .into_iter()
+                                                .map(|(contrast, key)| {
+                                                    let active = saved.contrast() == contrast;
+                                                    Button::new(SharedString::from(format!(
+                                                        "appearance-contrast-{key}"
+                                                    )))
+                                                    .when(active, |b| b.outline())
+                                                    .when(!active, |b| b.ghost())
+                                                    .small()
+                                                    .h(px(26.))
+                                                    .px_2p5()
+                                                    .rounded_md()
+                                                    .label(contrast.label())
+                                                    .disabled(!appearance::available(cx))
+                                                    .on_click(move |_, window, cx| {
+                                                        appearance::choose_contrast(
+                                                            contrast, window, cx,
                                                         );
                                                     })
                                                 }),
@@ -821,5 +960,122 @@ impl HiveApp {
                             ),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app::{HiveApp, clear_test_bounds, get_test_bounds, init_test_globals};
+    use crate::appearance::{self, ChatWidth};
+    use gpui_kit::{
+        AppContext as _, Bounds, Context, Entity, IntoElement, ParentElement as _, Render,
+        Styled as _, TestAppContext, VisualTestContext, Window, WindowBounds, WindowOptions, div,
+        open_window, point, px, size,
+    };
+
+    #[gpui_kit::test]
+    fn chat_width_segmented_bar_wraps_without_overflow_in_narrow_english_mode(
+        cx: &mut TestAppContext,
+    ) {
+        let _locale = init_test_globals(cx);
+
+        struct AppearanceHarness {
+            app: Entity<HiveApp>,
+        }
+        impl Render for AppearanceHarness {
+            fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w_full()
+                    .h_full()
+                    .child(
+                        self.app
+                            .update(cx, |app, cx| app.render_appearance_settings(cx).into_any_element()),
+                    )
+            }
+        }
+
+        clear_test_bounds();
+        let _root = tempfile::tempdir().unwrap();
+        let (window, harness) = cx.update(|cx| {
+            gpui_kit::component::set_locale("en");
+            appearance::restore(_root.path(), cx);
+            let bounds = Bounds::new(point(px(0.), px(0.)), size(px(480.), px(720.)));
+            open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    appearance::choose_chat_width(ChatWidth::Full, window, cx);
+                    let app = cx.new(|cx| HiveApp::new_for_test(window, cx));
+                    cx.new(|_| AppearanceHarness { app })
+                },
+            )
+            .unwrap()
+        });
+        let _ = &harness;
+
+        let vcx = VisualTestContext::from_window(window, cx);
+        harness.update(cx, |_, cx| cx.notify());
+        vcx.run_until_parked();
+
+        let reset_bounds = get_test_bounds("reset-appearance-chat-width").expect("reset bounds");
+        let standard_bounds =
+            get_test_bounds("appearance-chat-width-standard").expect("standard bounds");
+        let full_bounds = get_test_bounds("appearance-chat-width-full").expect("full bounds");
+
+        let viewport_right = px(480.);
+        assert!(
+            full_bounds.right() <= viewport_right + px(0.5),
+            "Full (100%) button must not overflow 480px viewport: full={full_bounds:?}"
+        );
+        assert!(
+            reset_bounds.right() <= viewport_right + px(0.5),
+            "reset button must stay inside 480px viewport: reset={reset_bounds:?}"
+        );
+        assert!(
+            standard_bounds.origin.y >= reset_bounds.origin.y,
+            "control row must keep reset & segmented bar aligned or wrapped cleanly: reset={reset_bounds:?}, standard={standard_bounds:?}"
+        );
+
+        // At 320px, the 4-option segmented bar + reset button must wrap onto multiple lines with 0 overflow.
+        clear_test_bounds();
+        vcx.simulate_resize(size(px(320.), px(720.)));
+        vcx.run_until_parked();
+        let narrow_reset =
+            get_test_bounds("reset-appearance-chat-width").expect("320px reset bounds");
+        let narrow_standard =
+            get_test_bounds("appearance-chat-width-standard").expect("320px standard bounds");
+        let narrow_full =
+            get_test_bounds("appearance-chat-width-full").expect("320px full bounds");
+        assert!(
+            narrow_full.right() <= px(320.5),
+            "Full (100%) button must not overflow 320px viewport: full={narrow_full:?}"
+        );
+        assert!(
+            narrow_reset.right() <= px(320.5),
+            "reset button must not overflow 320px viewport: reset={narrow_reset:?}"
+        );
+        assert!(
+            narrow_full.origin.y > narrow_standard.origin.y,
+            "4-option segmented bar at 320px English mode must wrap onto 2+ lines: standard={narrow_standard:?}, full={narrow_full:?}"
+        );
+
+        // Wide window keeps all 4 options on a single horizontal line.
+        clear_test_bounds();
+        vcx.simulate_resize(size(px(960.), px(720.)));
+        vcx.run_until_parked();
+        let wide_standard =
+            get_test_bounds("appearance-chat-width-standard").expect("wide standard bounds");
+        let wide_full = get_test_bounds("appearance-chat-width-full").expect("wide full bounds");
+        assert!(
+            (f32::from(wide_standard.origin.y) - f32::from(wide_full.origin.y)).abs() < 1.0,
+            "wide window must preserve single-line segmented bar: standard={wide_standard:?}, full={wide_full:?}"
+        );
+        assert!(
+            wide_full.right() <= px(960.5),
+            "wide full button must fit inside viewport: full={wide_full:?}"
+        );
     }
 }

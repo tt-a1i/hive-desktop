@@ -312,6 +312,20 @@ impl HiveApp {
                     .into_any_element()
             })
             .when(in_sidebar, |view| {
+                let back_target = self.peek_history_target(&self.nav_back);
+                let forward_target = self.peek_history_target(&self.nav_forward);
+                let back_disabled = back_target.is_none();
+                let forward_disabled = forward_target.is_none();
+                let back_tip = back_target
+                    .as_ref()
+                    .and_then(|target| self.history_entry_label(target))
+                    .map(|label| format!("{}: {label}", tr("后退")))
+                    .unwrap_or_else(|| tr("暂无可后退的历史记录").to_owned());
+                let forward_tip = forward_target
+                    .as_ref()
+                    .and_then(|target| self.history_entry_label(target))
+                    .map(|label| format!("{}: {label}", tr("前进")))
+                    .unwrap_or_else(|| tr("暂无可前进的历史记录").to_owned());
                 view.child(
                     h_flex()
                         .flex_1()
@@ -320,32 +334,42 @@ impl HiveApp {
                         .pl_1()
                         .child(
                             Button::new("nav-history-back")
-                                .custom(palette::quiet_icon_variant(cx))
+                                .custom(palette::history_nav_variant(cx))
                                 .compact()
                                 .xsmall()
                                 .h(px(24.))
                                 .w(px(24.))
                                 .rounded_md()
                                 .icon(Glyph::ArrowLeft)
-                                .tooltip(tr("后退"))
+                                .tooltip(back_tip)
                                 .accessibility_label(tr("后退"))
-                                .disabled(self.nav_back.is_empty())
+                                .disabled(back_disabled)
+                                .when(!back_disabled, |b| b.cursor_pointer())
+                                .when(back_disabled, |b| {
+                                    b.text_color(Color::Muted.get(cx).opacity(0.28))
+                                        .cursor_default()
+                                })
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.navigate_history_back(cx);
                                 })),
                         )
                         .child(
                             Button::new("nav-history-forward")
-                                .custom(palette::quiet_icon_variant(cx))
+                                .custom(palette::history_nav_variant(cx))
                                 .compact()
                                 .xsmall()
                                 .h(px(24.))
                                 .w(px(24.))
                                 .rounded_md()
                                 .icon(Glyph::ArrowRight)
-                                .tooltip(tr("前进"))
+                                .tooltip(forward_tip)
                                 .accessibility_label(tr("前进"))
-                                .disabled(self.nav_forward.is_empty())
+                                .disabled(forward_disabled)
+                                .when(!forward_disabled, |b| b.cursor_pointer())
+                                .when(forward_disabled, |b| {
+                                    b.text_color(Color::Muted.get(cx).opacity(0.28))
+                                        .cursor_default()
+                                })
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.navigate_history_forward(cx);
                                 })),

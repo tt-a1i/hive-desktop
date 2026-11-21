@@ -12,6 +12,70 @@ use std::{
 const FILE: &str = "desktop-diffs.json";
 pub const MAX_BASE_LEN: usize = 120;
 pub const INLINE_DIFF_MAX_LINE_BYTES: usize = 1_000;
+pub const DEFAULT_FILE_TREE_SPLIT_BPS: u16 = 3500;
+pub const MIN_FILE_TREE_SPLIT_BPS: u16 = 2000;
+pub const MAX_FILE_TREE_SPLIT_BPS: u16 = 5500;
+
+fn default_file_tree_split_bps() -> u16 {
+    DEFAULT_FILE_TREE_SPLIT_BPS
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffColorScheme {
+    #[default]
+    RedGreen,
+    BlueOrange,
+}
+
+impl DiffColorScheme {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::RedGreen => tr("默认（红绿）"),
+            Self::BlueOrange => tr("蓝橙（色盲友好）"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DiffPalette {
+    pub added: gpui_kit::Rgba,
+    pub removed: gpui_kit::Rgba,
+}
+
+pub(crate) fn blue_orange_palette(dark: bool) -> DiffPalette {
+    if dark {
+        DiffPalette {
+            added: gpui_kit::rgb(0x38bdf8),
+            removed: gpui_kit::rgb(0xfb923c),
+        }
+    } else {
+        DiffPalette {
+            added: gpui_kit::rgb(0x0369a1),
+            removed: gpui_kit::rgb(0x9a3412),
+        }
+    }
+}
+
+pub(crate) fn palette(scheme: DiffColorScheme, cx: &App) -> DiffPalette {
+    match scheme {
+        DiffColorScheme::RedGreen => DiffPalette {
+            added: crate::palette::Color::Success.get(cx),
+            removed: crate::palette::Color::Error.get(cx),
+        },
+        DiffColorScheme::BlueOrange => {
+            blue_orange_palette(gpui_kit::component::Theme::global(cx).is_dark())
+        }
+    }
+}
+
+pub(crate) fn current_palette(cx: &App) -> DiffPalette {
+    let scheme = cx
+        .try_global::<DiffPreferences>()
+        .map(|prefs| prefs.settings.color_scheme)
+        .unwrap_or_default();
+    palette(scheme, cx)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -83,6 +147,9 @@ pub struct DiffSettings {
     pub ignore_whitespace: bool,
     pub pr_default_draft: bool,
     pub pr_default_base: String,
+    pub color_scheme: DiffColorScheme,
+    #[serde(default = "default_file_tree_split_bps")]
+    pub file_tree_split_bps: u16,
 }
 
 impl Default for DiffSettings {
@@ -95,6 +162,8 @@ impl Default for DiffSettings {
             ignore_whitespace: false,
             pr_default_draft: true,
             pr_default_base: "main".to_owned(),
+            color_scheme: DiffColorScheme::RedGreen,
+            file_tree_split_bps: DEFAULT_FILE_TREE_SPLIT_BPS,
         }
     }
 }
@@ -119,14 +188,15 @@ impl Global for DiffPreferences {}
 
 impl DiffPreferences {
     fn new() -> Self {
+        let preview = cfg!(feature = "ui-preview")
+            && std::env::var("HIVE_DESKTOP_PREVIEW_SCREEN")
+                .is_ok_and(|value| !value.trim().is_empty());
         Self {
             root: None,
             settings: DiffSettings::default(),
-            loading: true,
+            loading: !preview,
             notice: None,
-            preview: cfg!(feature = "ui-preview")
-                && std::env::var("HIVE_DESKTOP_PREVIEW_SCREEN")
-                    .is_ok_and(|value| !value.trim().is_empty()),
+            preview,
         }
     }
 }
@@ -154,6 +224,12 @@ pub fn validate_base_branch(raw: &str) -> Result<String, String> {
 fn validate(mut settings: DiffSettings) -> io::Result<DiffSettings> {
     settings.pr_default_base = validate_base_branch(&settings.pr_default_base)
         .map_err(|msg| io::Error::new(io::ErrorKind::InvalidData, msg))?;
+    if !(MIN_FILE_TREE_SPLIT_BPS..=MAX_FILE_TREE_SPLIT_BPS).contains(&settings.file_tree_split_bps) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            tr("文件树分栏比例超出允许范围。"),
+        ));
+    }
     Ok(settings)
 }
 
@@ -258,12 +334,9 @@ pub fn set(settings: DiffSettings, cx: &mut App) -> bool {
             return false;
         }
     };
-    let (root, preview) = {
+    let (root, loading, preview) = {
         let state = cx.global::<DiffPreferences>();
-        if state.loading {
-            return false;
-        }
-        (state.root.clone(), state.preview)
+        (state.root.clone(), state.loading, state.preview)
     };
     if preview {
         cx.update_global::<DiffPreferences, _>(|state, _| {
@@ -272,6 +345,9 @@ pub fn set(settings: DiffSettings, cx: &mut App) -> bool {
         });
         cx.refresh_windows();
         return true;
+    }
+    if loading {
+        return false;
     }
     let Some(root) = root else {
         return false;
@@ -297,6 +373,53 @@ pub fn set(settings: DiffSettings, cx: &mut App) -> bool {
 
 pub fn reset(cx: &mut App) -> bool {
     set(DiffSettings::default(), cx)
+}
+
+pub(crate) fn set_file_tree_split_bps(bps: u16, cx: &mut App) -> bool {
+    let bps = bps.clamp(MIN_FILE_TREE_SPLIT_BPS, MAX_FILE_TREE_SPLIT_BPS);
+    let (unchanged, root, loading, preview, mut next) = {
+        let state = cx.global::<DiffPreferences>();
+        (
+            state.settings.file_tree_split_bps == bps,
+            state.root.clone(),
+            state.loading,
+            state.preview,
+            state.settings.clone(),
+        )
+    };
+    if unchanged {
+        return true;
+    }
+    if preview {
+        cx.update_global::<DiffPreferences, _>(|state, _| {
+            state.settings.file_tree_split_bps = bps;
+        });
+        cx.refresh_windows();
+        return true;
+    }
+    if loading {
+        return false;
+    }
+    let Some(root) = root else {
+        return false;
+    };
+    next.file_tree_split_bps = bps;
+    match save(&root, &next) {
+        Ok(()) => {
+            cx.update_global::<DiffPreferences, _>(|state, _| {
+                state.settings = next;
+            });
+            cx.refresh_windows();
+            true
+        }
+        Err(error) => {
+            cx.update_global::<DiffPreferences, _>(|state, _| {
+                state.notice = Some(Notice::WriteError(error.to_string()));
+            });
+            cx.refresh_windows();
+            false
+        }
+    }
 }
 
 pub fn current(cx: &App) -> DiffSettings {
@@ -468,6 +591,71 @@ fn filter_hunk(lines: &[&str]) -> Option<Vec<String>> {
     Some(out)
 }
 
+/// Splits a multi-file unified diff patch into per-file patch sections.
+pub(crate) fn split_patch_by_file(patch: &str) -> Vec<String> {
+    if patch.trim().is_empty() {
+        return Vec::new();
+    }
+    let lines: Vec<&str> = patch.lines().collect();
+    let mut sections: Vec<String> = Vec::new();
+    let mut ix = 0;
+
+    while ix < lines.len() {
+        let start = ix;
+        let mut saw_header = false;
+        let mut saw_plus_header = false;
+        while ix < lines.len() && !lines[ix].starts_with("@@ ") {
+            if saw_header
+                && (lines[ix].starts_with("diff --git ")
+                    || (saw_plus_header && lines[ix].starts_with("--- ")))
+            {
+                break;
+            }
+            if lines[ix].starts_with("+++ ") {
+                saw_plus_header = true;
+            }
+            saw_header = true;
+            ix += 1;
+        }
+        while ix < lines.len() && lines[ix].starts_with("@@ ") {
+            let Some((_, mut old_rem, _, mut new_rem, _)) = parse_hunk_coords(lines[ix]) else {
+                return vec![patch.to_owned()];
+            };
+            ix += 1;
+            while ix < lines.len() && (old_rem > 0 || new_rem > 0) {
+                let line = lines[ix];
+                if line.starts_with(' ') {
+                    old_rem = old_rem.saturating_sub(1);
+                    new_rem = new_rem.saturating_sub(1);
+                    ix += 1;
+                } else if line.starts_with('-') {
+                    old_rem = old_rem.saturating_sub(1);
+                    ix += 1;
+                } else if line.starts_with('+') {
+                    new_rem = new_rem.saturating_sub(1);
+                    ix += 1;
+                } else if line.starts_with('\\') {
+                    ix += 1;
+                } else {
+                    return vec![patch.to_owned()];
+                }
+            }
+            if ix < lines.len() && lines[ix].starts_with('\\') {
+                ix += 1;
+            }
+        }
+        if ix > start {
+            let mut section = lines[start..ix].join("\n");
+            section.push('\n');
+            sections.push(section);
+        } else {
+            ix += 1;
+        }
+    }
+
+    sections
+}
+
 /// Filters lines whose only difference within a hunk block is whitespace, recalculating hunk headers.
 pub(crate) fn filter_patch_whitespace(patch: &str) -> String {
     if patch.trim().is_empty() {
@@ -584,6 +772,8 @@ mod tests {
             ignore_whitespace: true,
             pr_default_draft: false,
             pr_default_base: "develop".to_owned(),
+            color_scheme: DiffColorScheme::BlueOrange,
+            file_tree_split_bps: 4200,
         };
         assert_eq!(InlineDiffMode::Word.next(), InlineDiffMode::Character);
         assert_eq!(InlineDiffMode::Character.next(), InlineDiffMode::Off);
@@ -606,6 +796,53 @@ mod tests {
             load(root.path()).unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
+
+        // Legacy file defaults to RedGreen + 3500 bps.
+        fs::write(root.path().join(FILE), r#"{"pr_default_base": "main"}"#).unwrap();
+        let legacy = load(root.path()).unwrap();
+        assert_eq!(legacy.color_scheme, DiffColorScheme::RedGreen);
+        assert_eq!(legacy.file_tree_split_bps, DEFAULT_FILE_TREE_SPLIT_BPS);
+
+        // Out-of-range split ratio is rejected.
+        fs::write(root.path().join(FILE), r#"{"file_tree_split_bps": 1000}"#).unwrap();
+        assert_eq!(
+            load(root.path()).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        fs::write(root.path().join(FILE), r#"{"file_tree_split_bps": 9000}"#).unwrap();
+        assert_eq!(
+            load(root.path()).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[gpui_kit::test]
+    fn preview_mode_updates_memory_without_writing_disk_even_before_restore(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        let _locale = crate::language::test_locale_guard();
+        let root = tempfile::tempdir().unwrap();
+        let sentinel = root.path().join(FILE);
+        fs::write(&sentinel, "{\"color_scheme\":\"red_green\"}\n").unwrap();
+        let before = fs::read(&sentinel).unwrap();
+
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            cx.update_global::<DiffPreferences, _>(|state, _| {
+                state.root = Some(root.path().to_path_buf());
+                state.loading = true;
+                state.preview = true;
+            });
+            let mut next = current(cx);
+            next.color_scheme = DiffColorScheme::BlueOrange;
+            assert!(set(next, cx));
+            assert_eq!(current(cx).color_scheme, DiffColorScheme::BlueOrange);
+            assert!(set_file_tree_split_bps(4400, cx));
+            assert_eq!(current(cx).file_tree_split_bps, 4400);
+        });
+
+        assert_eq!(fs::read(&sentinel).unwrap(), before);
     }
 
     #[test]
@@ -635,5 +872,52 @@ diff --git a/b.rs b/b.rs
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path().as_ref(), "b.rs");
         assert_eq!((files[0].additions(), files[0].deletions()), (1, 1));
+    }
+
+    #[test]
+    fn blue_orange_palette_meets_wcag_aa_on_all_standard_and_enhanced_surfaces() {
+        use crate::appearance::Contrast;
+        use crate::palette::Color;
+
+        let linearize = |c: f32| {
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let rel_luma = |c: gpui_kit::Rgba| {
+            0.2126 * linearize(c.r) + 0.7152 * linearize(c.g) + 0.0722 * linearize(c.b)
+        };
+        let contrast_ratio = |a: gpui_kit::Rgba, b: gpui_kit::Rgba| {
+            let (la, lb) = (rel_luma(a), rel_luma(b));
+            (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+        };
+
+        for dark in [false, true] {
+            let diff = blue_orange_palette(dark);
+            for contrast in [Contrast::Standard, Contrast::Enhanced] {
+                for surface in [
+                    Color::Sidebar,
+                    Color::Surface,
+                    Color::Card,
+                    Color::Overlay,
+                    Color::Inset,
+                    Color::Bubble,
+                ] {
+                    let bg = surface.for_mode_with_contrast(dark, contrast);
+                    let add_ratio = contrast_ratio(diff.added, bg);
+                    let rem_ratio = contrast_ratio(diff.removed, bg);
+                    assert!(
+                        add_ratio >= 4.5,
+                        "BlueOrange added contrast {add_ratio:.2} < 4.5 on {surface:?} (dark={dark}, contrast={contrast:?})"
+                    );
+                    assert!(
+                        rem_ratio >= 4.5,
+                        "BlueOrange removed contrast {rem_ratio:.2} < 4.5 on {surface:?} (dark={dark}, contrast={contrast:?})"
+                    );
+                }
+            }
+        }
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     app::HiveApp,
-    diffs_settings::{self, DiffSettings, PreferredDiffMode},
+    diffs_settings::{self, DiffColorScheme, DiffSettings, PreferredDiffMode},
     focus_scroll::Reveal,
     language::tr,
     palette::Color,
@@ -63,6 +63,7 @@ impl HiveApp {
         let base_dirty = draft_base_trimmed != saved.pr_default_base;
 
         let hl_view = highlight_gen("diffs-view-mode");
+        let hl_color = highlight_gen("diffs-color-scheme");
         let hl_pr = highlight_gen("diffs-pr-defaults");
 
         v_flex()
@@ -384,6 +385,103 @@ impl HiveApp {
                                                     diffs_settings::set(next, cx);
                                                 }),
                                         )),
+                                ),
+                            )
+                            .child(
+                                super::settings_anchor_row(
+                                    "diffs-color-scheme",
+                                    true,
+                                    hl_color.is_some(),
+                                    hl_color.unwrap_or(0),
+                                    cx,
+                                )
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .min_w_0()
+                                        .flex_wrap()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .child(
+                                            v_flex()
+                                                .flex_1()
+                                                .min_w(px(180.))
+                                                .gap_0p5()
+                                                .child(
+                                                    h_flex()
+                                                        .items_center()
+                                                        .gap_1p5()
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .font_weight(FontWeight::MEDIUM)
+                                                                .text_color(Color::Text.get(cx))
+                                                                .child(tr("Diff 配色方案")),
+                                                        )
+                                                        .when_some(
+                                                            reset_bool_or_mode(
+                                                                "diffs-reset-color-scheme",
+                                                                saved.color_scheme != defaults.color_scheme,
+                                                                |s, d| s.color_scheme = d.color_scheme,
+                                                            ),
+                                                            |row, btn| row.child(btn),
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(Color::Muted.get(cx))
+                                                        .child(tr(
+                                                            "在经典红绿配色与蓝橙色盲友好配色间切换，实时作用于工作区与工具改动视图。",
+                                                        )),
+                                                ),
+                                        )
+                                        .child(
+                                            super::settings_segmented_bar(cx).children(
+                                                [
+                                                    (DiffColorScheme::RedGreen, "diffs-color-red-green"),
+                                                    (DiffColorScheme::BlueOrange, "diffs-color-blue-orange"),
+                                                ]
+                                                .into_iter()
+                                                .map(|(scheme, id)| {
+                                                    let active = saved.color_scheme == scheme;
+                                                    let pal = diffs_settings::palette(scheme, cx);
+                                                    Reveal::new(
+                                                        SharedString::from(format!("{id}-reveal")),
+                                                        &self.diffs_scroll,
+                                                        Button::new(id)
+                                                            .when(active, |b| b.outline())
+                                                            .when(!active, |b| b.ghost())
+                                                            .small()
+                                                            .h(px(26.))
+                                                            .px_2p5()
+                                                            .rounded_md()
+                                                            .selected(active)
+                                                            .toggled(active)
+                                                            .accessibility_label(scheme.label())
+                                                            .child(
+                                                                h_flex()
+                                                                    .items_center()
+                                                                    .gap_1p5()
+                                                                    .child(
+                                                                        h_flex()
+                                                                            .items_center()
+                                                                            .gap_0p5()
+                                                                            .child(div().size(px(7.)).rounded_full().bg(pal.added))
+                                                                            .child(div().size(px(7.)).rounded_full().bg(pal.removed)),
+                                                                    )
+                                                                    .child(scheme.label()),
+                                                            )
+                                                            .on_click(move |_, _, cx| {
+                                                                let mut next = diffs_settings::current(cx);
+                                                                next.color_scheme = scheme;
+                                                                diffs_settings::set(next, cx);
+                                                            }),
+                                                    )
+                                                }),
+                                            ),
+                                        ),
                                 ),
                             ),
                     ),

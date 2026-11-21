@@ -226,6 +226,26 @@ impl HiveApp {
                                     } else {
                                         section == Some(self.settings_section)
                                     };
+                                    let is_project_scoped =
+                                        section == Some(SettingsSection::ProjectScripts);
+                                    let nav_tip = match section {
+                                        Some(SettingsSection::ProjectScripts) => {
+                                            format!("{label} · {}", tr("按当前项目保存"))
+                                        }
+                                        Some(SettingsSection::Programs) => {
+                                            format!("{label} · {}", tr("环境变量优先于应用设置"))
+                                        }
+                                        Some(SettingsSection::Models) => {
+                                            format!("{label} · {}", tr("支持模型级覆写与继承"))
+                                        }
+                                        Some(SettingsSection::Profiles) => {
+                                            format!("{label} · {}", tr("全局模板与会话版本锁定"))
+                                        }
+                                        Some(SettingsSection::Keybindings) => {
+                                            format!("{label} · {}", tr("分上下文作用域"))
+                                        }
+                                        _ => label.to_owned(),
+                                    };
                                     Reveal::new(
                                         SharedString::from(format!("{id}-reveal")),
                                         &self.preferences_nav_scroll,
@@ -239,7 +259,7 @@ impl HiveApp {
                                             .rounded_md()
                                             .w_full()
                                             .accessibility_label(label)
-                                            .tooltip(label)
+                                            .tooltip(nav_tip)
                                             .child(
                                                 h_flex()
                                                     .w_full()
@@ -264,6 +284,19 @@ impl HiveApp {
                                                                 .text_color(Color::Text.get(cx))
                                                                 .child(label),
                                                         )
+                                                        .when(is_project_scoped, |row| {
+                                                            row.child(
+                                                                div()
+                                                                    .flex_shrink_0()
+                                                                    .px_1p5()
+                                                                    .py(px(0.5))
+                                                                    .rounded_sm()
+                                                                    .bg(Color::Inset.get(cx))
+                                                                    .text_size(px(10.))
+                                                                    .text_color(Color::Muted.get(cx))
+                                                                    .child(tr("项目")),
+                                                            )
+                                                        })
                                                     }),
                                             )
                                             .selected(active)
