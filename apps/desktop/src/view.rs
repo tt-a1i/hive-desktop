@@ -121,6 +121,11 @@ impl HiveApp {
             crate::protocol::Backend::Claude => "claude",
             crate::protocol::Backend::Acp => "acp",
         };
+        let open_project_id = project.as_ref().map(|ws| ws.id.clone());
+        let show_conv_tools = self.conversation_ready
+            && self.session.is_some()
+            && !self.messages.is_empty()
+            && !self.loading;
         h_flex()
             .flex_1()
             .min_w_0()
@@ -248,10 +253,10 @@ impl HiveApp {
                                     window.on_next_frame(move |window, cx| focus.focus(window, cx));
                                 }
                             }))
-                            .dropdown_menu(move |menu, _, cx| {
+                            .dropdown_menu(move |menu, window, cx| {
                                 let rename = rename.clone();
                                 let rename_id = rename_id.clone();
-                                let menu = menu
+                                let mut menu = menu
                                     .item(PopupMenuItem::new(tr("重命名当前会话")).on_click(
                                         move |_, window, cx| {
                                             let _ =
@@ -265,6 +270,45 @@ impl HiveApp {
                                         },
                                     ))
                                     .separator();
+                                if show_conv_tools {
+                                    let find_app = weak.clone();
+                                    let export_app = weak.clone();
+                                    menu = menu
+                                        .item(
+                                            PopupMenuItem::new(tr("查找当前会话"))
+                                                .icon(Glyph::Search)
+                                                .on_click(move |_, window, cx| {
+                                                    let _ = find_app.update(cx, |this, cx| {
+                                                        this.open_conversation_find(window, cx);
+                                                    });
+                                                }),
+                                        )
+                                        .item(
+                                            PopupMenuItem::new(tr("导出对话为 Markdown"))
+                                                .icon(Glyph::FileDown)
+                                                .on_click(move |_, window, cx| {
+                                                    let _ = export_app.update(cx, |this, cx| {
+                                                        this.open_conversation_export(window, cx);
+                                                    });
+                                                }),
+                                        )
+                                        .separator();
+                                }
+                                if let Some(ws_id) = open_project_id.clone() {
+                                    let open_app = weak.clone();
+                                    let preferred = crate::general::current(cx).default_open_target;
+                                    menu = menu
+                                        .submenu(tr("打开方式"), window, cx, move |menu, _, cx| {
+                                            crate::open_targets::workspace_menu(
+                                                menu,
+                                                open_app.clone(),
+                                                ws_id.clone(),
+                                                Some(preferred),
+                                                cx,
+                                            )
+                                        })
+                                        .separator();
+                                }
                                 let menu = Self::session_menu_items(
                                     menu,
                                     session.clone(),
@@ -1660,10 +1704,6 @@ impl Render for HiveApp {
                                             )
                                         })
                                         .when(!renaming, |header| {
-                                            let show_conv_tools = self.conversation_ready
-                                                && self.session.is_some()
-                                                && !self.messages.is_empty()
-                                                && !self.loading;
                                             let title_disabled = !self.connected
                                                 || self.session_name_loading
                                                 || !self.workspace_writes_allowed();
@@ -1766,165 +1806,102 @@ impl Render for HiveApp {
                                                             )),
                                                     )
                                                 })
-                                                .when(
-                                                    show_conv_tools || active_project.is_some(),
-                                                    |bar| {
-                                                        bar.child(
-                                                            h_flex()
-                                                                .flex_shrink_0()
-                                                                .items_center()
-                                                                .gap_1()
-                                                                .when(show_conv_tools, |tools| {
-                                                                    tools.child(
-                                                                        Button::new(
-                                                                            "find-in-conversation",
-                                                                        )
-                                                                        .custom(
-                                                                            crate::palette::quiet_icon_variant(
-                                                                                cx,
-                                                                            ),
-                                                                        )
-                                                                        .compact()
-                                                                        .xsmall()
-                                                                        .h(px(28.))
-                                                                        .w(px(28.))
-                                                                        .rounded_lg()
-                                                                        .icon(Glyph::Search)
-                                                                        .accessibility_label(tr(
-                                                                            "查找当前会话",
-                                                                        ))
-                                                                        .tooltip(crate::keybindings::hint(crate::keybindings::Target::Find, "查找当前会话", cx))
-                                                                        .on_click(cx.listener(
-                                                                            |this, _, window, cx| {
-                                                                                this.open_conversation_find(
-                                                                                    window, cx,
-                                                                                )
-                                                                            },
-                                                                        )),
-                                                                    )
-                                                                })
-                                                                .when_some(active_project.clone(), |tools, workspace| {
-                                                                    tools.child(self.render_project_open_controls(&workspace.id, cx))
-                                                                })
-                                                                .when(show_conv_tools, |tools| {
-                                                                    tools.child(
-                                                                        Button::new(
-                                                                            "export-conversation",
-                                                                        )
-                                                                        .custom(
-                                                                            crate::palette::quiet_icon_variant(
-                                                                                cx,
-                                                                            ),
-                                                                        )
-                                                                        .compact()
-                                                                        .xsmall()
-                                                                        .h(px(28.))
-                                                                        .w(px(28.))
-                                                                        .rounded_lg()
-                                                                        .icon(Glyph::FileDown)
-                                                                        .accessibility_label(tr(
-                                                                            "导出当前对话",
-                                                                        ))
-                                                                        .tooltip(tr(
-                                                                            "导出对话为 Markdown",
-                                                                        ))
-                                                                        .disabled(
-                                                                            self.messages.is_empty(),
-                                                                        )
-                                                                        .on_click(cx.listener(
-                                                                            |this, _, window, cx| {
-                                                                                this.open_conversation_export(
-                                                                                    window, cx,
-                                                                                )
-                                                                            },
-                                                                        )),
-                                                                    )
-                                                                })
-                                                                .when_some(
-                                                                    active_project.clone(),
-                                                                    |tools, _| {
-                                                                        tools
-                                                                            .child(self.project_file_browser_button("topbar-project-files", window, cx))
-                                                                            .child(
-                                                                                Button::new(
-                                                                                    "topbar-quick-terminal",
-                                                                                )
-                                                                                .custom(
-                                                                                    crate::palette::quiet_icon_variant(
-                                                                                        cx,
-                                                                                    ),
-                                                                                )
-                                                                                .compact()
-                                                                                .xsmall()
-                                                                                .h(px(28.))
-                                                                                .w(px(28.))
-                                                                                .rounded_lg()
-                                                                                .icon(Glyph::PanelBottom)
-                                                                                .selected(self.terminal.visible)
-                                                                                .tooltip(crate::keybindings::hint(
-                                                                                    crate::keybindings::Target::ToggleTerminal,
-                                                                                    if self.terminal.visible {
-                                                                                        "隐藏终端"
-                                                                                    } else {
-                                                                                        "打开工作区终端"
-                                                                                    },
-                                                                                    cx,
-                                                                                ))
-                                                                                .accessibility_label(tr(
-                                                                                    if self.terminal.visible {
-                                                                                        "隐藏终端"
-                                                                                    } else {
-                                                                                        "打开工作区终端"
-                                                                                    },
-                                                                                ))
-                                                                                .disabled(!self.connected || self.current_worktree_released())
-                                                                                .on_click(cx.listener(
-                                                                                    |this, _, window, cx| {
-                                                                                        if this.terminal.visible {
-                                                                                            this.hide_terminal(cx);
-                                                                                        } else {
-                                                                                            this.show_terminal(
-                                                                                                window, cx,
-                                                                                            );
-                                                                                        }
-                                                                                        cx.notify();
-                                                                                    },
-                                                                                )),
-                                                                            )
-                                                                            .child(
-                                                                                Button::new(
-                                                                                    "topbar-git-drawer",
-                                                                                )
-                                                                                .custom(
-                                                                                    crate::palette::quiet_icon_variant(
-                                                                                        cx,
-                                                                                    ),
-                                                                                )
-                                                                                .compact()
-                                                                                .xsmall()
-                                                                                .h(px(28.))
-                                                                                .w(px(28.))
-                                                                                .rounded_lg()
-                                                                                .icon(Glyph::PanelRight)
-                                                                                .selected(self.git_drawer_open)
-                                                                                .tooltip(tr("Git 变更与差异"))
-                                                                                .accessibility_label(tr(
-                                                                                    "Git 变更与差异",
-                                                                                ))
-                                                                                .disabled(!self.connected || self.current_worktree_released())
-                                                                                .on_click(cx.listener(
-                                                                                    |this, _, window, cx| {
-                                                                                        this.toggle_git_workspace(
-                                                                                            window, cx,
-                                                                                        );
-                                                                                    },
-                                                                                )),
-                                                                            )
+                                                .when_some(active_project.clone(), |bar, _| {
+                                                    bar.child(
+                                                        h_flex()
+                                                            .flex_shrink_0()
+                                                            .items_center()
+                                                            .gap_1()
+                                                            .child(self.project_file_browser_button(
+                                                                "topbar-project-files",
+                                                                window,
+                                                                cx,
+                                                            ))
+                                                            .child(
+                                                                Button::new(
+                                                                    "topbar-quick-terminal",
+                                                                )
+                                                                .custom(
+                                                                    crate::palette::quiet_icon_variant(
+                                                                        cx,
+                                                                    ),
+                                                                )
+                                                                .compact()
+                                                                .xsmall()
+                                                                .h(px(28.))
+                                                                .w(px(28.))
+                                                                .rounded_lg()
+                                                                .icon(Glyph::PanelBottom)
+                                                                .selected(self.terminal.visible)
+                                                                .tooltip(crate::keybindings::hint(
+                                                                    crate::keybindings::Target::ToggleTerminal,
+                                                                    if self.terminal.visible {
+                                                                        "隐藏终端"
+                                                                    } else {
+                                                                        "打开工作区终端"
                                                                     },
-                                                                ),
-                                                        )
-                                                    },
-                                                )
+                                                                    cx,
+                                                                ))
+                                                                .accessibility_label(tr(
+                                                                    if self.terminal.visible {
+                                                                        "隐藏终端"
+                                                                    } else {
+                                                                        "打开工作区终端"
+                                                                    },
+                                                                ))
+                                                                .disabled(
+                                                                    !self.connected
+                                                                        || self
+                                                                            .current_worktree_released(
+                                                                            ),
+                                                                )
+                                                                .on_click(cx.listener(
+                                                                    |this, _, window, cx| {
+                                                                        if this.terminal.visible {
+                                                                            this.hide_terminal(cx);
+                                                                        } else {
+                                                                            this.show_terminal(
+                                                                                window, cx,
+                                                                            );
+                                                                        }
+                                                                        cx.notify();
+                                                                    },
+                                                                )),
+                                                            )
+                                                            .child(
+                                                                Button::new("topbar-git-drawer")
+                                                                    .custom(
+                                                                        crate::palette::quiet_icon_variant(
+                                                                            cx,
+                                                                        ),
+                                                                    )
+                                                                    .compact()
+                                                                    .xsmall()
+                                                                    .h(px(28.))
+                                                                    .w(px(28.))
+                                                                    .rounded_lg()
+                                                                    .icon(Glyph::PanelRight)
+                                                                    .selected(self.git_drawer_open)
+                                                                    .tooltip(tr("Git 变更与差异"))
+                                                                    .accessibility_label(tr(
+                                                                        "Git 变更与差异",
+                                                                    ))
+                                                                    .disabled(
+                                                                        !self.connected
+                                                                            || self
+                                                                                .current_worktree_released(
+                                                                                ),
+                                                                    )
+                                                                    .on_click(cx.listener(
+                                                                        |this, _, window, cx| {
+                                                                            this.toggle_git_workspace(
+                                                                                window, cx,
+                                                                            );
+                                                                        },
+                                                                    )),
+                                                            ),
+                                                    )
+                                                })
                                         })
                                         .when(renaming, |header| {
                                             header

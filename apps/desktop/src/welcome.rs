@@ -476,17 +476,70 @@ impl HiveApp {
         let compact = window.viewport_size().width < px(1000.);
         let tall = window.viewport_size().height > px(560.);
         let hero_px = if compact { 24. } else { 27. };
-        let aria_title = if let Some(ws) = &active_project {
-            if english() {
-                format!("What should we build in {}?", ws.name)
+        let is_en = english();
+        let active_name = active_project
+            .as_ref()
+            .map(|ws| normalize_hero_line_text(&ws.name));
+        let aria_title = if let Some(name) = &active_name {
+            if is_en {
+                format!("What should we build in {name}?")
             } else {
-                format!("在 {} 中构建什么？", ws.name)
+                format!("在 {name} 中构建什么？")
             }
         } else {
-            tr("准备构建什么？").into()
+            normalize_hero_line_text(tr("准备构建什么？"))
         };
 
         let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
+        let sidebar_w = if self.sidebar_open && !narrow {
+            f32::from(self.sidebar.resolved(window.viewport_size().width))
+        } else {
+            0.
+        };
+        let right_w = if self.git_drawer_open && self.workspace.is_some() {
+            self.git_drawer_width
+        } else if self.split_peek.is_some() && window.viewport_size().width >= px(960.) {
+            400.
+        } else if self.project_files_workspace_focus(cx).is_some() {
+            self.project_file_dock_width.map(f32::from).unwrap_or(280.)
+        } else {
+            0.
+        };
+        let horizontal_pad = if narrow { 32. } else { 64. };
+        let available_hero_w =
+            (f32::from(window.viewport_size().width) - sidebar_w - right_w - horizontal_pad)
+                .min(chat_width)
+                .max(200.);
+        let title_style = window.text_style();
+        let measure_text = |text: &str, weight: FontWeight| -> f32 {
+            if text.is_empty() {
+                return 0.;
+            }
+            let mut run = title_style.to_run(text.len());
+            run.font.weight = weight;
+            f32::from(
+                window
+                    .text_system()
+                    .shape_line(text.to_owned().into(), px(hero_px), &[run], None)
+                    .width(),
+            )
+        };
+        let (inline_hero, switcher_max_w) = if let Some(name) = &active_name {
+            let (prefix, suffix) = if is_en {
+                ("What should we build in", "?")
+            } else {
+                ("在", "中构建什么？")
+            };
+            let prefix_suffix_w = measure_text(prefix, FontWeight::NORMAL)
+                + measure_text(suffix, FontWeight::NORMAL);
+            let shaped_name_w = measure_text(name, FontWeight::SEMIBOLD);
+            hero_switcher_layout(available_hero_w, prefix_suffix_w, shaped_name_w, is_en)
+        } else {
+            let shaped_w = measure_text(&aria_title, FontWeight::MEDIUM);
+            (shaped_w + 32. <= available_hero_w, available_hero_w.max(120.))
+        };
+        let is_scratch = self.session.as_ref().is_some_and(|s| s.scratch);
+
         v_flex()
             .id("welcome-draft-scroll")
             .track_scroll(&self.welcome_scroll)
@@ -514,9 +567,10 @@ impl HiveApp {
                                     .id("session-title")
                                     .role(Role::Label)
                                     .aria_value(aria_title.clone())
+                                    .w_full()
+                                    .min_w_0()
                                     .text_size(px(hero_px))
                                     .line_height(px(34.))
-                                    .whitespace_normal()
                                     .child(if let Some(ws) = active_project.as_ref() {
                                         let workspaces: Vec<(String, String)> = self
                                             .workspaces
@@ -524,15 +578,26 @@ impl HiveApp {
                                             .map(|item| (item.id.clone(), item.name.clone()))
                                             .collect();
                                         let active_id = ws.id.clone();
+                                        let display_name = active_name
+                                            .clone()
+                                            .unwrap_or_else(|| normalize_hero_line_text(&ws.name));
                                         let weak = cx.entity().downgrade();
                                         let project_switcher = Button::new("hero-project-switcher")
                                             .custom(crate::palette::quiet_icon_variant(cx))
                                             .compact()
-                                            .px_1()
-                                            .py_0p5()
+                                            .h_auto()
+                                            .min_w_0()
+                                            .max_w(px(switcher_max_w))
+                                            .flex_shrink_1()
+                                            .when(!inline_hero, |btn| btn.px_1p5())
+                                            .when(inline_hero && is_en, |btn| {
+                                                btn.pl_0p5().pr(px(1.))
+                                            })
+                                            .when(inline_hero && !is_en, |btn| btn.px_0p5())
+                                            .py_0()
                                             .rounded_md()
                                             .disabled(!self.connected || self.closing)
-                                            .accessibility_label(ws.name.clone())
+                                            .accessibility_label(display_name.clone())
                                             .tooltip(format!(
                                                 "{}\n{}",
                                                 ws.path,
@@ -540,11 +605,14 @@ impl HiveApp {
                                             ))
                                             .child(
                                                 div()
+                                                    .min_w_0()
+                                                    .max_w_full()
+                                                    .truncate()
                                                     .text_size(px(hero_px))
                                                     .line_height(px(34.))
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     .text_color(Color::Text.get(cx))
-                                                    .child(ws.name.clone()),
+                                                    .child(display_name),
                                             )
                                             .dropdown_menu(move |mut menu, _, _| {
                                                 for (id, name) in &workspaces {
@@ -582,24 +650,44 @@ impl HiveApp {
                                                         }),
                                                 )
                                             });
-                                        if english() {
-                                            h_flex()
-                                                .flex_wrap()
-                                                .justify_center()
+                                        if !inline_hero {
+                                            v_flex()
+                                                .w_full()
+                                                .min_w_0()
                                                 .items_center()
-                                                .gap_1p5()
+                                                .gap_1()
                                                 .child(
                                                     div()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(Color::Text.get(cx))
+                                                        .child(tr("准备构建什么？")),
+                                                )
+                                                .child(project_switcher)
+                                                .into_any_element()
+                                        } else if is_en {
+                                            h_flex()
+                                                .w_full()
+                                                .min_w_0()
+                                                .justify_center()
+                                                .items_center()
+                                                .gap_1()
+                                                .child(
+                                                    div()
+                                                        .flex_shrink_0()
                                                         .font_weight(FontWeight::NORMAL)
                                                         .text_color(Color::Text.get(cx))
                                                         .child("What should we build in"),
                                                 )
                                                 .child(
                                                     h_flex()
+                                                        .min_w_0()
+                                                        .max_w_full()
                                                         .items_center()
+                                                        .gap_0()
                                                         .child(project_switcher)
                                                         .child(
                                                             div()
+                                                                .flex_shrink_0()
                                                                 .font_weight(FontWeight::NORMAL)
                                                                 .text_color(Color::Text.get(cx))
                                                                 .child("?"),
@@ -608,12 +696,14 @@ impl HiveApp {
                                                 .into_any_element()
                                         } else {
                                             h_flex()
-                                                .flex_wrap()
+                                                .w_full()
+                                                .min_w_0()
                                                 .justify_center()
                                                 .items_center()
-                                                .gap_1p5()
+                                                .gap_1()
                                                 .child(
                                                     div()
+                                                        .flex_shrink_0()
                                                         .font_weight(FontWeight::NORMAL)
                                                         .text_color(Color::Text.get(cx))
                                                         .child("在"),
@@ -621,6 +711,7 @@ impl HiveApp {
                                                 .child(project_switcher)
                                                 .child(
                                                     div()
+                                                        .flex_shrink_0()
                                                         .font_weight(FontWeight::NORMAL)
                                                         .text_color(Color::Text.get(cx))
                                                         .child("中构建什么？"),
@@ -650,7 +741,27 @@ impl HiveApp {
                                         this.open_scratch_project_origin(workspace.clone(), window, cx);
                                     })))
                             })
-                            .child(if active_project.is_some() {
+                            .child(if active_project.is_some() && !is_scratch {
+                                Button::new("welcome-start-scratch")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(24.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .disabled(!self.can_start_new_conversation())
+                                    .accessibility_label(tr("或无项目开始"))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.))
+                                            .text_color(Color::Muted.get(cx).opacity(0.8))
+                                            .child(tr("或无项目开始")),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.start_scratch_conversation(window, cx);
+                                    }))
+                                    .into_any_element()
+                            } else if active_project.is_some() {
                                 Button::new("welcome-switch-project")
                                     .custom(crate::palette::quiet_icon_variant(cx))
                                     .compact()
@@ -671,24 +782,51 @@ impl HiveApp {
                                     }))
                                     .into_any_element()
                             } else {
-                                Button::new("welcome-open-project")
-                                    .custom(crate::palette::quiet_icon_variant(cx))
-                                    .compact()
-                                    .xsmall()
-                                    .h(px(24.))
-                                    .px_2()
-                                    .rounded_md()
-                                    .disabled(!self.connected)
-                                    .accessibility_label(tr("选择项目文件夹，或在下方直接输入"))
+                                h_flex()
+                                    .flex_wrap()
+                                    .justify_center()
+                                    .items_center()
+                                    .gap_2()
                                     .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(Color::Muted.get(cx).opacity(0.8))
-                                            .child(tr("选择项目文件夹，或在下方直接输入")),
+                                        Button::new("welcome-open-project")
+                                            .custom(crate::palette::quiet_icon_variant(cx))
+                                            .compact()
+                                            .xsmall()
+                                            .h(px(24.))
+                                            .px_2()
+                                            .rounded_md()
+                                            .disabled(!self.connected)
+                                            .accessibility_label(tr("选择项目文件夹"))
+                                            .child(
+                                                div()
+                                                    .text_size(px(12.))
+                                                    .text_color(Color::Muted.get(cx).opacity(0.85))
+                                                    .child(tr("选择项目文件夹")),
+                                            )
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.choose_workspace_folder(window, cx);
+                                            })),
                                     )
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.choose_workspace_folder(window, cx);
-                                    }))
+                                    .child(
+                                        Button::new("welcome-start-scratch")
+                                            .custom(crate::palette::quiet_icon_variant(cx))
+                                            .compact()
+                                            .xsmall()
+                                            .h(px(24.))
+                                            .px_2()
+                                            .rounded_md()
+                                            .disabled(!self.can_start_new_conversation())
+                                            .accessibility_label(tr("或无项目开始"))
+                                            .child(
+                                                div()
+                                                    .text_size(px(12.))
+                                                    .text_color(Color::Muted.get(cx).opacity(0.8))
+                                                    .child(tr("或无项目开始")),
+                                            )
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.start_scratch_conversation(window, cx);
+                                            })),
+                                    )
                                     .into_any_element()
                             }),
                     )
@@ -708,181 +846,70 @@ impl HiveApp {
                     )
                     .when(active_project.is_none(), |col| {
                         col.children(self.render_agent_setup_link(cx))
-                    })
-                    .child(self.render_welcome_starter_prompts(active_project.is_some(), cx))
-                    .child(self.render_welcome_discoverability_strip(cx)),
+                    }),
             )
     }
+}
 
-    fn render_welcome_starter_prompts(
-        &self,
-        has_project: bool,
-        cx: &Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let draft_empty = self.input.read(cx).value().trim().is_empty();
-        if !draft_empty || !self.connected {
-            return div().into_any_element();
-        }
-        let cards: [(&'static str, &'static str, &'static str, Glyph); 4] = if has_project {
-            [
-                (
-                    "梳理架构",
-                    "快速了解核心模块、入口与数据流",
-                    "请先浏览当前项目结构，梳理核心模块、入口文件与主要数据流，并用简洁列表总结。",
-                    Glyph::Layers,
-                ),
-                (
-                    "审查改动",
-                    "排查未提交代码中的隐患与边界条件",
-                    "请检查当前工作区未提交的 Git 改动，重点排查潜在 Bug、边界条件和可维护性改进点。",
-                    Glyph::GitBranch,
-                ),
-                (
-                    "修复报错",
-                    "分析构建或测试失败并给出最小修复",
-                    "请帮我排查当前项目的构建或测试失败，先定位根因，再给出最小且安全的修复方案。",
-                    Glyph::SquareTerminal,
-                ),
-                (
-                    "协作拆解",
-                    "将复杂需求拆分为并行任务派发",
-                    "请把接下来的开发需求拆分为可并行的子任务清单，明确各成员职责边界与验收标准。",
-                    Glyph::Users,
-                ),
-            ]
-        } else {
-            [
-                (
-                    "方案设计",
-                    "评估架构权衡与落地步骤",
-                    "请帮我设计一个清晰的技术方案，对比可选实现路径的优缺点并给出分阶段落地计划：",
-                    Glyph::Sparkles,
-                ),
-                (
-                    "代码重构",
-                    "分析瓶颈并输出更简洁的实现",
-                    "请帮我审阅并重构下面这段代码，重点提升可读性、健壮性与性能：",
-                    Glyph::FileText,
-                ),
-                (
-                    "排查报错",
-                    "快速定位异常原因与修复步骤",
-                    "我遇到了下面这个报错，请帮我分析可能根因并提供逐步排查与修复方案：",
-                    Glyph::SquareTerminal,
-                ),
-                (
-                    "撰写文档",
-                    "生成结构化说明与变更清单",
-                    "请根据以下改动要点，帮我整理一份结构清晰的文档或 PR 说明：",
-                    Glyph::SquarePen,
-                ),
-            ]
-        };
+fn normalize_hero_line_text(text: &str) -> String {
+    text.replace("\r\n", " ").replace(['\r', '\n'], " ")
+}
 
-        let render_chip = |idx: usize,
-                           title: &'static str,
-                           desc: &'static str,
-                           prompt: &'static str,
-                           icon: Glyph| {
-            let prompt_text = if english() {
-                match idx {
-                    0 if has_project => "Explore this repository and summarize the core modules, entry points, and data flow.",
-                    1 if has_project => "Review my current uncommitted Git changes for bugs, edge cases, and potential improvements.",
-                    2 if has_project => "Help diagnose the failing test or build in this project, identify the root cause, and propose a minimal fix.",
-                    3 if has_project => "Break down my upcoming feature into parallelizable tasks with clear responsibilities for multi-agent collaboration.",
-                    0 => "Help me design a technical architecture, compare trade-offs, and outline a phased implementation plan for: ",
-                    1 => "Review and refactor the following code for clarity, safety, and performance: ",
-                    2 => "Diagnose the root cause of this error stack trace and suggest step-by-step fixes: ",
-                    _ => "Draft a structured technical summary or PR description from the following notes: ",
-                }
-            } else {
-                prompt
-            };
-            Button::new(("welcome-starter-card", idx))
-                .custom(crate::palette::quiet_icon_variant(cx))
-                .compact()
-                .xsmall()
-                .h(px(28.))
-                .px_2p5()
-                .rounded_full()
-                .bg(Color::Inset.get(cx).opacity(0.42))
-                .tooltip(tr(desc))
-                .accessibility_label(tr(title))
-                .child(
-                    h_flex()
-                        .items_center()
-                        .gap_1p5()
-                        .child(
-                            Icon::new(icon)
-                                .size(px(12.))
-                                .text_color(Color::Muted.get(cx)),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .font_weight(FontWeight::NORMAL)
-                                .text_color(Color::Secondary.get(cx))
-                                .child(tr(title)),
-                        ),
-                )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    let input = this.input.clone();
-                    input.update(cx, |state, cx| {
-                        state.set_value(prompt_text, window, cx);
-                    });
-                    let focus = this.input.read(cx).focus_handle(cx);
-                    window.on_next_frame(move |window, cx| focus.focus(window, cx));
-                    cx.notify();
-                }))
-        };
+fn hero_switcher_layout(
+    available_hero_w: f32,
+    prefix_suffix_w: f32,
+    shaped_name_w: f32,
+    is_english: bool,
+) -> (bool, f32) {
+    let inline_chrome = if is_english { 16. } else { 20. };
+    let inline_safety = 32.;
+    let inline_hero =
+        prefix_suffix_w + shaped_name_w + inline_chrome + inline_safety <= available_hero_w;
+    let switcher_max_w = if inline_hero {
+        let prefix_suffix_reserve = prefix_suffix_w + inline_chrome;
+        (available_hero_w - prefix_suffix_reserve)
+            .max(120.)
+            .min(available_hero_w)
+    } else {
+        available_hero_w.max(120.)
+    };
+    (inline_hero, switcher_max_w)
+}
 
-        h_flex()
-            .w_full()
-            .flex_wrap()
-            .items_center()
-            .justify_center()
-            .pt_5()
-            .gap_2()
-            .children(cards.into_iter().enumerate().map(|(idx, (t, d, p, ic))| {
-                render_chip(idx, t, d, p, ic)
-            }))
-            .into_any_element()
+#[cfg(test)]
+mod tests {
+    use super::{hero_switcher_layout, normalize_hero_line_text};
+
+    #[test]
+    fn normalize_hero_line_text_strips_cr_and_lf() {
+        assert_eq!(
+            normalize_hero_line_text("alpha\nbeta\r\ngamma\rdelta"),
+            "alpha beta gamma delta"
+        );
+        assert!(normalize_hero_line_text("a\nb\rc").find('\n').is_none());
+        assert!(normalize_hero_line_text("a\nb\rc").find('\r').is_none());
     }
 
-    fn render_welcome_discoverability_strip(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let search_key = crate::keybindings::chord_label(crate::keybindings::Target::Search, cx)
-            .unwrap_or_else(|| "⌘K".into());
-        let palette_key =
-            crate::keybindings::chord_label(crate::keybindings::Target::CommandPalette, cx)
-                .unwrap_or_else(|| "⌘⇧P".into());
-        let hint = if english() {
-            format!("{search_key} Search  ·  {palette_key} Commands  ·  Shortcuts")
-        } else {
-            format!("{search_key} 搜索  ·  {palette_key} 命令面板  ·  快捷键速查")
-        };
-        h_flex()
-            .w_full()
-            .items_center()
-            .justify_center()
-            .pt_2p5()
-            .child(
-                Button::new("welcome-open-shortcuts-guide")
-                    .custom(crate::palette::quiet_icon_variant(cx))
-                    .compact()
-                    .xsmall()
-                    .h(px(22.))
-                    .px_2()
-                    .rounded_md()
-                    .accessibility_label(tr("快捷键与效率速查"))
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(Color::Muted.get(cx).opacity(0.6))
-                            .child(hint),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_shortcuts_guide(window, cx);
-                    })),
-            )
+    #[test]
+    fn hero_switcher_layout_caps_width_in_both_inline_and_two_line_modes() {
+        // Short name stays inline and caps switcher width below available_hero_w.
+        let (inline, max_w) = hero_switcher_layout(768., 260., 120., true);
+        assert!(inline);
+        assert!((max_w - (768. - 276.)).abs() < f32::EPSILON);
+
+        // Borderline name falls back to two-line mode with exact available_hero_w cap.
+        let (inline, max_w) = hero_switcher_layout(468., 242., 200., true);
+        assert!(!inline);
+        assert!((max_w - 468.).abs() < f32::EPSILON);
+
+        // Very long 120-char name stays bounded to available_hero_w (never overflows).
+        let (inline, max_w) = hero_switcher_layout(288., 242., 1600., true);
+        assert!(!inline);
+        assert!((max_w - 288.).abs() < f32::EPSILON);
+
+        // Narrow floor never dips below 120px when available_hero_w >= 200.
+        let (inline, max_w) = hero_switcher_layout(200., 180., 500., false);
+        assert!(!inline);
+        assert!((max_w - 200.).abs() < f32::EPSILON);
     }
 }

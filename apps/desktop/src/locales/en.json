@@ -113,6 +113,7 @@
   "Enter 发送，Shift+Enter 换行": "Enter to send, Shift+Enter for a new line",
   "Git 分支": "Git branch",
   "Git 原始字节补丁": "Git raw-byte patch",
+  "Git 变更与 Diff": "Git Changes & Diff",
   "Git 变更与差异": "Git changes & diff",
   "Git 操作失败": "Git operation failed",
   "Git 改动文件": "Git changed files",
@@ -2933,5 +2934,9 @@
   "撰写文档": "Write docs",
   "未设项目默认": "No project default",
   "访问权限": "Access",
-  "回复中": "Replying"
+  "回复中": "Replying",
+  "已完结": "Settled",
+  "展开已完结会话": "Expand settled conversations",
+  "收起已完结会话": "Collapse settled conversations",
+  "或无项目开始": "or start without a project"
 }

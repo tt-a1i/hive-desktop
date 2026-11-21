@@ -48,6 +48,24 @@ fn step_visible_session<'a>(
     }
 }
 
+fn extend_project_rows<'a>(
+    rows: &mut Vec<&'a Session>,
+    regular: impl IntoIterator<Item = &'a Session>,
+    working: impl IntoIterator<Item = &'a Session>,
+    settled: impl IntoIterator<Item = &'a Session>,
+    projects_collapsed: bool,
+    settled_collapsed: bool,
+) {
+    if projects_collapsed {
+        return;
+    }
+    rows.extend(regular);
+    rows.extend(working);
+    if !settled_collapsed {
+        rows.extend(settled);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::step_visible_session;
@@ -98,6 +116,55 @@ mod tests {
         );
         assert_eq!(next(&[&alpha_pin], Some("alpha-pin"), 1), None);
         assert_eq!(next(&[], None, 1), None);
+    }
+
+    #[test]
+    fn sidebar_step_skips_settled_when_collapsed_and_includes_when_expanded() {
+        use super::extend_project_rows;
+        let active = row("active-1", "alpha");
+        let working = row("working-1", "alpha");
+        let settled = row("settled-1", "alpha");
+
+        let mut collapsed = Vec::new();
+        extend_project_rows(
+            &mut collapsed,
+            [&active],
+            [&working],
+            [&settled],
+            false,
+            true,
+        );
+        assert_eq!(
+            step_visible_session(collapsed.iter().copied(), Some("working-1"), 1)
+                .map(|r| r.id.as_str()),
+            Some("active-1")
+        );
+
+        let mut expanded = Vec::new();
+        extend_project_rows(
+            &mut expanded,
+            [&active],
+            [&working],
+            [&settled],
+            false,
+            false,
+        );
+        assert_eq!(
+            step_visible_session(expanded.iter().copied(), Some("working-1"), 1)
+                .map(|r| r.id.as_str()),
+            Some("settled-1")
+        );
+
+        let mut projects_collapsed = Vec::new();
+        extend_project_rows(
+            &mut projects_collapsed,
+            [&active],
+            [&working],
+            [&settled],
+            true,
+            false,
+        );
+        assert!(projects_collapsed.is_empty());
     }
 }
 
@@ -224,28 +291,26 @@ impl HiveApp {
                         cx.notify();
                     })),
             )
-            .child(
+            .child(if in_sidebar {
+                palette::sidebar_brand_lockup(cx).into_any_element()
+            } else {
                 div()
-                    .when(in_sidebar, |view| view.flex_shrink_0())
-                    .when(!in_sidebar, |view| view.flex_1().min_w_0().truncate())
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
                     .px_0p5()
                     .text_sm()
-                    .font_weight(if in_sidebar {
-                        FontWeight::BOLD
-                    } else {
-                        FontWeight::SEMIBOLD
-                    })
+                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(Color::Text.get(cx))
-                    .child(if in_sidebar {
-                        "Hive".to_owned()
-                    } else {
+                    .child(
                         self.workspaces
                             .iter()
                             .find(|workspace| Some(&workspace.id) == self.workspace.as_ref())
                             .map(|workspace| workspace.name.clone())
-                            .unwrap_or_else(|| tr("桌面工作台").into())
-                    }),
-            )
+                            .unwrap_or_else(|| tr("桌面工作台").into()),
+                    )
+                    .into_any_element()
+            })
             .when(in_sidebar, |view| {
                 view.child(
                     h_flex()
@@ -644,7 +709,16 @@ impl HiveApp {
                                 },
                             ));
                 }
-                menu
+                let palette_owner = weak.clone();
+                menu.separator().item(
+                    PopupMenuItem::new(tr("快捷命令面板"))
+                        .icon(Glyph::Sparkles)
+                        .on_click(move |_, window, cx| {
+                            let _ = palette_owner.update(cx, |this, cx| {
+                                this.open_command_palette(window, cx);
+                            });
+                        }),
+                )
             })
     }
 
@@ -714,16 +788,18 @@ impl HiveApp {
             .visible_pinned_navigation_hits()
             .map(|hit| &hit.session)
             .collect();
-        if !self.projects_collapsed {
-            let sections = self.sidebar_conversation_sections(cx);
-            rows.extend(sections.regular);
-            rows.extend(
-                sections
-                    .working
-                    .iter()
-                    .flat_map(|project| self.visible_working_sessions(project)),
-            );
-        }
+        let sections = self.sidebar_conversation_sections(cx);
+        extend_project_rows(
+            &mut rows,
+            sections.regular,
+            sections
+                .working
+                .iter()
+                .flat_map(|project| self.visible_working_sessions(project)),
+            sections.settled,
+            self.projects_collapsed,
+            self.settled_collapsed,
+        );
         let available = rows.into_iter().filter(|session| {
             !session.archived
                 && !self.removed_sessions.contains(&session.id)
@@ -1225,6 +1301,106 @@ impl HiveApp {
                                                     project, show_working_project, cx,
                                                 )
                                             }))
+                                            .when(!sessions.settled.is_empty(), |section| {
+                                                let settled_count =
+                                                    sessions.settled.len().to_string();
+                                                section.child(
+                                                    v_flex()
+                                                        .w_full()
+                                                        .gap_0p5()
+                                                        .pt_1()
+                                                        .child(
+                                                            Button::new("toggle-settled-section")
+                                                                .custom(
+                                                                    palette::quiet_icon_variant(cx),
+                                                                )
+                                                                .compact()
+                                                                .xsmall()
+                                                                .h(px(24.))
+                                                                .px_2()
+                                                                .w_full()
+                                                                .rounded_md()
+                                                                .accessibility_label(
+                                                                    if self.settled_collapsed {
+                                                                        tr("展开已完结会话")
+                                                                    } else {
+                                                                        tr("收起已完结会话")
+                                                                    },
+                                                                )
+                                                                .child(
+                                                                    h_flex()
+                                                                        .flex_1()
+                                                                        .w_full()
+                                                                        .items_center()
+                                                                        .justify_between()
+                                                                        .child(
+                                                                            div()
+                                                                                .text_xs()
+                                                                                .font_weight(
+                                                                                    FontWeight::MEDIUM,
+                                                                                )
+                                                                                .text_color(
+                                                                                    Color::Muted
+                                                                                        .get(cx),
+                                                                                )
+                                                                                .child(tr(
+                                                                                    "已完结",
+                                                                                )),
+                                                                        )
+                                                                        .child(
+                                                                            h_flex()
+                                                                                .items_center()
+                                                                                .gap_1()
+                                                                                .child(
+                                                                                    div()
+                                                                                        .text_size(
+                                                                                            px(11.5),
+                                                                                        )
+                                                                                        .text_color(
+                                                                                            Color::Muted.get(cx),
+                                                                                        )
+                                                                                        .child(
+                                                                                            settled_count,
+                                                                                        ),
+                                                                                )
+                                                                                .child(
+                                                                                    Icon::new(if self.settled_collapsed {
+                                                                                        Glyph::ChevronRight
+                                                                                    } else {
+                                                                                        Glyph::ChevronDown
+                                                                                    })
+                                                                                    .size(px(12.))
+                                                                                    .text_color(
+                                                                                        Color::Muted
+                                                                                            .get(cx),
+                                                                                    ),
+                                                                                ),
+                                                                        ),
+                                                                )
+                                                                .on_click(cx.listener(
+                                                                    |this, _, _, cx| {
+                                                                        this.settled_collapsed =
+                                                                            !this.settled_collapsed;
+                                                                        cx.notify();
+                                                                    },
+                                                                )),
+                                                        )
+                                                        .when(
+                                                            !self.settled_collapsed,
+                                                            |section| {
+                                                                section.children(
+                                                                    sessions.settled.into_iter().map(
+                                                                        |session| {
+                                                                            self.render_session_link(
+                                                                                session, cx,
+                                                                            )
+                                                                        },
+                                                                    ),
+                                                                )
+                                                            },
+                                                        ),
+                                                )
+                                            })
                                     }
                                 }),
                         ),
@@ -1238,7 +1414,6 @@ impl HiveApp {
                     .items_center()
                     .border_t_1()
                     .border_color(Color::Divider.get(cx).opacity(0.5))
-                    .h(px(36.))
                     .px_2()
                     .gap_1()
                     .child(
@@ -1265,7 +1440,6 @@ impl HiveApp {
                                 cx.notify();
                             })),
                     )
-                    .child(self.command_palette_button(cx))
                     .child(div().flex_1())
                     .when(!self.pending_reports.is_empty(), |row| {
                         row.child(
@@ -1317,23 +1491,6 @@ impl HiveApp {
                                     this.sidebar_open = false;
                                 }
                                 cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("sidebar-workflows")
-                            .custom(palette::quiet_icon_variant(cx))
-                            .compact()
-                            .xsmall()
-                            .h(px(26.))
-                            .w(px(26.))
-                            .rounded_md()
-                            .icon(Glyph::Workflow)
-                            .tooltip(tr("工作流"))
-                            .accessibility_label(tr("工作流"))
-                            .selected(self.workflows.visible)
-                            .disabled(!terminal_enabled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_workflows(window, cx);
                             })),
                     ),
             )

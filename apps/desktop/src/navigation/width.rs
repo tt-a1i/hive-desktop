@@ -281,6 +281,7 @@ impl HiveApp {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let app = cx.weak_entity();
+        let inset = crate::chrome::traffic_light_inset(window);
         h_flex()
             .id("sidebar-brand-width-probe")
             .aria_hidden(true)
@@ -288,12 +289,12 @@ impl HiveApp {
             .top_0()
             .left_0()
             .opacity(0.)
-            .pl(crate::chrome::traffic_light_inset(window) + px(8.))
+            .pl(px(8.) + if inset > px(0.) { inset - px(4.) } else { px(6.) })
             .pr_3()
-            .gap_1p5()
+            .gap_1()
             .items_center()
             .child(div().w(px(26.)).h(px(26.)))
-            .child(div().text_sm().font_weight(FontWeight::BOLD).child("Hive"))
+            .child(crate::palette::sidebar_brand_lockup(cx))
             .on_prepaint(move |bounds, _, cx| {
                 let _ = app.update(cx, |this, cx| {
                     let width = f32::from(bounds.size.width).ceil();

@@ -75,7 +75,7 @@ pub fn drag_bar(id: &'static str, window: &mut Window, cx: &mut App) -> Stateful
         })
 }
 
-/// Shared 46px immersive topbar for secondary workspace panels (members, collaboration,
+/// Shared 52px immersive topbar for secondary workspace panels (members, collaboration,
 /// memory, workflows). Renders inside `RenderOnce` so panels without a `&mut Window`
 /// parameter still receive live macOS traffic-light insets and drag-bar behavior.
 #[derive(IntoElement)]

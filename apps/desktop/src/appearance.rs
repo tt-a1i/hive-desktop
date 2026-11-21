@@ -332,6 +332,8 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
         )
     };
     Theme::update(cx, |theme| {
+        use crate::palette::Color;
+        let dark = theme.is_dark();
         theme.font_size = px(f32::from(font_size));
         theme.mono_font_size = px(f32::from(code_font_size));
         theme.mono_font_family = code_font_family
@@ -340,29 +342,42 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
             .unwrap_or(base_mono);
         theme.radius = px(8.0);
         theme.radius_lg = px(16.0);
-        if theme.is_dark() {
-            theme.background = rgb(0x18181b).into();
-            theme.foreground = rgb(0xf4f4f5).into();
-            theme.border = gpui_kit::rgba(0xffffff14).into();
-            theme.input = gpui_kit::rgba(0xffffff1c).into();
-            theme.popover = rgb(0x1f1f23).into();
-            theme.popover_foreground = rgb(0xf4f4f5).into();
-            theme.muted = rgb(0x222227).into();
-            theme.muted_foreground = rgb(0x8e8e98).into();
-            theme.secondary = rgb(0x222227).into();
+        theme.background = Color::Surface.for_mode(dark).into();
+        theme.foreground = Color::Text.for_mode(dark).into();
+        theme.border = Color::Divider.for_mode(dark).into();
+        theme.input = gpui_kit::rgba(if dark { 0xffffff1c } else { 0x0000001e }).into();
+        theme.popover = Color::Overlay.for_mode(dark).into();
+        theme.popover_foreground = Color::Text.for_mode(dark).into();
+        theme.group_box = Color::Card.for_mode(dark).into();
+        theme.group_box_foreground = Color::Text.for_mode(dark).into();
+        theme.muted = Color::Inset.for_mode(dark).into();
+        theme.muted_foreground = Color::Muted.for_mode(dark).into();
+        theme.secondary = Color::Inset.for_mode(dark).into();
+        theme.secondary_foreground = Color::Text.for_mode(dark).into();
+        theme.accent_foreground = Color::Text.for_mode(dark).into();
+        theme.sidebar = Color::Sidebar.for_mode(dark).into();
+        theme.sidebar_border = Color::Divider.for_mode(dark).into();
+        theme.sidebar_foreground = Color::Text.for_mode(dark).into();
+        theme.sidebar_accent_foreground = Color::Text.for_mode(dark).into();
+        theme.colors.list = Color::Surface.for_mode(dark).into();
+        theme.list_hover = Color::Inset.for_mode(dark).into();
+        theme.button = Color::Inset.for_mode(dark).into();
+        theme.button_foreground = Color::Text.for_mode(dark).into();
+        theme.ring = Color::Muted.for_mode(dark).into();
+        theme.caret = Color::Accent.for_mode(dark).into();
+        theme.title_bar = Color::Surface.for_mode(dark).into();
+        theme.title_bar_border = Color::Divider.for_mode(dark).into();
+        theme.overlay = gpui_kit::rgba(if dark { 0x00000048 } else { 0x00000012 }).into();
+        theme.scrollbar = gpui_kit::rgba(if dark { 0x14141800 } else { 0xf7f7f900 }).into();
+        theme.scrollbar_thumb = gpui_kit::rgba(if dark { 0xffffff18 } else { 0x00000022 }).into();
+        theme.scrollbar_thumb_hover =
+            gpui_kit::rgba(if dark { 0xffffff2e } else { 0x00000038 }).into();
+        if dark {
             theme.secondary_hover = rgb(0x2a2a31).into();
             theme.secondary_active = rgb(0x32323a).into();
-            theme.secondary_foreground = rgb(0xf4f4f5).into();
             // Button::Ghost multiplies accent by 0.5 opacity in dark mode.
             theme.accent = rgb(0x2c2c34).into();
-            theme.accent_foreground = rgb(0xf4f4f5).into();
-            theme.sidebar = rgb(0x131316).into();
-            theme.sidebar_border = gpui_kit::rgba(0xffffff14).into();
-            theme.sidebar_foreground = rgb(0xf4f4f5).into();
-            theme.sidebar_accent = rgb(0x26262c).into();
-            theme.sidebar_accent_foreground = rgb(0xf4f4f5).into();
-            theme.colors.list = rgb(0x18181b).into();
-            theme.list_hover = rgb(0x222227).into();
+            theme.sidebar_accent = rgb(0x26262e).into();
             theme.list_active = rgb(0x28282f).into();
             theme.list_active_border = rgb(0x52525e).into();
             theme.primary = rgb(0xf4f4f5).into();
@@ -373,37 +388,14 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
             theme.button_primary_hover = rgb(0xffffff).into();
             theme.button_primary_active = rgb(0xd4d4dc).into();
             theme.button_primary_foreground = rgb(0x18181b).into();
-            theme.button = rgb(0x222227).into();
             theme.button_hover = rgb(0x2a2a31).into();
             theme.button_active = rgb(0x32323a).into();
-            theme.button_foreground = rgb(0xf4f4f5).into();
-            theme.ring = rgb(0x71717a).into();
-            theme.caret = rgb(0x4d7ef5).into();
-            theme.title_bar = rgb(0x18181b).into();
-            theme.title_bar_border = gpui_kit::rgba(0xffffff14).into();
         } else {
-            theme.background = rgb(0xfcfcfc).into();
-            theme.foreground = rgb(0x18181b).into();
-            theme.border = gpui_kit::rgba(0x00000012).into();
-            theme.input = rgb(0xd4d4d8).into();
-            theme.popover = rgb(0xffffff).into();
-            theme.popover_foreground = rgb(0x18181b).into();
-            theme.muted = rgb(0xf4f4f5).into();
-            theme.muted_foreground = rgb(0x71717b).into();
-            theme.secondary = rgb(0xf4f4f5).into();
-            theme.secondary_hover = rgb(0xebebee).into();
-            theme.secondary_active = rgb(0xe4e4e7).into();
-            theme.secondary_foreground = rgb(0x18181b).into();
-            theme.accent = rgb(0xf4f4f5).into();
-            theme.accent_foreground = rgb(0x18181b).into();
-            theme.sidebar = rgb(0xfafafa).into();
-            theme.sidebar_border = gpui_kit::rgba(0x00000012).into();
-            theme.sidebar_foreground = rgb(0x18181b).into();
-            theme.sidebar_accent = rgb(0xebebee).into();
-            theme.sidebar_accent_foreground = rgb(0x18181b).into();
-            theme.colors.list = rgb(0xfcfcfc).into();
-            theme.list_hover = rgb(0xf4f4f5).into();
-            theme.list_active = rgb(0xebebee).into();
+            theme.secondary_hover = rgb(0xe6e6eb).into();
+            theme.secondary_active = rgb(0xdfdfe6).into();
+            theme.accent = Color::Inset.for_mode(false).into();
+            theme.sidebar_accent = rgb(0xe7e7ec).into();
+            theme.list_active = rgb(0xe7e7ec).into();
             theme.list_active_border = rgb(0x18181b).into();
             theme.primary = rgb(0x18181b).into();
             theme.primary_hover = rgb(0x27272a).into();
@@ -413,14 +405,8 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
             theme.button_primary_hover = rgb(0x27272a).into();
             theme.button_primary_active = rgb(0x3f3f46).into();
             theme.button_primary_foreground = rgb(0xffffff).into();
-            theme.button = rgb(0xf4f4f5).into();
-            theme.button_hover = rgb(0xebebee).into();
-            theme.button_active = rgb(0xe4e4e7).into();
-            theme.button_foreground = rgb(0x18181b).into();
-            theme.ring = rgb(0x71717a).into();
-            theme.caret = rgb(0x1b4ed8).into();
-            theme.title_bar = rgb(0xfcfcfc).into();
-            theme.title_bar_border = gpui_kit::rgba(0x00000012).into();
+            theme.button_hover = rgb(0xe6e6eb).into();
+            theme.button_active = rgb(0xdfdfe6).into();
         }
     });
 }

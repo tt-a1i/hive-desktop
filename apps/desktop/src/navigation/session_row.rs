@@ -395,9 +395,9 @@ impl HiveApp {
                     Button::new(SharedString::from(format!("{scope}-{id}")))
                         .custom(palette::sidebar_item_variant(is_selected, cx))
                         .compact()
-                        .h(px(28.))
+                        .h(px(30.))
                         .px_2()
-                        .rounded_md()
+                        .rounded_lg()
                         .accessibility_label(format!(
                             "{}{} · {} · {role}{activity}{}",
                             if is_pinned_group {

@@ -36,6 +36,7 @@ enum PaletteAction {
     OpenWorkflows,
     OpenInbox,
     NewScratch,
+    ExportConversation,
     OpenShortcutsGuide,
     OpenWelcomeGuide,
     ToggleTheme,
@@ -301,6 +302,21 @@ impl HiveApp {
             icon: Glyph::Link,
             action: PaletteAction::OpenConversationReference,
         });
+        if self.viewing_conversation()
+            && self.conversation_ready
+            && self.session.is_some()
+            && !self.messages.is_empty()
+            && !self.loading
+        {
+            items.push(PaletteItem {
+                group: "常用操作",
+                title: tr("导出对话为 Markdown").to_owned(),
+                subtitle: None,
+                keywords: "export markdown conversation snapshot 导出 对话".into(),
+                icon: Glyph::FileDown,
+                action: PaletteAction::ExportConversation,
+            });
+        }
         items.push(PaletteItem {
             group: "常用操作",
             title: tr("打开或收起侧栏").to_owned(),
@@ -479,6 +495,9 @@ impl CommandPalette {
                 }
                 PaletteAction::NewScratch => {
                     this.start_scratch_conversation(window, cx);
+                }
+                PaletteAction::ExportConversation => {
+                    this.open_conversation_export(window, cx);
                 }
                 PaletteAction::OpenShortcutsGuide => {
                     this.open_shortcuts_guide(window, cx);

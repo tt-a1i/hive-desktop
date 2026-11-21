@@ -3,18 +3,50 @@
 //! paired with Beluga's crisp local-readiness surfaces.
 use gpui_kit::{
     App, BoxShadow, Div, FontWeight, ParentElement as _, Rgba, Styled as _,
-    component::{Theme, button::ButtonCustomVariant},
+    assets::IconName as Glyph,
+    component::{Icon, Theme, button::ButtonCustomVariant, h_flex},
     div, hsla, point, px, rgb, rgba,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Monochrome brand silhouette traced from `apps/desktop/assets/hive-logo.png`,
+/// preserving the negative-space arc between the primary swift wing and lower crescent.
+pub const HIVE_LOGO_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M1.2 4.1C5.4 7.7 10.6 8.9 13.7 6.8C16.2 4.6 19.8 4.8 21.6 7.8C22.1 8.6 22.7 9.1 23.6 9.6C22.6 10.2 22.1 10.7 21.8 11.7C20.9 15.1 17.5 16.9 13.6 18.2C12.1 18.7 11.1 19.6 10.2 20.9C10.9 18.1 12.6 16.4 14.5 14.7C16.5 12.9 18.1 11.3 19.8 10.6C18.5 9.4 16.8 9.2 14.4 10.1C10.1 11.7 5.2 11.1 1.2 4.1Z"/><path d="M3.1 12.2C7.0 13.6 11.1 13.1 14.9 11.3C16.0 10.8 16.9 10.6 17.7 10.7C15.9 11.8 14.3 13.5 12.6 14.6C9.5 16.6 5.6 15.9 3.1 12.2Z"/></svg>"#;
+
+pub fn brand_mark(size_px: f32, cx: &App) -> Icon {
+    Icon::new(Glyph::Sparkles)
+        .data(HIVE_LOGO_SVG)
+        .size(px(size_px))
+        .flex_shrink_0()
+        .text_color(Color::Accent.get(cx))
+}
+
+pub fn sidebar_brand_lockup(cx: &App) -> Div {
+    h_flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap_1p5()
+        .px_0p5()
+        .child(brand_mark(16., cx))
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(Color::Text.get(cx))
+                .child("Hive"),
+        )
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Color {
     Surface,
     Sidebar,
     Card,
+    Overlay,
     Bubble,
     Divider,
+    #[allow(dead_code)]
+    BorderStrong,
     Text,
     Muted,
     Secondary,
@@ -28,18 +60,19 @@ pub enum Color {
 }
 
 impl Color {
-    pub fn get(self, cx: &App) -> Rgba {
-        let dark = Theme::global(cx).is_dark();
+    pub fn for_mode(self, dark: bool) -> Rgba {
         match self {
-            Self::Surface => rgb(if dark { 0x161619 } else { 0xfcfcfc }),
-            Self::Sidebar => rgb(if dark { 0x111114 } else { 0xfafafa }),
-            Self::Card => rgb(if dark { 0x1d1d21 } else { 0xffffff }),
-            Self::Bubble => rgb(if dark { 0x26262c } else { 0xebebed }),
-            Self::Divider => rgba(if dark { 0xffffff12 } else { 0x00000010 }),
+            Self::Sidebar => rgb(if dark { 0x0f0f12 } else { 0xf4f4f6 }),
+            Self::Inset => rgb(if dark { 0x1e1e24 } else { 0xeeeef1 }),
+            Self::Surface => rgb(if dark { 0x141418 } else { 0xf7f7f9 }),
+            Self::Card => rgb(if dark { 0x1c1c21 } else { 0xffffff }),
+            Self::Overlay => rgb(if dark { 0x222229 } else { 0xffffff }),
+            Self::Bubble => rgb(if dark { 0x25252d } else { 0xebebf0 }),
+            Self::Divider => rgba(if dark { 0xffffff14 } else { 0x00000014 }),
+            Self::BorderStrong => rgba(if dark { 0xffffff1f } else { 0x0000001e }),
             Self::Text => rgb(if dark { 0xf4f4f5 } else { 0x18181b }),
             Self::Secondary => rgb(if dark { 0xa1a1aa } else { 0x52525b }),
-            Self::Muted => rgb(if dark { 0x8e8e98 } else { 0x71717b }),
-            Self::Inset => rgb(if dark { 0x222227 } else { 0xf4f4f5 }),
+            Self::Muted => rgb(if dark { 0x8e8e98 } else { 0x686872 }),
             Self::Accent => rgb(if dark { 0x4d7ef5 } else { 0x1b4ed8 }),
             Self::AccentSoft => rgb(if dark { 0x1b2440 } else { 0xeef2ff }),
             Self::Attention => rgb(if dark { 0x2a2316 } else { 0xfef7e6 }),
@@ -48,6 +81,10 @@ impl Color {
             Self::ErrorSurface => rgb(if dark { 0x2d191c } else { 0xfef2f2 }),
         }
     }
+
+    pub fn get(self, cx: &App) -> Rgba {
+        self.for_mode(Theme::global(cx).is_dark())
+    }
 }
 
 /// Subtle T3 Code card elevation: soft layered ambient shadow in light mode,
@@ -55,7 +92,7 @@ impl Color {
 pub fn card_shadow(cx: &App) -> Vec<BoxShadow> {
     if Theme::global(cx).is_dark() {
         vec![BoxShadow {
-            color: hsla(0., 0., 0., 0.28),
+            color: hsla(0., 0., 0., 0.32),
             offset: point(px(0.), px(2.)),
             blur_radius: px(8.),
             spread_radius: px(0.),
@@ -81,6 +118,46 @@ pub fn card_shadow(cx: &App) -> Vec<BoxShadow> {
     }
 }
 
+/// Floating overlay elevation for popovers, pickers, and command overlays.
+#[allow(dead_code)]
+pub fn overlay_shadow(cx: &App) -> Vec<BoxShadow> {
+    if Theme::global(cx).is_dark() {
+        vec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.32),
+                offset: point(px(0.), px(2.)),
+                blur_radius: px(8.),
+                spread_radius: px(0.),
+                inset: false,
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.48),
+                offset: point(px(0.), px(10.)),
+                blur_radius: px(26.),
+                spread_radius: px(-4.),
+                inset: false,
+            },
+        ]
+    } else {
+        vec![
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.06),
+                offset: point(px(0.), px(2.)),
+                blur_radius: px(6.),
+                spread_radius: px(-1.),
+                inset: false,
+            },
+            BoxShadow {
+                color: hsla(0., 0., 0., 0.08),
+                offset: point(px(0.), px(10.)),
+                blur_radius: px(24.),
+                spread_radius: px(-4.),
+                inset: false,
+            },
+        ]
+    }
+}
+
 /// Signature T3 Code floating composer elevation: gentle resting lift,
 /// transitioning to a crisp subtle focus halo + elevation when active.
 pub fn composer_shadow(focused: bool, cx: &App) -> Vec<BoxShadow> {
@@ -88,7 +165,7 @@ pub fn composer_shadow(focused: bool, cx: &App) -> Vec<BoxShadow> {
     if focused {
         if dark {
             vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.36),
+                color: hsla(0., 0., 0., 0.40),
                 offset: point(px(0.), px(4.)),
                 blur_radius: px(16.),
                 spread_radius: px(-2.),
@@ -97,14 +174,14 @@ pub fn composer_shadow(focused: bool, cx: &App) -> Vec<BoxShadow> {
         } else {
             vec![
                 BoxShadow {
-                    color: hsla(0., 0., 0., 0.04),
+                    color: hsla(0., 0., 0., 0.05),
                     offset: point(px(0.), px(1.)),
                     blur_radius: px(3.),
                     spread_radius: px(0.),
                     inset: false,
                 },
                 BoxShadow {
-                    color: hsla(0., 0., 0., 0.05),
+                    color: hsla(0., 0., 0., 0.06),
                     offset: point(px(0.), px(6.)),
                     blur_radius: px(18.),
                     spread_radius: px(-2.),
@@ -114,7 +191,7 @@ pub fn composer_shadow(focused: bool, cx: &App) -> Vec<BoxShadow> {
         }
     } else if dark {
         vec![BoxShadow {
-            color: hsla(0., 0., 0., 0.24),
+            color: hsla(0., 0., 0., 0.26),
             offset: point(px(0.), px(2.)),
             blur_radius: px(10.),
             spread_radius: px(-1.),
@@ -123,14 +200,14 @@ pub fn composer_shadow(focused: bool, cx: &App) -> Vec<BoxShadow> {
     } else {
         vec![
             BoxShadow {
-                color: hsla(0., 0., 0., 0.03),
+                color: hsla(0., 0., 0., 0.035),
                 offset: point(px(0.), px(1.)),
                 blur_radius: px(2.),
                 spread_radius: px(0.),
                 inset: false,
             },
             BoxShadow {
-                color: hsla(0., 0., 0., 0.025),
+                color: hsla(0., 0., 0., 0.03),
                 offset: point(px(0.), px(4.)),
                 blur_radius: px(12.),
                 spread_radius: px(-2.),
@@ -182,16 +259,16 @@ pub fn segment_variant(active: bool, cx: &App) -> ButtonCustomVariant {
 pub fn sidebar_item_variant(selected: bool, cx: &App) -> ButtonCustomVariant {
     let dark = Theme::global(cx).is_dark();
     if selected {
-        let bg = rgb(if dark { 0x26262c } else { 0xebebee });
-        let hover = rgb(if dark { 0x2c2c33 } else { 0xe4e4e7 });
+        let bg = rgb(if dark { 0x26262e } else { 0xe7e7ec });
+        let hover = rgb(if dark { 0x2e2e38 } else { 0xdfe0e6 });
         ButtonCustomVariant::new(cx)
             .color(bg.into())
             .foreground(Color::Text.get(cx).into())
             .hover(hover.into())
             .active(bg.into())
     } else {
-        let hover = rgb(if dark { 0x1c1c21 } else { 0xf1f1f4 });
-        let active = rgb(if dark { 0x26262c } else { 0xebebee });
+        let hover = rgb(if dark { 0x1b1b21 } else { 0xededf1 });
+        let active = rgb(if dark { 0x26262e } else { 0xe7e7ec });
         ButtonCustomVariant::new(cx)
             .color(rgba(0).into())
             .foreground(Color::Secondary.get(cx).into())
@@ -646,5 +723,52 @@ mod tests {
         );
         assert!(format_session_time(now_ms, crate::general::SessionTimeFormat::Clock24h, true).is_some());
         assert!(format_session_time(now_ms, crate::general::SessionTimeFormat::Clock12h, false).is_some());
+    }
+
+    #[test]
+    fn surface_hierarchy_and_brand_svg_meet_contrast_contracts() {
+        let luma = |c: Rgba| 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+        assert!(luma(Color::Sidebar.for_mode(true)) < luma(Color::Surface.for_mode(true)));
+        assert!(luma(Color::Surface.for_mode(true)) < luma(Color::Card.for_mode(true)));
+        assert!(luma(Color::Card.for_mode(true)) < luma(Color::Overlay.for_mode(true)));
+
+        assert!(luma(Color::Sidebar.for_mode(false)) < luma(Color::Surface.for_mode(false)));
+        assert!(luma(Color::Surface.for_mode(false)) < luma(Color::Card.for_mode(false)));
+        assert_eq!(Color::Overlay.for_mode(false), Color::Card.for_mode(false));
+
+        assert_eq!(Color::Inset.for_mode(true).a, 1.0);
+        assert_eq!(Color::Inset.for_mode(false).a, 1.0);
+        assert!(Color::BorderStrong.for_mode(true).a > Color::Divider.for_mode(true).a);
+        assert!(Color::BorderStrong.for_mode(false).a > Color::Divider.for_mode(false).a);
+
+        let linearize = |c: f32| {
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let rel_luma = |c: Rgba| {
+            0.2126 * linearize(c.r) + 0.7152 * linearize(c.g) + 0.0722 * linearize(c.b)
+        };
+        let contrast = |a: Rgba, b: Rgba| {
+            let (la, lb) = (rel_luma(a), rel_luma(b));
+            (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+        };
+        for dark in [false, true] {
+            let muted = Color::Muted.for_mode(dark);
+            assert!(
+                contrast(muted, Color::Sidebar.for_mode(dark)) >= 4.5,
+                "Color::Muted contrast on Sidebar failed for dark={dark}"
+            );
+            assert!(
+                contrast(muted, Color::Surface.for_mode(dark)) >= 4.5,
+                "Color::Muted contrast on Surface failed for dark={dark}"
+            );
+        }
+
+        let svg = std::str::from_utf8(HIVE_LOGO_SVG).unwrap();
+        assert!(svg.contains("viewBox=\"0 0 24 24\""));
+        assert!(svg.contains("<path "));
     }
 }

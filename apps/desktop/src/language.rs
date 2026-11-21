@@ -405,6 +405,10 @@ mod tests {
         component::set_locale(Locale::En.component_locale());
         assert_eq!(tr("设置"), "Settings");
         assert_eq!(tr("内置"), "Built-in");
+        assert_eq!(tr("已完结"), "Settled");
+        assert_eq!(tr("展开已完结会话"), "Expand settled conversations");
+        assert_eq!(tr("收起已完结会话"), "Collapse settled conversations");
+        assert_eq!(tr("或无项目开始"), "or start without a project");
         assert_eq!(
             tr("连接已中断，任务保存结果尚未确认"),
             "Connection interrupted; task save was not confirmed"

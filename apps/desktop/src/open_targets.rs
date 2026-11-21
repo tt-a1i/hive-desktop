@@ -518,49 +518,6 @@ pub(crate) fn settings_picker(preferred: OpenTarget, cx: &App) -> AnyElement {
 }
 
 impl HiveApp {
-    pub(crate) fn render_project_open_controls(
-        &self,
-        workspace: &str,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let apps = installed(cx);
-        let preferred = crate::general::current(cx).default_open_target;
-        let app = apps
-            .iter()
-            .find(|app| app.target == preferred)
-            .or_else(|| apps.iter().find(|app| app.target == Finder));
-        let target = app.map_or(Finder, |app| app.target);
-        let target_label = target.label();
-        let tooltip = if crate::language::english() {
-            format!("Open project in {target_label}")
-        } else {
-            format!("在 {target_label} 中打开项目")
-        };
-
-        let menu_workspace = workspace.to_owned();
-        let owner = cx.weak_entity();
-        Button::new("topbar-open-target-menu")
-            .custom(crate::palette::quiet_icon_variant(cx))
-            .compact()
-            .xsmall()
-            .h(px(28.))
-            .w(px(28.))
-            .rounded_lg()
-            .icon(Glyph::ExternalLink)
-            .tooltip(tooltip.clone())
-            .accessibility_label(tooltip)
-            .disabled(apps.is_empty())
-            .dropdown_menu(move |menu, _, cx| {
-                workspace_menu(
-                    menu,
-                    owner.clone(),
-                    menu_workspace.clone(),
-                    Some(target),
-                    cx,
-                )
-            })
-    }
-
     pub(crate) fn open_workspace_target(
         &mut self,
         workspace: String,
