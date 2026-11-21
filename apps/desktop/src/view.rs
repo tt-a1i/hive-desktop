@@ -1678,6 +1678,7 @@ impl Render for HiveApp {
                                                 })
                                                 .when(
                                                     !has_session_failure
+                                                        && self.error.is_none()
                                                         && (!self.status.is_background_connected()
                                                             || running),
                                                     |bar| {

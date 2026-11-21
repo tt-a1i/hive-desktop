@@ -277,3 +277,50 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     drop(runtime);
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn macos_launchservices_path_detection_and_merge_preserve_priority() {
+    let bare = vec![
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+        PathBuf::from("/usr/sbin"),
+        PathBuf::from("/sbin"),
+    ];
+    assert!(is_macos_launchservices_path(&bare));
+    assert!(is_macos_launchservices_path(&[]));
+
+    let terminal = vec![PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/bin")];
+    assert!(!is_macos_launchservices_path(&terminal));
+
+    let custom_test = vec![PathBuf::from("/tmp/fake-bin")];
+    assert!(!is_macos_launchservices_path(&custom_test));
+
+    assert_eq!(
+        parse_shell_path_output("welcome banner\n__HIVE_PATH__/Users/a/.npm-global/bin:/opt/homebrew/bin__HIVE_PATH__\nbye"),
+        Some("/Users/a/.npm-global/bin:/opt/homebrew/bin")
+    );
+    assert_eq!(parse_shell_path_output("no markers"), None);
+
+    let merged = merge_runtime_paths(
+        Some(PathBuf::from("/app/node/bin")),
+        vec![PathBuf::from("/usr/bin"), PathBuf::from("/bin")],
+        vec![
+            PathBuf::from("/Users/a/.npm-global/bin"),
+            PathBuf::from("/usr/bin"),
+        ],
+        vec![
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/Users/a/.npm-global/bin"),
+        ],
+    );
+    assert_eq!(
+        merged,
+        vec![
+            PathBuf::from("/app/node/bin"),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+            PathBuf::from("/Users/a/.npm-global/bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+        ]
+    );
+}

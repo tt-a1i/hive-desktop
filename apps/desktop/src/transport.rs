@@ -6,9 +6,10 @@ use crate::{
 use serde_json::{Value, json};
 use smol::channel::{Receiver, Sender, bounded, unbounded};
 use std::{
-    collections::HashMap,
-    io::{BufRead, BufReader, Write},
-    path::PathBuf,
+    collections::{HashMap, HashSet},
+    ffi::OsString,
+    io::{BufRead, BufReader, Read, Write},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         Arc, Mutex,
@@ -16,7 +17,7 @@ use std::{
         mpsc,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 type Reply = Result<Value, String>;
@@ -148,6 +149,156 @@ fn read_frame(reader: &mut impl BufRead, scratch: &mut Vec<u8>) -> Result<Option
     result.map(Some)
 }
 
+const SHELL_PATH_MARKER: &str = "__HIVE_PATH__";
+
+fn is_macos_launchservices_path(paths: &[PathBuf]) -> bool {
+    paths.iter().all(|path| {
+        let s = path.to_string_lossy();
+        matches!(
+            s.as_ref(),
+            "" | "/usr/bin"
+                | "/bin"
+                | "/usr/sbin"
+                | "/sbin"
+                | "/usr/local/bin"
+                | "/Library/Apple/usr/bin"
+        ) || s.starts_with("/System/Cryptexes/")
+            || s.starts_with("/var/run/com.apple.security.cryptexd/")
+    })
+}
+
+fn parse_shell_path_output(raw: &str) -> Option<&str> {
+    let start = raw.find(SHELL_PATH_MARKER)? + SHELL_PATH_MARKER.len();
+    let rest = &raw[start..];
+    let end = rest.find(SHELL_PATH_MARKER)?;
+    let path = rest[..end].trim();
+    (!path.is_empty()).then_some(path)
+}
+
+fn merge_runtime_paths(
+    node_directory: Option<PathBuf>,
+    current: Vec<PathBuf>,
+    hydrated: Vec<PathBuf>,
+    fallbacks: Vec<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut merged = Vec::new();
+    let mut seen = HashSet::new();
+    let mut push = |dir: PathBuf| {
+        if !dir.as_os_str().is_empty() && seen.insert(dir.clone()) {
+            merged.push(dir);
+        }
+    };
+    if let Some(dir) = node_directory {
+        push(dir);
+    }
+    for dir in current {
+        push(dir);
+    }
+    for dir in hydrated {
+        push(dir);
+    }
+    for dir in fallbacks {
+        push(dir);
+    }
+    merged
+}
+
+#[cfg(target_os = "macos")]
+fn probe_macos_login_shell_path() -> Vec<PathBuf> {
+    let shell = std::env::var_os("SHELL")
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| OsString::from("/bin/zsh"));
+    let script = format!("printf '{SHELL_PATH_MARKER}%s{SHELL_PATH_MARKER}' \"$PATH\"");
+    let Ok(mut child) = Command::new(&shell)
+        .args(["-ilc", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return Vec::new();
+    };
+    let reader = child.stdout.take().map(|mut stdout| {
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stdout.read_to_end(&mut buf);
+            String::from_utf8_lossy(&buf).into_owned()
+        })
+    });
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    let exited = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.success(),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break false;
+            }
+        }
+    };
+    if !exited {
+        return Vec::new();
+    }
+    let output = reader
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+    parse_shell_path_output(&output)
+        .map(|raw| std::env::split_paths(raw).collect())
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_fallback_user_bin_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        for rel in [
+            ".npm-global/bin",
+            "Library/pnpm",
+            "Library/pnpm/bin",
+            ".local/bin",
+            ".bun/bin",
+            ".volta/bin",
+            ".mise/shims",
+            ".asdf/shims",
+            ".cargo/bin",
+        ] {
+            let candidate = home.join(rel);
+            if candidate.is_dir() {
+                dirs.push(candidate);
+            }
+        }
+    }
+    for system in ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"] {
+        let candidate = Path::new(system);
+        if candidate.is_dir() {
+            dirs.push(candidate.to_path_buf());
+        }
+    }
+    dirs
+}
+
+fn resolve_runtime_path(node_directory: Option<PathBuf>) -> Option<OsString> {
+    let current: Vec<PathBuf> =
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    #[cfg(target_os = "macos")]
+    let (hydrated, fallbacks) = if is_macos_launchservices_path(&current)
+        && std::env::var_os("HIVE_DESKTOP_NO_SHELL_PATH").is_none()
+    {
+        (probe_macos_login_shell_path(), macos_fallback_user_bin_dirs())
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    #[cfg(not(target_os = "macos"))]
+    let (hydrated, fallbacks): (Vec<PathBuf>, Vec<PathBuf>) = (Vec::new(), Vec::new());
+
+    if node_directory.is_none() && hydrated.is_empty() && fallbacks.is_empty() {
+        return None;
+    }
+    let merged = merge_runtime_paths(node_directory, current, hydrated, fallbacks);
+    std::env::join_paths(merged).ok()
+}
+
 impl Runtime {
     pub fn launch() -> Result<Arc<Self>, String> {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -167,15 +318,8 @@ impl Runtime {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        if let Some(directory) = location.node_directory {
-            let mut paths = vec![directory];
-            paths.extend(std::env::split_paths(
-                &std::env::var_os("PATH").unwrap_or_default(),
-            ));
-            command.env(
-                "PATH",
-                std::env::join_paths(paths).map_err(|e| format!("无法设置后台 PATH：{e}"))?,
-            );
+        if let Some(path) = resolve_runtime_path(location.node_directory) {
+            command.env("PATH", path);
         }
         Self::launch_command(command)
     }
