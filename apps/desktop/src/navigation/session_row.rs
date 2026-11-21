@@ -303,6 +303,14 @@ impl HiveApp {
         let activity = activity_label
             .map(|label| format!(" · {label}"))
             .unwrap_or_default();
+        let pulse_dot = (self.interaction_count(&id) == 0 && self.busy.contains(&id))
+            .then(|| {
+                self.live_activity
+                    .pulse_dots
+                    .get(&format!("session:{id}"))
+                    .cloned()
+            })
+            .flatten();
         let dot_color = if self.interaction_count(&id) > 0 {
             Some(Color::Error.get(cx))
         } else if self.busy.contains(&id) {
@@ -426,11 +434,26 @@ impl HiveApp {
                                 .items_center()
                                 .gap_2()
                                 .child(palette::project_badge(&workspace_name, 17., cx))
-                                .when_some(dot_color, |row, color| {
-                                    row.child(
-                                        div().size(px(5.)).flex_shrink_0().rounded_full().bg(color),
-                                    )
-                                })
+                                .when_some(pulse_dot, |row, dot| row.child(dot))
+                                .when(
+                                    !(self.interaction_count(&id) == 0
+                                        && self.busy.contains(&id)
+                                        && self
+                                            .live_activity
+                                            .pulse_dots
+                                            .contains_key(&format!("session:{id}"))),
+                                    |row| {
+                                        row.when_some(dot_color, |row, color| {
+                                            row.child(
+                                                div()
+                                                    .size(px(5.))
+                                                    .flex_shrink_0()
+                                                    .rounded_full()
+                                                    .bg(color),
+                                            )
+                                        })
+                                    },
+                                )
                                 .child(
                                     div()
                                         .flex_1()
@@ -501,6 +524,7 @@ impl HiveApp {
                                                     div()
                                                         .flex_shrink_0()
                                                         .text_size(px(11.5))
+                                                        .font_features(palette::tabular_nums())
                                                         .text_color(if is_selected {
                                                             Color::Secondary.get(cx)
                                                         } else {

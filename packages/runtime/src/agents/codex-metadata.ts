@@ -28,10 +28,10 @@ export function readCodexMetadata(directory: string, threadId: string): CodexMet
   }
   if (value.version !== 1 || !Array.isArray(value.context) || !Array.isArray(value.deliveries) || !Array.isArray(value.completed)
     || !value.context.every(entry => typeof entry.text === 'string' && typeof entry.customType === 'string')
-    || !value.deliveries.every(entry => typeof entry.turnId === 'string' && (entry.itemId === undefined || typeof entry.itemId === 'string') && typeof entry.deliveryId === 'string' && isDeliveryPresentation(entry.presentation))
+    || !value.deliveries.every(entry => typeof entry.turnId === 'string' && (entry.itemId === undefined || typeof entry.itemId === 'string') && typeof entry.deliveryId === 'string' && (entry.steered === undefined || typeof entry.steered === 'boolean') && isDeliveryPresentation(entry.presentation))
     || !value.completed.every(id => typeof id === 'string')
     || (value.inheritedSources !== undefined && (!Array.isArray(value.inheritedSources) || !value.inheritedSources.every(entry => typeof entry.itemId === 'string' && !!entry.itemId && typeof entry.sourceSessionId === 'string' && !!entry.sourceSessionId)))
-    || (value.inheritedDeliveries !== undefined && (!Array.isArray(value.inheritedDeliveries) || !value.inheritedDeliveries.every(entry => typeof entry.turnId === 'string' && typeof entry.itemId === 'string' && !!entry.itemId && typeof entry.deliveryId === 'string' && isDeliveryPresentation(entry.presentation))))) throw new Error('Invalid Hive Codex metadata');
+    || (value.inheritedDeliveries !== undefined && (!Array.isArray(value.inheritedDeliveries) || !value.inheritedDeliveries.every(entry => typeof entry.turnId === 'string' && typeof entry.itemId === 'string' && !!entry.itemId && typeof entry.deliveryId === 'string' && (entry.steered === undefined || typeof entry.steered === 'boolean') && isDeliveryPresentation(entry.presentation))))) throw new Error('Invalid Hive Codex metadata');
   return value;
 }
 export function writeCodexMetadata(directory: string, threadId: string, metadata: CodexMetadata): void {

@@ -177,6 +177,11 @@ pub(crate) fn init(cx: &mut App) {
     refresh(cx);
 }
 
+#[cfg(test)]
+pub(crate) fn init_for_test(cx: &mut App) {
+    cx.set_global(InstalledApps::default());
+}
+
 pub(crate) fn refresh(cx: &mut App) {
     let Some(previous) = cx.update_global::<InstalledApps, _>(|state, _| {
         if state.probing

@@ -61,7 +61,7 @@ fn apply_tool_diff_files(
     });
 }
 impl HiveApp {
-    pub(crate) fn retain_tool_patch(&mut self, id: &str, result: &Value, cx: &App) {
+    pub(crate) fn retain_tool_patch(&mut self, id: &str, result: &Value, cx: &mut Context<Self>) {
         if let Some(patch) = result["details"]["patch"].as_str() {
             if let Some(tool) = self
                 .message_mut(id)
@@ -137,6 +137,70 @@ impl HiveApp {
         let width = (window.viewport_size().width - px(48.)).min(px(1120.));
         window.open_dialog(cx, move |dialog, _, _| {
             dialog.title(tr("工具改动")).w(width).child(viewer.clone())
+        });
+    }
+
+    pub(crate) fn open_turn_diff(
+        &mut self,
+        tool_changes: Vec<(String, Value, Option<String>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let english_labels = english();
+        let prefs = crate::diffs_settings::current(cx);
+        let initial_mode = prefs.default_diff_mode.into_diff_mode();
+        let initial_inline = prefs.inline_diff.into_inline_unit();
+        let initial_ignore_ws = prefs.ignore_whitespace;
+        let collapse_multi = prefs.collapse_multi_file_diffs;
+        let viewer = cx.new(|cx: &mut Context<ToolDiff>| {
+            let state = cx.new(|cx| {
+                DiffState::new([], cx)
+                    .with_mode(initial_mode)
+                    .with_inline_unit(initial_inline)
+                    .with_inline_max_line_length(crate::diffs_settings::INLINE_DIFF_MAX_LINE_BYTES)
+            });
+            let view = ToolDiff {
+                state,
+                document: None,
+                provenance: "本轮工具改动汇总",
+                status: "完成",
+                raw: false,
+                ignore_whitespace: initial_ignore_ws,
+                loading: true,
+                raw_reader: None,
+                raw_focus: cx.focus_handle().tab_stop(true),
+            };
+            cx.spawn(async move |this, cx| {
+                let document = smol::unblock(move || {
+                    let combined: Vec<data::Change> = tool_changes
+                        .into_iter()
+                        .flat_map(|(name, args, patch)| {
+                            data::changes(&name, &args, patch.as_deref(), english_labels)
+                        })
+                        .collect();
+                    data::build(combined)
+                })
+                .await;
+                let _ = this.update(cx, |this, cx| {
+                    apply_tool_diff_files(
+                        &this.state,
+                        &document,
+                        this.ignore_whitespace,
+                        collapse_multi,
+                        cx,
+                    );
+                    this.raw = document.error.is_some();
+                    this.document = Some(document);
+                    this.loading = false;
+                    cx.notify();
+                });
+            })
+            .detach();
+            view
+        });
+        let width = (window.viewport_size().width - px(48.)).min(px(1120.));
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog.title(tr("本轮改动")).w(width).child(viewer.clone())
         });
     }
 }
@@ -624,6 +688,7 @@ mod tests {
 
     #[test]
     fn raw_tool_patch_keeps_existing_whitespace_filter_semantics() {
+        let _locale = crate::language::test_locale_guard();
         let raw = "--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new\n";
         assert_eq!(raw_patch_text(raw, false), raw);
         assert_eq!(raw_patch_text(raw, true), crate::diffs_settings::filter_patch_whitespace(raw));

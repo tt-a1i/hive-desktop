@@ -85,6 +85,8 @@ pub struct ToolPresentation {
     pub expanded: bool,
     pub details_scroll: ScrollHandle,
     pub output_windows: Vec<ToolOutputWindow>,
+    pub started_at: Option<std::time::Instant>,
+    pub duration_ms: Option<u64>,
 }
 pub struct DeliveryCard {
     pub dispatch_id: Option<String>,
@@ -111,6 +113,9 @@ pub struct Message {
     pub handoff_item_id: Option<String>,
     pub source_session_id: Option<String>,
     pub text: String,
+    pub timestamp_ms: Option<i64>,
+    pub steered: bool,
+    pub user_expanded: bool,
     pub(crate) markdown_focus: Option<FocusHandle>,
     pub tool: Option<ToolPresentation>,
     pub thinking: Vec<crate::thinking::ThinkingBlock>,
@@ -313,6 +318,7 @@ pub struct HiveApp {
     pub unavailable_model: Option<ModelIdentity>,
     pub(crate) resetting_draft_setting: Option<u64>,
     pub busy: HashSet<String>,
+    pub(crate) live_activity: crate::live_activity::LiveActivityState,
     pub(crate) sidebar_failed_turns: HashSet<String>,
     pub delivery_failure: Option<crate::failures::DeliveryFailure>,
     pub delivery_failure_expanded: bool,
@@ -392,6 +398,7 @@ pub struct HiveApp {
     pub(crate) new_session_creation: Option<u64>,
     pub(crate) scratch_session_retry: Option<(&'static str, String)>,
     _quit: Subscription,
+    _window_activation: Subscription,
     _composer_subscription: Subscription,
     _model_search_subscription: Subscription,
     _member_model_search_subscription: Subscription,
@@ -409,7 +416,7 @@ impl HiveApp {
         cx.notify();
         cx.spawn(async move |this, cx| {
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(1800))
+                .timer(std::time::Duration::from_millis(2000))
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.copied_seq == seq {
@@ -424,6 +431,18 @@ impl HiveApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::register_local_notifications(window, cx);
         Self::start_global_inbox_badge(cx);
+        let mut app = Self::build_app(window, cx);
+        app.start_backend(window.window_handle(), cx);
+        app.start_workspace_updates(cx);
+        app
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build_app(window, cx)
+    }
+
+    fn build_app(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let weak = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             let _ = weak.update(cx, |this, cx| this.request_exit(Some(window), cx));
@@ -752,7 +771,7 @@ impl HiveApp {
         let sidebar_search =
             cx.new(|cx| crate::navigation::SidebarSearch::new(sidebar_owner, window, cx));
         let scripts_owner = cx.weak_entity();
-        let mut app = Self {
+        let app = Self {
             conversation_sources: Vec::new(),
             navigation: NavigationSelection::default(),
             sidebar_open: window.viewport_size().width >= px(820.),
@@ -923,6 +942,7 @@ impl HiveApp {
             unavailable_model: None,
             resetting_draft_setting: None,
             busy: HashSet::new(),
+            live_activity: crate::live_activity::LiveActivityState::new(window.is_window_active(), cx),
             sidebar_failed_turns: HashSet::new(),
             delivery_failure: None,
             delivery_failure_expanded: false,
@@ -1013,15 +1033,24 @@ impl HiveApp {
                     }
                 }
             }),
+            _window_activation: cx.observe_window_activation(window, |this, window, cx| {
+                this.live_activity
+                    .on_window_activation(window.is_window_active(), cx);
+                cx.notify();
+            }),
         };
         app.conversation_list
             .state
             .set_scroll_handler(cx.listener(|this, _, _, cx| {
                 this.schedule_reading_position_save(cx);
+                let weak = cx.weak_entity();
+                cx.defer(move |cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.update_detached_scroll_pill(cx);
+                    });
+                });
                 cx.notify();
             }));
-        app.start_backend(window.window_handle(), cx);
-        app.start_workspace_updates(cx);
         app
     }
     fn register_guarded_action<A: gpui_kit::Action>(
@@ -1243,4 +1272,22 @@ impl HiveApp {
         })
         .detach();
     }
+}
+
+#[cfg(test)]
+pub(crate) fn init_test_globals(cx: &mut TestAppContext) -> crate::language::TestLocaleGuard {
+    let locale_guard = crate::language::test_locale_guard();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_global(crate::local_notifications::Preferences::default());
+        cx.set_global(crate::appearance::Appearance::default());
+        crate::general::init(cx);
+        crate::open_targets::init_for_test(cx);
+        crate::diffs_settings::init(cx);
+        cx.set_global(crate::language::Language::default());
+        cx.set_global(crate::composer::ComposerPreferences::default());
+        crate::keybindings::init(cx);
+        crate::appearance::apply(None, cx);
+    });
+    locale_guard
 }

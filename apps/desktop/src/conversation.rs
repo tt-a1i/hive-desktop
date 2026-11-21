@@ -9,6 +9,69 @@ use serde_json::{Value, json};
 use std::borrow::Cow;
 use std::collections::HashSet;
 
+pub(crate) const DETACH_SCROLL_THRESHOLD_PX: f32 = 40.0;
+
+pub(crate) fn parse_message_timestamp_ms(message: &Value) -> Option<i64> {
+    let ts = message.get("timestamp")?;
+    if let Some(ms) = ts.as_i64() {
+        return (ms > 0).then_some(ms);
+    }
+    if let Some(ms) = ts.as_f64() {
+        if ms.is_finite() && ms > 0.0 && ms <= i64::MAX as f64 {
+            return Some(ms as i64);
+        }
+        return None;
+    }
+    ts.as_str()
+        .and_then(|raw| chrono::DateTime::parse_from_rfc3339(raw).ok())
+        .map(|dt| dt.timestamp_millis())
+        .filter(|&ms| ms > 0)
+}
+
+pub(crate) fn extract_tool_duration_ms(message: &Value) -> Option<u64> {
+    let direct = message
+        .get("durationMs")
+        .or_else(|| message["rawBackendItem"].get("durationMs"))
+        .or_else(|| message["details"].get("durationMs"));
+    if let Some(val) = direct {
+        if let Some(ms) = val.as_u64() {
+            return Some(ms);
+        }
+        if let Some(ms) = val.as_f64()
+            && ms.is_finite()
+            && ms >= 0.0
+        {
+            return Some(ms.round() as u64);
+        }
+    }
+    let item = &message["rawBackendItem"];
+    let started = item.get("startedAtMs").and_then(Value::as_f64)?;
+    let completed = item.get("completedAtMs").and_then(Value::as_f64)?;
+    if started.is_finite() && completed.is_finite() && completed >= started {
+        return Some((completed - started).round() as u64);
+    }
+    None
+}
+
+pub(crate) fn is_elapsed_only_tool_update(result: &Value) -> bool {
+    result.get("content").is_none()
+        && result
+            .as_object()
+            .is_some_and(|obj| obj.len() == 1 && obj.get("elapsedSeconds").and_then(Value::as_f64).is_some())
+}
+
+pub(crate) fn is_scroll_detached(
+    following_tail: bool,
+    scrolled_to_end: Option<bool>,
+    max_y: f32,
+    current_y: f32,
+) -> bool {
+    if following_tail || scrolled_to_end == Some(true) || max_y <= 0.0 {
+        return false;
+    }
+    (max_y - current_y) > DETACH_SCROLL_THRESHOLD_PX
+}
+
 fn assistant_tool_calls(message: &Value) -> impl Iterator<Item = &Value> {
     message["content"].as_array()
         .filter(|_| message["role"] == "assistant")
@@ -109,6 +172,9 @@ impl HiveApp {
             _ => "queue",
         };
         self.busy.insert(id.clone());
+        if !was_busy {
+            self.live_activity.mark_busy_from_user_send(&id);
+        }
         self.inflight_inputs.insert(id.clone(), text.clone());
         self.drafts.remove(&format!("session:{id}"));
         self.input
@@ -158,7 +224,10 @@ impl HiveApp {
                         if refresh_handoff {
                             this.history_navigation.access.handoff_delivery = Some(json!({"status":"unknown"}));
                         }
-                        if !was_busy { this.busy.remove(&id); }
+                        if !was_busy {
+                            this.busy.remove(&id);
+                            this.live_activity.unmark_busy(&id);
+                        }
                         let showing_source = this.session.as_ref().is_some_and(|s| s.id == id);
                         let source_owns_editor = showing_source && (fresh_draft.is_none()
                             || this.draft_owner == this.draft_target
@@ -313,20 +382,26 @@ impl HiveApp {
                     }
                 }
                 if *busy {
+                    let was_busy = self.busy.contains(&id);
                     if delivery_failure.is_some() {
                         self.sidebar_failed_turns.insert(id.clone());
-                    } else if !self.busy.contains(&id) {
+                    } else if !was_busy {
                         self.sidebar_failed_turns.remove(&id);
                     }
                     self.busy.insert(id.clone());
+                    if !was_busy {
+                        self.live_activity.mark_busy(&id);
+                    }
                 } else {
                     self.busy.remove(&id);
+                    self.live_activity.unmark_busy(&id);
                     self.sidebar_failed_turns.remove(&id);
                 }
                 self.pending.insert(id, *pending);
             }
             PiEvent::Settled { .. } => {
                 self.busy.remove(&id);
+                self.live_activity.unmark_busy(&id);
                 self.sidebar_failed_turns.remove(&id);
             }
             // A backend can report failure before the queue finishes stopping.
@@ -335,7 +410,9 @@ impl HiveApp {
                 self.sidebar_failed_turns.insert(id);
             }
             PiEvent::AssistantDelta { .. } | PiEvent::ToolStart { .. } => {
-                self.busy.insert(id);
+                if self.busy.insert(id.clone()) {
+                    self.live_activity.mark_busy(&id);
+                }
             }
             _ => {}
         }
@@ -474,8 +551,13 @@ impl HiveApp {
             }
             return;
         }
+        self.scroll_to_bottom(cx);
+    }
+
+    pub(crate) fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
         self.conversation_find = None;
         self.conversation_list.pending_anchor = None;
+        self.conversation_list.clear_detached_pill();
         // Update the header action now, then pin to the final offset after layout.
         self.conversation_list
             .state
@@ -483,6 +565,23 @@ impl HiveApp {
         self.conversation_list.state.scroll_to_end();
         self.schedule_reading_position_save(cx);
         cx.notify();
+    }
+
+    pub(crate) fn has_unloaded_newer_history(&self) -> bool {
+        !self.messages.is_empty() && self.history_navigation.live_start.is_some()
+    }
+
+    pub(crate) fn is_detached_from_bottom(&self) -> bool {
+        if self.messages.is_empty() || self.history_navigation.live_start.is_some() {
+            return false;
+        }
+        let state = &self.conversation_list.state;
+        is_scroll_detached(
+            state.is_following_tail(),
+            state.is_scrolled_to_end(),
+            f32::from(state.max_offset_for_scrollbar().y),
+            f32::from(-state.scroll_px_offset_for_scrollbar().y),
+        )
     }
 
     pub(crate) fn reading_above_latest(&self) -> bool {
@@ -519,6 +618,9 @@ impl HiveApp {
             handoff_item_id: None,
             source_session_id: None,
             text,
+            timestamp_ms: None,
+            steered: false,
+            user_expanded: false,
             markdown_focus,
             tool: None,
             thinking: vec![],
@@ -769,8 +871,12 @@ impl HiveApp {
                 cx,
             );
             if let Some(rendered) = self.message_mut(message["toolCallId"].as_str().unwrap_or(&id)) {
+                let parsed_duration = extract_tool_duration_ms(message);
                 if let Some(tool) = &mut rendered.tool {
                     tool.output_windows = output_windows;
+                    if let Some(ms) = parsed_duration {
+                        tool.duration_ms = Some(ms);
+                    }
                 }
             }
             self.retain_tool_patch(message["toolCallId"].as_str().unwrap_or(&id), message, cx);
@@ -800,10 +906,20 @@ impl HiveApp {
             self.load_message_images(id.clone(), message, cx);
         }
         let rendered_id = if role == "toolResult" { message["toolCallId"].as_str().unwrap_or(&id) } else { &id };
+        let parsed_ts = parse_message_timestamp_ms(message);
+        let is_steered = message["steered"].as_bool() == Some(true);
         if let Some(rendered) = self.message_mut(rendered_id) {
             rendered.native_user_item_id = (message["rawBackendItem"]["type"] == "userMessage")
                 .then(|| message["rawBackendItem"]["id"].as_str().map(str::to_owned)).flatten();
             rendered.source_session_id = message["sourceSessionId"].as_str().map(str::to_owned);
+            if let Some(ts) = parsed_ts {
+                rendered.timestamp_ms = Some(ts);
+            }
+            let steered = is_steered && (rendered.explicit_user || rendered.role == "user");
+            if rendered.steered != steered {
+                rendered.steered = steered;
+                rendered.layout_revision += 1;
+            }
         }
         self.refresh_conversation_find(&id, cx);
     }
@@ -821,6 +937,11 @@ impl HiveApp {
                 tool.name = name;
                 tool.status = status;
                 tool.output_windows.clear();
+                if status != "执行中" && tool.duration_ms.is_none() {
+                    tool.duration_ms = tool
+                        .started_at
+                        .map(|started| started.elapsed().as_millis() as u64);
+                }
             } else {
                 message.tool = Some(ToolPresentation {
                     patch: None,
@@ -829,10 +950,29 @@ impl HiveApp {
                     expanded: false,
                     details_scroll: ScrollHandle::new(),
                     output_windows: Vec::new(),
+                    started_at: None,
+                    duration_ms: None,
                 });
             }
         }
         self.refresh_conversation_find(&id, cx);
+    }
+
+    pub(crate) fn finish_active_tools(&mut self, aborted: bool) {
+        let next_status = if aborted { "已中断" } else { "状态未知" };
+        for message in &mut self.messages {
+            if let Some(tool) = &mut message.tool
+                && tool.status == "执行中"
+            {
+                tool.status = next_status;
+                if tool.duration_ms.is_none() {
+                    tool.duration_ms = tool
+                        .started_at
+                        .map(|started| started.elapsed().as_millis() as u64);
+                }
+                message.layout_revision += 1;
+            }
+        }
     }
     pub(crate) fn upsert(
         &mut self,
@@ -988,7 +1128,20 @@ impl HiveApp {
                 message,
                 ..
             } => {
+                let target_id = if message["role"] == "toolResult" {
+                    message["toolCallId"]
+                        .as_str()
+                        .unwrap_or(&message_id)
+                        .to_owned()
+                } else {
+                    message_id.clone()
+                };
                 self.receive_message(message_id, &message, cx);
+                if let Some(rendered) = self.message_mut(&target_id)
+                    && rendered.timestamp_ms.is_none()
+                {
+                    rendered.timestamp_ms = Some(chrono::Utc::now().timestamp_millis());
+                }
             }
             PiEvent::ToolStart {
                 tool_call_id,
@@ -997,7 +1150,14 @@ impl HiveApp {
                 ..
             } => {
                 self.tool_inputs.insert(tool_call_id.clone(), args);
-                self.upsert_tool(tool_call_id, tool_name, "执行中", String::new(), cx);
+                self.upsert_tool(tool_call_id.clone(), tool_name, "执行中", String::new(), cx);
+                if let Some(tool) = self
+                    .message_mut(&tool_call_id)
+                    .and_then(|msg| msg.tool.as_mut())
+                {
+                    tool.started_at = Some(std::time::Instant::now());
+                    tool.duration_ms = None;
+                }
             }
             PiEvent::ToolUpdate {
                 tool_call_id,
@@ -1005,7 +1165,27 @@ impl HiveApp {
                 result,
                 ..
             } => {
-                self.upsert_tool(tool_call_id, tool_name, "执行中", message_text(&result), cx);
+                if is_elapsed_only_tool_update(&result) {
+                    let existing_text = self
+                        .message_mut(&tool_call_id)
+                        .map(|msg| msg.text.clone())
+                        .unwrap_or_default();
+                    self.upsert_tool(tool_call_id.clone(), tool_name, "执行中", existing_text, cx);
+                    if let Some(secs) = result["elapsedSeconds"].as_f64()
+                        && secs.is_finite()
+                        && secs >= 0.0
+                        && let Some(tool) = self
+                            .message_mut(&tool_call_id)
+                            .and_then(|msg| msg.tool.as_mut())
+                        && tool.started_at.is_none()
+                        && let Some(started) = std::time::Instant::now()
+                            .checked_sub(std::time::Duration::from_secs_f64(secs.min(86_400.0)))
+                    {
+                        tool.started_at = Some(started);
+                    }
+                } else {
+                    self.upsert_tool(tool_call_id, tool_name, "执行中", message_text(&result), cx);
+                }
             }
             PiEvent::ToolEnd {
                 tool_call_id,
@@ -1015,6 +1195,7 @@ impl HiveApp {
                 ..
             } => {
                 let call_id = tool_call_id.clone();
+                let explicit_duration = extract_tool_duration_ms(&result);
                 self.upsert_tool(
                     tool_call_id,
                     tool_name,
@@ -1022,12 +1203,20 @@ impl HiveApp {
                     message_text(&result),
                     cx,
                 );
+                if let Some(ms) = explicit_duration
+                    && let Some(tool) = self
+                        .message_mut(&call_id)
+                        .and_then(|msg| msg.tool.as_mut())
+                {
+                    tool.duration_ms = Some(ms);
+                }
                 self.retain_tool_patch(&call_id, &result, cx);
             }
             PiEvent::Settled { aborted, .. } => {
                 self.load_usage(cx);
                 self.refresh_pending_session_modes(cx);
                 self.finish_thinking(aborted);
+                self.finish_active_tools(aborted);
                 if aborted {
                     self.status = "已停止当前回复".into();
                 }
@@ -1215,6 +1404,104 @@ mod tests {
             unresolved_tool_calls(&ids, &history),
             ["interrupted".to_owned()].into_iter().collect()
         );
+    }
+
+    #[test]
+    fn parses_timestamps_durations_elapsed_updates_and_detach_threshold() {
+        use super::{
+            extract_tool_duration_ms, is_elapsed_only_tool_update, is_scroll_detached,
+            parse_message_timestamp_ms,
+        };
+        assert_eq!(parse_message_timestamp_ms(&json!({})), None);
+        assert_eq!(parse_message_timestamp_ms(&json!({"timestamp": 0})), None);
+        assert_eq!(
+            parse_message_timestamp_ms(&json!({"timestamp": 1763700000000_i64})),
+            Some(1763700000000)
+        );
+        assert!(
+            parse_message_timestamp_ms(&json!({"timestamp": "2026-11-21T05:00:00Z"})).is_some()
+        );
+
+        assert_eq!(extract_tool_duration_ms(&json!({})), None);
+        assert_eq!(extract_tool_duration_ms(&json!({"durationMs": 420})), Some(420));
+        assert_eq!(
+            extract_tool_duration_ms(&json!({
+                "rawBackendItem": {"startedAtMs": 1000, "completedAtMs": 2350}
+            })),
+            Some(1350)
+        );
+
+        assert!(is_elapsed_only_tool_update(&json!({"elapsedSeconds": 4})));
+        assert!(!is_elapsed_only_tool_update(&json!({
+            "elapsedSeconds": 4,
+            "content": [{"type": "text", "text": "ok"}]
+        })));
+
+        assert!(!is_scroll_detached(true, Some(false), 500.0, 100.0));
+        assert!(!is_scroll_detached(false, Some(true), 500.0, 100.0));
+        assert!(!is_scroll_detached(false, Some(false), 500.0, 460.0));
+        assert!(is_scroll_detached(false, Some(false), 500.0, 459.0));
+    }
+
+    #[gpui_kit::test]
+    fn cold_start_unknown_timestamp_does_not_fabricate_zero_seconds_on_stream_events(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
+        use crate::app::{HiveApp, init_test_globals};
+        use crate::protocol::PiEvent;
+        let _locale = init_test_globals(cx);
+        let (app, cx) = cx.add_window_view(|window, cx| HiveApp::new_for_test(window, cx));
+        app.update(cx, |app, _cx| {
+            let id = "s-cold".to_owned();
+            app.busy.insert(id.clone());
+            app.live_activity.mark_busy_unknown_start(&id);
+            assert!(app.live_activity.busy_started_at.get(&id).is_none());
+            assert!(app.live_activity.busy_unknown_start.contains(&id));
+
+            app.apply_activity(&PiEvent::State {
+                session_id: id.clone(),
+                sequence: 1,
+                busy: true,
+                pending: 0,
+                pending_reports: vec![],
+                pending_user_inputs: vec![],
+                completed_report_id: None,
+                delivery_failure: None,
+                handoff_delivery: None,
+            });
+            app.apply_activity(&PiEvent::AssistantDelta {
+                session_id: id.clone(),
+                sequence: 2,
+                message_id: "m1".into(),
+                kind: "text".into(),
+                content_index: 0,
+                delta: "hello".into(),
+            });
+            app.apply_activity(&PiEvent::ToolStart {
+                session_id: id.clone(),
+                sequence: 3,
+                tool_call_id: "t1".into(),
+                tool_name: "read".into(),
+                args: json!({"path": "README.md"}),
+            });
+            assert!(
+                app.live_activity.busy_started_at.get(&id).is_none(),
+                "streaming deltas during cold-started turn must not fabricate 0s"
+            );
+
+            app.apply_activity(&PiEvent::Settled {
+                session_id: id.clone(),
+                sequence: 4,
+                aborted: false,
+            });
+            assert!(!app.busy.contains(&id));
+            assert!(!app.live_activity.busy_unknown_start.contains(&id));
+            assert!(app.live_activity.busy_started_at.get(&id).is_none());
+
+            // Starting a fresh turn clears unknown-start guard and records a real start instant.
+            app.live_activity.mark_busy_from_user_send(&id);
+            assert!(app.live_activity.busy_started_at.get(&id).is_some());
+        });
     }
 }
 

@@ -780,6 +780,7 @@ mod tests {
 
     #[test]
     fn search_page_reads_body_and_incomplete_history_without_results() {
+        let _locale = crate::language::test_locale_guard();
         let page: Page = serde_json::from_value(json!({
             "matches": [], "total": 0,
             "incompleteHistory": [{"sessionId":"s1", "title":"Alpha", "message":"unreadable"}],

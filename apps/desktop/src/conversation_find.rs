@@ -125,6 +125,20 @@ fn matches(message: &Message, input: Option<&serde_json::Value>, query: &str) ->
 }
 
 impl HiveApp {
+    #[cfg(test)]
+    pub(crate) fn set_conversation_find_query_for_test(
+        &mut self,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(find) = &self.conversation_find {
+            let input = find.input.clone();
+            input.update(cx, |input, cx| input.set_value(query, window, cx));
+            self.change_conversation_find(window, cx);
+        }
+    }
+
     pub(crate) fn localize_find_placeholder(&self, window: &mut Window, cx: &mut App) {
         if let Some(find) = &self.conversation_find {
             find.input.update(cx, |input, cx| {
@@ -342,7 +356,7 @@ impl HiveApp {
         }
     }
 
-    fn reveal_conversation_match(&mut self, cx: &App) {
+    fn reveal_conversation_match(&mut self, cx: &mut Context<Self>) {
         let Some(find) = &self.conversation_find else {
             return;
         };
@@ -376,7 +390,7 @@ impl HiveApp {
 
     /// Only inspect the changed message while streaming. Rebuild the full set
     /// when the query changes, rather than scanning all text for every delta.
-    pub(crate) fn refresh_conversation_find(&mut self, id: &str, cx: &App) {
+    pub(crate) fn refresh_conversation_find(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(find) = &mut self.conversation_find else {
             return;
         };

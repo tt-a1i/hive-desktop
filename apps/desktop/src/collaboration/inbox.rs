@@ -2757,6 +2757,7 @@ mod tests {
 
     #[test]
     fn waiting_report_titles_distinguish_same_member_at_same_time_and_keep_exact_targets() {
+        let _locale = crate::language::test_locale_guard();
         let reports = [
             (
                 "11111111-0000-4000-8000-0000aaaabbbb",

@@ -302,6 +302,7 @@ impl HiveApp {
             self.removed_sessions.insert(id.clone());
             self.interactions.sessions.remove(id);
             self.busy.remove(id);
+            self.live_activity.unmark_busy(id);
             self.sidebar_failed_turns.remove(id);
             self.pending.remove(id);
             self.unread.remove(id);

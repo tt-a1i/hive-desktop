@@ -387,10 +387,78 @@ pub fn message(cx: &App) -> Option<String> {
 }
 
 #[cfg(test)]
+#[must_use = "bind the TestLocaleGuard (`let _locale = ...`) for the full duration of the test"]
+pub(crate) struct TestLocaleGuard {
+    restore_to: String,
+    _guard: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static LOCALE_LOCK_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+impl Drop for TestLocaleGuard {
+    fn drop(&mut self) {
+        if &*component::locale() != self.restore_to.as_str() {
+            component::set_locale(&self.restore_to);
+        }
+        LOCALE_LOCK_DEPTH.with(|depth| {
+            let current = depth.get();
+            debug_assert!(current > 0, "LOCALE_LOCK_DEPTH underflow");
+            depth.set(current.saturating_sub(1));
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_locale_guard() -> TestLocaleGuard {
+    use std::sync::{LazyLock, Mutex};
+
+    static TEST_LOCALE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| {
+        component::set_locale(Locale::Zh.component_locale());
+        Mutex::new(())
+    });
+
+    let depth = LOCALE_LOCK_DEPTH.with(|d| d.get());
+    let guard = if depth == 0 {
+        Some(
+            TEST_LOCALE_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
+    } else {
+        None
+    };
+    LOCALE_LOCK_DEPTH.with(|d| d.set(depth + 1));
+
+    let zh = Locale::Zh.component_locale();
+    let previous = component::locale().to_string();
+    let restore_to = if depth == 0 {
+        if previous != zh {
+            component::set_locale(zh);
+        }
+        zh.to_owned()
+    } else {
+        if previous != zh {
+            component::set_locale(zh);
+        }
+        previous
+    };
+
+    TestLocaleGuard {
+        restore_to,
+        _guard: guard,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn language_preferences_reopen_and_preserve_invalid_or_failed_targets() {
+        let _locale = test_locale_guard();
         let previous = component::locale().to_string();
         let connected = crate::app::Status::from("后台已连接");
         let disconnected = crate::app::Status::from("后台连接已断开");
@@ -417,6 +485,38 @@ mod tests {
         assert_eq!(tr("可插话"), "Steerable");
         assert_eq!(tr("待继续"), "Paused");
         assert_eq!(tr("正在提交消息…"), "Submitting message…");
+        for (zh, en) in [
+            ("正在运行命令", "Running command"),
+            ("运行命令", "Ran command"),
+            ("命令失败", "Command failed"),
+            ("正在读取文件", "Reading file"),
+            ("读取文件", "Read file"),
+            ("正在编辑文件", "Editing file"),
+            ("编辑文件", "Edited file"),
+            ("正在修改文件", "Updating files"),
+            ("修改文件", "Updated files"),
+            ("修改文件失败", "File update failed"),
+            ("正在搜索代码", "Searching files"),
+            ("搜索代码", "Searched"),
+            ("正在网页搜索", "Searching web"),
+            ("网页搜索", "Web search"),
+            ("正在调用工具", "Running tool"),
+            ("调用工具", "Ran tool"),
+            ("复制完整错误", "Copy full error"),
+            ("错误输出", "Error output"),
+            ("插话引导当前回合", "Steered active turn"),
+            ("展开全部", "Show more"),
+            ("展开全部消息", "Expand full message"),
+            ("收起长消息", "Collapse long message"),
+            ("本轮改动", "Turn changes"),
+            ("本轮工具改动汇总", "Combined tool changes from this turn"),
+            ("在 Git 中查看", "Open in Git"),
+            ("查看本轮补丁", "View turn patch"),
+            ("回到底部", "Scroll to bottom"),
+            ("回到底部最新消息", "Scroll to bottom of conversation"),
+        ] {
+            assert_eq!(tr(zh), en);
+        }
         assert_eq!(
             tr("连接已中断，任务保存结果尚未确认"),
             "Connection interrupted; task save was not confirmed"

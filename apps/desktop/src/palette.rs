@@ -2,11 +2,12 @@
 //! Tuned to T3 Code's cool-zinc light & obsidian-graphite dark hierarchy,
 //! paired with Beluga's crisp local-readiness surfaces.
 use gpui_kit::{
-    App, BoxShadow, Div, FontWeight, ParentElement as _, Rgba, SharedString, Styled as _,
-    assets::IconName as Glyph,
+    App, BoxShadow, Div, FontFeatures, FontWeight, ParentElement as _, Rgba, SharedString,
+    Styled as _, assets::IconName as Glyph,
     component::{Icon, Theme, button::ButtonCustomVariant, h_flex},
     div, hsla, point, px, rgb, rgba,
 };
+use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Monochrome brand silhouette traced from `apps/desktop/assets/hive-logo.png`,
@@ -630,6 +631,66 @@ pub fn format_session_time(
     }
 }
 
+pub fn tabular_nums() -> FontFeatures {
+    static FEATURES: OnceLock<FontFeatures> = OnceLock::new();
+    FEATURES
+        .get_or_init(|| FontFeatures(Arc::new(vec![("tnum".to_owned(), 1)])))
+        .clone()
+}
+
+pub fn lerp_rgba(a: Rgba, b: Rgba, t: f32) -> Rgba {
+    let t = t.clamp(0.0, 1.0);
+    Rgba {
+        r: a.r + (b.r - a.r) * t,
+        g: a.g + (b.g - a.g) * t,
+        b: a.b + (b.b - a.b) * t,
+        a: a.a + (b.a - a.a) * t,
+    }
+}
+
+pub fn format_message_time_display(
+    timestamp_ms: i64,
+    format: crate::general::SessionTimeFormat,
+    english: bool,
+) -> Option<String> {
+    format_session_time(timestamp_ms, format, english)
+}
+
+pub fn format_message_time_full(
+    timestamp_ms: i64,
+    format: crate::general::SessionTimeFormat,
+    english: bool,
+) -> Option<String> {
+    if timestamp_ms <= 0 {
+        return None;
+    }
+    let dt = chrono::DateTime::from_timestamp_millis(timestamp_ms)?
+        .with_timezone(&chrono::Local);
+    Some(match format {
+        crate::general::SessionTimeFormat::Clock12h => {
+            use chrono::Timelike as _;
+            let hour24 = dt.hour();
+            let h12 = match hour24 % 12 {
+                0 => 12,
+                h => h,
+            };
+            let date = dt.format("%Y-%m-%d");
+            let min_sec = dt.format("%M:%S");
+            if english {
+                let meridiem = if hour24 < 12 { "AM" } else { "PM" };
+                format!("{date} {h12}:{min_sec} {meridiem}")
+            } else {
+                let meridiem = if hour24 < 12 { "上午" } else { "下午" };
+                format!("{date} {meridiem}{h12}:{min_sec}")
+            }
+        }
+        crate::general::SessionTimeFormat::Relative
+        | crate::general::SessionTimeFormat::Clock24h => {
+            dt.format("%Y-%m-%d %H:%M:%S").to_string()
+        }
+    })
+}
+
 /// Formats filesystem paths cleanly for UI display (`~/code/proj` or `…/parent/proj` for deep paths).
 pub fn display_path(raw: &str) -> String {
     if let Some(home) = std::env::var_os("HOME")
@@ -812,5 +873,36 @@ mod tests {
         let svg = std::str::from_utf8(HIVE_LOGO_SVG).unwrap();
         assert!(svg.contains("viewBox=\"0 0 24 24\""));
         assert!(svg.contains("<path "));
+    }
+
+    #[test]
+    fn message_time_display_and_full_handle_invalid_and_valid_timestamps() {
+        assert_eq!(
+            format_message_time_display(0, crate::general::SessionTimeFormat::Relative, true),
+            None
+        );
+        assert_eq!(
+            format_message_time_full(-100, crate::general::SessionTimeFormat::Clock24h, false),
+            None
+        );
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        assert_eq!(
+            format_message_time_display(now_ms, crate::general::SessionTimeFormat::Relative, false),
+            Some("刚刚".into())
+        );
+        let full_24 =
+            format_message_time_full(now_ms, crate::general::SessionTimeFormat::Clock24h, true)
+                .unwrap();
+        assert_eq!(full_24.len(), 19);
+        let full_12_zh =
+            format_message_time_full(now_ms, crate::general::SessionTimeFormat::Clock12h, false)
+                .unwrap();
+        assert!(full_12_zh.contains("上午") || full_12_zh.contains("下午"));
+        let mixed = lerp_rgba(rgb(0x000000), rgb(0xffffff), 0.5);
+        assert!((mixed.r - 0.5).abs() < 0.01);
+        assert_eq!(tabular_nums().tag_value_list(), &[("tnum".to_owned(), 1)]);
     }
 }

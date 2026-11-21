@@ -1,7 +1,7 @@
 import type { DeliveryPresentation } from '../delivery-presentation.js';
 
 export type CodexItem = { id: string; type: string; [key: string]: unknown };
-export type CodexDelivery = { itemId?: string; turnId: string; deliveryId: string; presentation: DeliveryPresentation };
+export type CodexDelivery = { itemId?: string; turnId: string; deliveryId: string; presentation: DeliveryPresentation; steered?: boolean };
 export type CodexMetadata = { version: 1; context: { text: string; customType: string }[]; deliveries: CodexDelivery[]; completed: string[]; inheritedSources?: { itemId: string; sourceSessionId: string }[]; inheritedDeliveries?: CodexDelivery[] };
 export type CodexTurn = { id: string; status: string; error?: { message: string } | null; items: CodexItem[] };
 export type CodexThread = { reasoningEffort?: string | null; model?: string; id: string; path: string | null; historyMode: 'legacy' | 'paginated'; turns: CodexTurn[] };
@@ -70,7 +70,8 @@ export function normalizeCodexItem(item: CodexItem, delivery?: CodexDelivery, so
           ? {type:'image',mimeType:part.url.slice(5,part.url.indexOf(';')),data:part.url.slice(part.url.indexOf(',')+1)} : part) : [];
       if (!delivery) return { role: 'user', content, timestamp, rawBackendItem, ...provenance };
       const presentation = { ...delivery.presentation, deliveryId: delivery.deliveryId };
-      return { role: 'custom', customType: 'hive-delivery', display: false, content, timestamp, rawBackendItem,
+      return { role: 'custom', customType: 'hive-delivery', display: false, content, timestamp,
+        ...(delivery.steered === true && { steered: true }), rawBackendItem,
         details: presentation, presentation, ...provenance };
     }
     case 'agentMessage': case 'plan':

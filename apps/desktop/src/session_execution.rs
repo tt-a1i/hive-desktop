@@ -1044,6 +1044,7 @@ mod tests {
     }
     #[test]
     fn unnamed_worker_title_and_legacy_recovery_warning_remain_explicit() {
+        let _locale = crate::language::test_locale_guard();
         let mut worker:Session=serde_json::from_value(json!({"id":"A","workspaceId":"w","title":"新会话","originAgentId":"worker","identityState":"known"})).unwrap();
         assert_eq!(
             crate::view::untitled_session_label(&worker),

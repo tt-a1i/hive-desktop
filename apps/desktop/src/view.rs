@@ -412,11 +412,39 @@ impl HiveApp {
         let copy_id = message.id.clone();
         let reply_id = message.id.clone();
         let delivery = message.delivery.is_some();
+        let is_user = message.role == "user";
+        let time_format = crate::general::current(cx).session_time_format;
+        let eng = crate::language::english();
+        let time_label = message.timestamp_ms.and_then(|ts| {
+            let display = crate::palette::format_message_time_display(ts, time_format, eng)?;
+            let full = crate::palette::format_message_time_full(ts, time_format, eng);
+            Some((display, full))
+        });
+        let timestamp_chip = time_label.map(|(display, full)| {
+            div()
+                .id(("msg-time", index))
+                .flex_shrink_0()
+                .px_1()
+                .text_size(px(11.))
+                .font_features(crate::palette::tabular_nums())
+                .text_color(Color::Muted.get(cx))
+                .when_some(full, |el, exact| {
+                    el.tooltip(move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(exact.clone()).build(window, cx)
+                    })
+                })
+                .child(display)
+        });
         h_flex()
             .flex_wrap()
             .items_center()
             .gap_0p5()
-            .when(message.role == "user", |row| row.justify_end())
+            .when(is_user, |row| {
+                row.justify_end()
+                    .when_some(timestamp_chip.filter(|_| is_user), |row, chip| {
+                        row.child(chip)
+                    })
+            })
             .when(delivery || !message.text.is_empty(), |row| {
                 let copy_key = format!("msg:{copy_id}");
                 let copied = self.is_copied(&copy_key);
@@ -563,6 +591,29 @@ impl HiveApp {
                     )
                 },
             )
+            .when(!is_user, |row| {
+                let time_chip = message.timestamp_ms.and_then(|ts| {
+                    let display = crate::palette::format_message_time_display(ts, time_format, eng)?;
+                    let full = crate::palette::format_message_time_full(ts, time_format, eng);
+                    Some(
+                        div()
+                            .id(("msg-time-trailing", index))
+                            .flex_shrink_0()
+                            .px_1()
+                            .text_size(px(11.))
+                            .font_features(crate::palette::tabular_nums())
+                            .text_color(Color::Muted.get(cx))
+                            .when_some(full, |el, exact| {
+                                el.tooltip(move |window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(exact.clone())
+                                        .build(window, cx)
+                                })
+                            })
+                            .child(display),
+                    )
+                });
+                row.when_some(time_chip, |row, chip| row.child(chip))
+            })
     }
 
     pub(crate) fn dispatch_link(
@@ -1413,6 +1464,7 @@ impl Render for HiveApp {
             && !self.closing;
         self.composer_can_submit = can_submit || can_pick_project_to_send;
         self.sync_composer_enter_mode(cx);
+        self.sync_live_activity(window, cx);
         self.sync_conversation_list(cx);
         let welcome = self.showing_welcome_guide
             || (self
@@ -1798,6 +1850,37 @@ impl Render for HiveApp {
                                                         && (!self.status.is_background_connected()
                                                             || running),
                                                     |bar| {
+                                                        let topbar_running = running
+                                                            && self
+                                                                .status
+                                                                .is_background_connected();
+                                                        let topbar_dot = self
+                                                            .live_activity
+                                                            .pulse_dots
+                                                            .get("topbar:dot")
+                                                            .cloned();
+                                                        let topbar_shine = topbar_running
+                                                            .then(|| {
+                                                                self.live_activity
+                                                                    .shine_labels
+                                                                    .get("topbar:label")
+                                                                    .cloned()
+                                                            })
+                                                            .flatten();
+                                                        let topbar_elapsed = topbar_running
+                                                            .then(|| {
+                                                                self.session.as_ref().and_then(|s| {
+                                                                    self.live_activity
+                                                                        .busy_started_at
+                                                                        .get(&s.id)
+                                                                        .map(|started| {
+                                                                            crate::live_activity::format_elapsed_seconds(
+                                                                                started.elapsed().as_secs(),
+                                                                            )
+                                                                        })
+                                                                })
+                                                            })
+                                                            .flatten();
                                                         bar.child(
                                                             h_flex()
                                                                 .flex_shrink_0()
@@ -1807,40 +1890,76 @@ impl Render for HiveApp {
                                                                 .py_0p5()
                                                                 .rounded_full()
                                                                 .bg(Color::Inset.get(cx))
-                                                                .child(
-                                                                    div()
-                                                                        .w(px(6.))
-                                                                        .h(px(6.))
-                                                                        .rounded_full()
-                                                                        .bg(Color::Accent.get(cx)),
+                                                                .when_some(topbar_dot, |pill, dot| {
+                                                                    pill.child(dot)
+                                                                })
+                                                                .when(
+                                                                    !self
+                                                                        .live_activity
+                                                                        .pulse_dots
+                                                                        .contains_key("topbar:dot"),
+                                                                    |pill| {
+                                                                        pill.child(
+                                                                            div()
+                                                                                .w(px(6.))
+                                                                                .h(px(6.))
+                                                                                .rounded_full()
+                                                                                .bg(Color::Accent.get(cx)),
+                                                                        )
+                                                                    },
                                                                 )
-                                                                .child(
-                                                                    div()
-                                                                        .flex_shrink_0()
-                                                                        .text_xs()
-                                                                        .font_weight(
-                                                                            FontWeight::MEDIUM,
+                                                                .when_some(
+                                                                    topbar_shine,
+                                                                    |pill, label| pill.child(label),
+                                                                )
+                                                                .when(
+                                                                    !topbar_running
+                                                                        || !self
+                                                                            .live_activity
+                                                                            .shine_labels
+                                                                            .contains_key("topbar:label"),
+                                                                    |pill| {
+                                                                        pill.child(
+                                                                            div()
+                                                                                .flex_shrink_0()
+                                                                                .text_xs()
+                                                                                .font_weight(
+                                                                                    FontWeight::MEDIUM,
+                                                                                )
+                                                                                .text_color(
+                                                                                    Color::Secondary.get(cx),
+                                                                                )
+                                                                                .child(
+                                                                                    if topbar_running {
+                                                                                        tr("回复中").to_string()
+                                                                                    } else {
+                                                                                        self.status.text()
+                                                                                    },
+                                                                                ),
                                                                         )
-                                                                        .text_color(
-                                                                            Color::Secondary.get(cx),
+                                                                    },
+                                                                )
+                                                                .when_some(
+                                                                    topbar_elapsed,
+                                                                    |pill, elapsed| {
+                                                                        pill.child(
+                                                                            div()
+                                                                                .flex_shrink_0()
+                                                                                .text_xs()
+                                                                                .font_features(
+                                                                                    crate::palette::tabular_nums(),
+                                                                                )
+                                                                                .text_color(
+                                                                                    Color::Muted.get(cx),
+                                                                                )
+                                                                                .child(format!("· {elapsed}")),
                                                                         )
-                                                                        .child(
-                                                                            if running
-                                                                                && self
-                                                                                    .status
-                                                                                    .is_background_connected()
-                                                                            {
-                                                                                tr("回复中")
-                                                                                    .to_string()
-                                                                            } else {
-                                                                                self.status.text()
-                                                                            },
-                                                                        ),
+                                                                    },
                                                                 ),
                                                         )
                                                     },
                                                 )
-                                                .when(self.reading_above_latest(), |bar| {
+                                                .when(self.has_unloaded_newer_history(), |bar| {
                                                     bar.child(
                                                         Button::new("jump-to-latest")
                                                             .custom(

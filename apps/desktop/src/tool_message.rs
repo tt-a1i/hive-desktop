@@ -52,11 +52,28 @@ fn input_summary(args: &serde_json::Value) -> Option<String> {
     )
 }
 
-fn tool_glyph(name: &str) -> Glyph {
+fn tool_glyph(name: &str, failed: bool) -> Glyph {
+    if failed {
+        return Glyph::CircleAlert;
+    }
     let lower = name.to_ascii_lowercase();
-    if lower.contains("read") || lower.contains("file") || lower.contains("view") {
+    if lower.contains("web") || lower.contains("fetch") {
+        Glyph::Globe
+    } else if lower.contains("mcp") || lower.contains("dynamic") {
+        Glyph::Wrench
+    } else if lower.contains("edit")
+        || lower.contains("write")
+        || lower.contains("patch")
+        || lower.contains("filechange")
+    {
+        Glyph::SquarePen
+    } else if lower.contains("read") || lower.contains("file") || lower.contains("view") {
         Glyph::FileText
-    } else if lower.contains("search") || lower.contains("grep") || lower.contains("glob") {
+    } else if lower.contains("search")
+        || lower.contains("grep")
+        || lower.contains("glob")
+        || lower.contains("find")
+    {
         Glyph::Search
     } else if lower.contains("bash")
         || lower.contains("exec")
@@ -65,11 +82,91 @@ fn tool_glyph(name: &str) -> Glyph {
         || lower.contains("terminal")
     {
         Glyph::SquareTerminal
-    } else if lower.contains("edit") || lower.contains("write") || lower.contains("patch") {
-        Glyph::SquarePen
+    } else if lower.contains("tool") {
+        Glyph::Wrench
     } else {
         Glyph::Cpu
     }
+}
+
+pub(crate) fn tool_action_label(
+    name: &str,
+    status: &str,
+    args: Option<&serde_json::Value>,
+) -> String {
+    let lower = name.to_ascii_lowercase();
+    let in_progress = status == "执行中";
+    let failed = status == "失败";
+    if lower.contains("bash")
+        || lower.contains("exec")
+        || lower.contains("command")
+        || lower.contains("shell")
+        || lower.contains("terminal")
+    {
+        return tr(if in_progress {
+            "正在运行命令"
+        } else if failed {
+            "命令失败"
+        } else {
+            "运行命令"
+        })
+        .to_owned();
+    }
+    if lower == "filechange" {
+        let count = args
+            .and_then(|value| value["changes"].as_array())
+            .map_or(0, |items| items.len());
+        if count > 1 {
+            return if in_progress {
+                if english() {
+                    format!("Updating {count} files")
+                } else {
+                    format!("正在修改 {count} 个文件")
+                }
+            } else if failed {
+                if english() {
+                    format!("Failed to update {count} files")
+                } else {
+                    format!("修改 {count} 个文件失败")
+                }
+            } else if english() {
+                format!("Updated {count} files")
+            } else {
+                format!("修改 {count} 个文件")
+            };
+        }
+        return tr(if in_progress {
+            "正在修改文件"
+        } else if failed {
+            "修改文件失败"
+        } else {
+            "修改文件"
+        })
+        .to_owned();
+    }
+    if lower.contains("web") || lower.contains("fetch") {
+        return tr(if in_progress { "正在网页搜索" } else { "网页搜索" }).to_owned();
+    }
+    if lower.contains("edit") || lower.contains("write") || lower.contains("patch") {
+        return tr(if in_progress { "正在编辑文件" } else { "编辑文件" }).to_owned();
+    }
+    if lower.contains("read") || lower.contains("view") {
+        return tr(if in_progress { "正在读取文件" } else { "读取文件" }).to_owned();
+    }
+    if lower.contains("search")
+        || lower.contains("grep")
+        || lower.contains("glob")
+        || lower.contains("find")
+    {
+        return tr(if in_progress { "正在搜索代码" } else { "搜索代码" }).to_owned();
+    }
+    if name.trim().is_empty() || name == "工具" {
+        return tr(if in_progress { "正在调用工具" } else { "调用工具" }).to_owned();
+    }
+    if let Some(rest) = name.strip_prefix("mcp__") {
+        return rest.replace("__", " / ");
+    }
+    name.to_owned()
 }
 
 const TOOL_OUTPUT_SLICE_BYTES: u64 = 32_768;
@@ -372,11 +469,17 @@ impl HiveApp {
                 .iter()
                 .any(|m| m.tool.as_ref().is_some_and(|t| t.expanded));
         let count = messages.len();
+        let known_durations: Vec<u64> = messages
+            .iter()
+            .filter_map(|m| m.tool.as_ref()?.duration_ms)
+            .collect();
+        let group_duration = (!known_durations.is_empty())
+            .then(|| crate::live_activity::format_duration_ms(known_durations.iter().sum()));
         v_flex().min_w_0().child(
             Button::new(("tool-group", start))
                 .custom(crate::palette::quiet_icon_variant(cx))
                 .compact()
-                .h(px(22.))
+                .h(px(24.))
                 .px_1p5()
                 .rounded_md()
                 .w_full()
@@ -428,6 +531,17 @@ impl HiveApp {
                                     format!("· {count} 项已完成")
                                 }),
                         )
+                        .child(div().flex_1())
+                        .when_some(group_duration, |row, dur| {
+                            row.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_size(px(11.))
+                                    .font_features(crate::palette::tabular_nums())
+                                    .text_color(Color::Muted.get(cx).opacity(0.8))
+                                    .child(dur),
+                            )
+                        })
                         .child(
                             Icon::new(if expanded {
                                 Glyph::ChevronDown
@@ -436,8 +550,7 @@ impl HiveApp {
                             })
                             .size(px(11.))
                             .text_color(Color::Muted.get(cx).opacity(0.65)),
-                        )
-                        .child(div().flex_1()),
+                        ),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.prepare_conversation_expansion(&key);
@@ -471,6 +584,7 @@ impl HiveApp {
     ) -> impl IntoElement {
         let id = message.id.clone();
         let toggle_id = id.clone();
+        let expand_err_id = id.clone();
         let action = if tool.expanded {
             tr("收起")
         } else {
@@ -480,6 +594,18 @@ impl HiveApp {
         let summary = input.and_then(input_summary);
         let failed = tool.status == "失败";
         let in_progress = tool.status == "执行中";
+        let action_label = tool_action_label(&tool.name, tool.status, input);
+        let shine_key = format!("tool:{id}");
+        let shine_label = in_progress
+            .then(|| self.live_activity.shine_labels.get(&shine_key).cloned())
+            .flatten();
+        let has_shine = shine_label.is_some();
+        let duration_text = if in_progress {
+            tool.started_at
+                .map(|started| crate::live_activity::format_elapsed_seconds(started.elapsed().as_secs()))
+        } else {
+            tool.duration_ms.map(crate::live_activity::format_duration_ms)
+        };
         let status_color = match tool.status {
             "失败" => Color::Error.get(cx),
             "完成" => Color::Muted.get(cx),
@@ -506,7 +632,7 @@ impl HiveApp {
                 Button::new(("tool-details", index))
                     .custom(crate::palette::quiet_icon_variant(cx))
                     .compact()
-                    .h(px(22.))
+                    .h(px(24.))
                     .px_1p5()
                     .rounded_md()
                     .w_full()
@@ -534,7 +660,7 @@ impl HiveApp {
                             .items_center()
                             .gap_1p5()
                             .child(
-                                Icon::new(tool_glyph(&tool.name))
+                                Icon::new(tool_glyph(&tool.name, failed))
                                     .flex_shrink_0()
                                     .size(px(12.5))
                                     .text_color(if failed {
@@ -545,18 +671,23 @@ impl HiveApp {
                                         Color::Muted.get(cx)
                                     }),
                             )
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_xs()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(if tool.expanded || in_progress {
-                                        Color::Text.get(cx)
-                                    } else {
-                                        Color::Secondary.get(cx)
-                                    })
-                                    .child(tool.name.clone()),
-                            )
+                            .when_some(shine_label, |row, entity| row.child(entity))
+                            .when(!has_shine, |row| {
+                                row.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_xs()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(if failed {
+                                            Color::Error.get(cx)
+                                        } else if tool.expanded || in_progress {
+                                            Color::Text.get(cx)
+                                        } else {
+                                            Color::Secondary.get(cx)
+                                        })
+                                        .child(action_label),
+                                )
+                            })
                             .child(
                                 div()
                                     .min_w_0()
@@ -569,6 +700,20 @@ impl HiveApp {
                                     .text_color(Color::Muted.get(cx).opacity(0.85))
                                     .child(summary.unwrap_or_default()),
                             )
+                            .when_some(duration_text, |row, dur| {
+                                row.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(11.))
+                                        .font_features(crate::palette::tabular_nums())
+                                        .text_color(if in_progress {
+                                            Color::Accent.get(cx)
+                                        } else {
+                                            Color::Muted.get(cx).opacity(0.8)
+                                        })
+                                        .child(dur),
+                                )
+                            })
                             .when(tool.status != "完成", |row| {
                                 row.child(
                                     div()
@@ -596,14 +741,16 @@ impl HiveApp {
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.prepare_conversation_expansion(&toggle_id);
-                        if let Some(tool) = this
+                        if let Some(msg) = this
                             .messages
                             .iter_mut()
                             .find(|msg| msg.id == toggle_id)
-                            .and_then(|msg| msg.tool.as_mut())
                         {
-                            tool.expanded = !tool.expanded;
-                            cx.notify();
+                            if let Some(tool) = msg.tool.as_mut() {
+                                tool.expanded = !tool.expanded;
+                                msg.layout_revision += 1;
+                                cx.notify();
+                            }
                         }
                     })),
             )
@@ -678,7 +825,11 @@ impl HiveApp {
                                 .rounded_lg()
                                 .bg(Color::Card.get(cx))
                                 .border_1()
-                                .border_color(Color::Divider.get(cx))
+                                .border_color(if failed {
+                                    Color::Error.get(cx).opacity(0.45)
+                                } else {
+                                    Color::Divider.get(cx)
+                                })
                                 .overflow_hidden()
                                 .when(has_header_bar, |card| {
                                     card.child(
@@ -899,6 +1050,9 @@ impl HiveApp {
                                         )
                                     })
                                     .when(!text.is_empty(), |card| {
+                                        let err_copy_key = format!("tool-err:{id}");
+                                        let err_copied = self.is_copied(&err_copy_key);
+                                        let err_text = text.clone();
                                         card.child(
                                             v_flex()
                                                 .min_w_0()
@@ -923,10 +1077,54 @@ impl HiveApp {
                                                                 } else {
                                                                     Color::Muted.get(cx)
                                                                 })
-                                                                .child(tr("输出")),
+                                                                .child(tr(if failed {
+                                                                    "错误输出"
+                                                                } else {
+                                                                    "输出"
+                                                                })),
                                                         )
+                                                        .when(failed, |row| {
+                                                            row.child(
+                                                                Button::new(("copy-tool-error", index))
+                                                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                                                    .compact()
+                                                                    .xsmall()
+                                                                    .h(px(22.))
+                                                                    .px_2()
+                                                                    .rounded_md()
+                                                                    .icon(if err_copied {
+                                                                        Glyph::Check
+                                                                    } else {
+                                                                        Glyph::Copy
+                                                                    })
+                                                                    .label(if err_copied {
+                                                                        tr("已复制")
+                                                                    } else {
+                                                                        tr("复制完整错误")
+                                                                    })
+                                                                    .accessibility_label(tr("复制完整错误"))
+                                                                    .tooltip(if err_copied {
+                                                                        tr("已复制")
+                                                                    } else {
+                                                                        tr("复制错误详情")
+                                                                    })
+                                                                    .on_click(cx.listener(
+                                                                        move |this, _, _, cx| {
+                                                                            cx.write_to_clipboard(
+                                                                                ClipboardItem::new_string(
+                                                                                    err_text.clone(),
+                                                                                ),
+                                                                            );
+                                                                            this.mark_copied(
+                                                                                err_copy_key.clone(),
+                                                                                cx,
+                                                                            );
+                                                                        },
+                                                                    )),
+                                                            )
+                                                        })
                                                         .when_some(
-                                                            (!has_header_bar && !has_args)
+                                                            (!failed && !has_header_bar && !has_args)
                                                                 .then(|| top_copy_button.take())
                                                                 .flatten(),
                                                             |row, btn| row.child(btn),
@@ -940,7 +1138,7 @@ impl HiveApp {
                                                         .role(Role::Label)
                                                         .aria_value(format!(
                                                             "{}: {text}",
-                                                            tr("输出")
+                                                            tr(if failed { "错误输出" } else { "输出" })
                                                         ))
                                                         .min_w_0()
                                                         .font_family(
@@ -977,20 +1175,87 @@ impl HiveApp {
                         ),
                 )
             })
-            .when(failed && !tool.expanded, |view| {
+            .when(failed && !tool.expanded && !message.text.trim().is_empty(), |view| {
+                let err_preview: String = message
+                    .text
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .unwrap_or(message.text.trim())
+                    .chars()
+                    .take(160)
+                    .collect();
+                let copy_key = format!("tool-err:{id}");
+                let copied = self.is_copied(&copy_key);
+                let full_err = message.text.clone();
                 view.child(
-                    div()
+                    h_flex()
                         .ml(px(12.))
                         .pl_2p5()
-                        .pr_2()
+                        .pr_1p5()
                         .py_1()
+                        .gap_1p5()
+                        .items_center()
                         .border_l_2()
-                        .border_color(Color::Error.get(cx).opacity(0.5))
-                        .bg(Color::ErrorSurface.get(cx).opacity(0.6))
+                        .border_color(Color::Error.get(cx).opacity(0.55))
+                        .bg(Color::ErrorSurface.get(cx).opacity(0.65))
                         .rounded_r_md()
-                        .text_xs()
-                        .text_color(Color::Error.get(cx))
-                        .child(message.text.chars().take(160).collect::<String>()),
+                        .child(
+                            h_flex()
+                                .id(("tool-error-preview", index))
+                                .flex_1()
+                                .min_w_0()
+                                .items_center()
+                                .gap_1p5()
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.prepare_conversation_expansion(&expand_err_id);
+                                    if let Some(msg) = this
+                                        .messages
+                                        .iter_mut()
+                                        .find(|msg| msg.id == expand_err_id)
+                                    {
+                                        if let Some(tool) = msg.tool.as_mut() {
+                                            tool.expanded = true;
+                                            msg.layout_revision += 1;
+                                            cx.notify();
+                                        }
+                                    }
+                                }))
+                                .child(
+                                    Icon::new(Glyph::CircleAlert)
+                                        .flex_shrink_0()
+                                        .size(px(12.))
+                                        .text_color(Color::Error.get(cx)),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_xs()
+                                        .text_color(Color::Error.get(cx))
+                                        .child(err_preview),
+                                ),
+                        )
+                        .child(
+                            Button::new(("copy-tool-err-collapsed", index))
+                                .custom(crate::palette::subtle_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(20.))
+                                .w(px(20.))
+                                .rounded_sm()
+                                .icon(if copied { Glyph::Check } else { Glyph::Copy })
+                                .tooltip(if copied { tr("已复制") } else { tr("复制完整错误") })
+                                .accessibility_label(tr("复制错误详情"))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        full_err.clone(),
+                                    ));
+                                    this.mark_copied(copy_key.clone(), cx);
+                                })),
+                        ),
                 )
             })
     }
@@ -1178,7 +1443,8 @@ mod tool_output_tests {
 
 #[cfg(test)]
 mod status_tests {
-    use super::result_status;
+    use super::{result_status, tool_action_label, tool_glyph};
+    use gpui_kit::assets::IconName as Glyph;
     use serde_json::json;
     #[test]
     fn terminal_statuses_do_not_turn_rejections_or_interruptions_into_success() {
@@ -1199,5 +1465,36 @@ mod status_tests {
         );
         assert_eq!(result_status(&json!({"isError":true}), false), "失败");
         assert_eq!(result_status(&json!({"content":[]}), false), "完成");
+    }
+
+    #[test]
+    fn tool_glyph_and_action_labels_reflect_semantics_and_failure() {
+        let _locale = crate::language::test_locale_guard();
+        assert_eq!(tool_glyph("commandExecution", true), Glyph::CircleAlert);
+        assert_eq!(tool_glyph("webSearch", false), Glyph::Globe);
+        assert_eq!(tool_glyph("mcp__docs__search", false), Glyph::Wrench);
+        assert_eq!(tool_glyph("fileChange", false), Glyph::SquarePen);
+        assert_eq!(tool_glyph("read", false), Glyph::FileText);
+
+        assert_eq!(
+            tool_action_label("commandExecution", "执行中", None),
+            "正在运行命令"
+        );
+        assert_eq!(
+            tool_action_label("commandExecution", "失败", None),
+            "命令失败"
+        );
+        assert_eq!(tool_action_label("read", "完成", None), "读取文件");
+        assert_eq!(tool_action_label("webSearch", "完成", None), "网页搜索");
+        assert_eq!(
+            tool_action_label("fileChange", "完成", Some(&json!({"changes": [{}, {}]}))),
+            "修改 2 个文件"
+        );
+        assert_eq!(tool_action_label("fileChange", "失败", None), "修改文件失败");
+        assert_eq!(
+            tool_action_label("fileChange", "失败", Some(&json!({"changes": [{}, {}]}))),
+            "修改 2 个文件失败"
+        );
+        assert_eq!(tool_action_label("mcp__fs__stat", "完成", None), "fs / stat");
     }
 }

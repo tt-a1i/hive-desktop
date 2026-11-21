@@ -93,6 +93,7 @@ impl HiveApp {
                         .delivery
                         .as_ref()
                         .is_some_and(|delivery| delivery.expanded)
+                    || message.user_expanded
             })
             .map(|message| message.id.clone())
             .collect();
@@ -131,6 +132,9 @@ impl HiveApp {
                 }
                 if let Some(delivery) = &mut message.delivery {
                     delivery.expanded = true;
+                }
+                if message.role == "user" && message.delivery.is_none() {
+                    message.user_expanded = true;
                 }
             }
         }
@@ -1336,8 +1340,18 @@ impl HiveApp {
                         this.status = "后台已连接".into();
                         if open.busy {
                             this.busy.insert(id.clone());
+                            if let Some(ts) = open
+                                .active_message
+                                .as_ref()
+                                .and_then(|active| crate::conversation::parse_message_timestamp_ms(&active.message))
+                            {
+                                this.live_activity.mark_busy_with_timestamp(&id, ts);
+                            } else {
+                                this.live_activity.mark_busy_unknown_start(&id);
+                            }
                         } else {
                             this.busy.remove(&id);
+                            this.live_activity.unmark_busy(&id);
                         }
                         this.sync_interactions(&id, open.interactions);
                         this.pending.insert(id.clone(), open.pending);
@@ -1582,8 +1596,18 @@ impl HiveApp {
                     }
                     if open.busy {
                         this.busy.insert(id.clone());
+                        if let Some(ts) = open
+                            .active_message
+                            .as_ref()
+                            .and_then(|active| crate::conversation::parse_message_timestamp_ms(&active.message))
+                        {
+                            this.live_activity.mark_busy_with_timestamp(&id, ts);
+                        } else {
+                            this.live_activity.mark_busy_unknown_start(&id);
+                        }
                     } else {
                         this.busy.remove(&id);
+                        this.live_activity.unmark_busy(&id);
                     }
                     if let Some(item) = this.sessions.iter_mut().find(|item| item.id == id) {
                         *item = open.session.clone();

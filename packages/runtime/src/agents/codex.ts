@@ -57,7 +57,7 @@ export interface CodexSessionHandle extends PiSessionHandle {
 }
 type Model = { id: string; model: string; displayName: string; hidden: boolean; supportedReasoningEfforts?: {reasoningEffort:string;description:string}[] };
 type ThreadLaunchReceipt = CodexThreadResponse & CodexThreadModeReceipt & {reasoningEffort?: string | null};
-type InFlightDelivery = { id: string; text: string; presentation: DeliveryPresentation; itemId?: string; accepted?: boolean };
+type InFlightDelivery = { id: string; text: string; presentation: DeliveryPresentation; itemId?: string; accepted?: boolean; steered?: true };
 type Run = { nativeUserItems: Map<string,string|undefined>; appended: InFlightDelivery[]; requests: Set<Promise<unknown>>; tools: Set<Promise<unknown>>; nativeTools: Map<string, { done: Promise<void>; complete(): void }>; interrupting?: Promise<void>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: InFlightDelivery;
   terminal: Promise<CodexTurn>; resolve: (turn: CodexTurn) => void; reject: (error: Error) => void; done: Promise<void>; error?: Error };
 
@@ -88,13 +88,13 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     if (!run || run.turnId !== turnId) return;
     const primary = run.delivery;
     if (primary && !metadata.deliveries.some(entry => entry.turnId === turnId && entry.deliveryId === primary.id)) {
-      persist({ ...metadata, deliveries: [...metadata.deliveries, { turnId, deliveryId: primary.id, presentation: primary.presentation }] });
+      persist({ ...metadata, deliveries: [...metadata.deliveries, { turnId, deliveryId: primary.id, presentation: primary.presentation, ...(primary.steered && { steered: true }) }] });
     }
     if (item?.type !== 'userMessage' || !Array.isArray(item.content)) return;
     const text = codexInputText(item);
     const delivery = [primary, ...run.appended.filter(entry => entry.accepted)].find(entry => entry && !entry.itemId && entry.text === text);
     if (!delivery || metadata.deliveries.some(entry => entry.turnId === turnId && entry.itemId === item.id)) return;
-    const next = { turnId, itemId: item.id, deliveryId: delivery.id, presentation: delivery.presentation };
+    const next = { turnId, itemId: item.id, deliveryId: delivery.id, presentation: delivery.presentation, ...(delivery.steered && { steered: true }) };
     persist({ ...metadata, deliveries: [...metadata.deliveries.filter(entry => entry.deliveryId !== delivery.id || entry.turnId !== turnId), next] });
     delivery.itemId = item.id;
   };
@@ -470,7 +470,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       if (disposed || !run?.turnId || run.terminalComplete || run.cancelled || run.error
         || (input.expectedTurnId !== undefined && steeringTurn() !== input.expectedTurnId)
         || run.appended.some(entry => entry.text === text)) return false;
-      const delivery: InFlightDelivery = { id: input.deliveryId, text, presentation: input.presentation };
+      const delivery: InFlightDelivery = { id: input.deliveryId, text, presentation: input.presentation, steered: true };
       const nativeItemsBefore = new Set([...run.nativeUserItems.keys(),...projection!.current().filter(entry => entry.turnId === run.turnId).map(entry => entry.item.id)]);
       run.appended.push(delivery);
       const request = transport.sendRequest<{turnId: string}>('turn/steer', {

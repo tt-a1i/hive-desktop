@@ -42,6 +42,9 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Grap
 webview2-com = { version = "=0.39.1", optional = true }
 windows-core = { version = "=0.62.2", optional = true }
 
+[dev-dependencies]
+gpui-pre = { path = "../../vendor/gpui-pre", features = ["test-support"] }
+
 [features]
 default = ["desktop"]
 desktop = ["dep:chrono", "dep:gpui-kit", "dep:hive-terminal", "dep:markdown", "dep:tempfile", "dep:unicode-ident", "dep:wry", "dep:webview2-com", "dep:windows-core"]

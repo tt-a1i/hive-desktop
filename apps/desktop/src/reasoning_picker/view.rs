@@ -241,6 +241,7 @@ mod tests {
 
     #[test]
     fn reasoning_level_labels_are_localized() {
+        let _locale = crate::language::test_locale_guard();
         for level in [
             "native", "default", "max", "ultra", "off", "none", "minimal", "low", "medium",
             "high", "xhigh",

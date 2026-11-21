@@ -65,6 +65,24 @@ impl HiveApp {
         } else {
             Color::Muted.get(cx)
         };
+        let has_preview = preview.is_some();
+        let copy_key = format!("thinking:{id}:{index}");
+        let copied = self.is_copied(&copy_key);
+        let shine_key = format!("thinking:{id}:{index}");
+        let shine_label = block
+            .running
+            .then(|| self.live_activity.shine_labels.get(&shine_key).cloned())
+            .flatten();
+        let has_shine = shine_label.is_some();
+        let duration_text = if block.running {
+            block
+                .started_at
+                .map(|started| crate::live_activity::format_elapsed_seconds(started.elapsed().as_secs()))
+        } else {
+            block
+                .duration_ms
+                .map(crate::live_activity::format_duration_ms)
+        };
         v_flex()
             .min_w_0()
             .gap_1()
@@ -72,7 +90,7 @@ impl HiveApp {
                 Button::new(SharedString::from(format!("thinking-toggle-{row}-{index}")))
                     .custom(crate::palette::quiet_icon_variant(cx))
                     .compact()
-                    .h(px(22.))
+                    .h(px(24.))
                     .px_1p5()
                     .rounded_md()
                     .justify_start()
@@ -109,30 +127,51 @@ impl HiveApp {
                                 .size(px(12.))
                                 .text_color(accent_color),
                             )
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(if block.running {
-                                        Color::Text.get(cx)
-                                    } else if expanded {
-                                        Color::Secondary.get(cx)
-                                    } else {
-                                        Color::Muted.get(cx)
-                                    })
-                                    .child(label),
-                            )
+                            .when_some(shine_label, |row, entity| {
+                                row.child(entity)
+                            })
+                            .when(!has_shine, |row| {
+                                row.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(12.))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(if block.running {
+                                            Color::Text.get(cx)
+                                        } else if expanded {
+                                            Color::Secondary.get(cx)
+                                        } else {
+                                            Color::Muted.get(cx)
+                                        })
+                                        .child(label),
+                                )
+                            })
                             .when_some(preview, |row, summary| {
                                 row.child(
                                     div()
                                         .min_w_0()
+                                        .flex_1()
                                         .text_left()
                                         .overflow_hidden()
                                         .truncate()
                                         .text_size(px(12.))
                                         .text_color(Color::Muted.get(cx).opacity(0.75))
                                         .child(summary),
+                                )
+                            })
+                            .when(!has_preview, |row| row.child(div().flex_1()))
+                            .when_some(duration_text, |row, dur| {
+                                row.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(11.))
+                                        .font_features(crate::palette::tabular_nums())
+                                        .text_color(if block.running {
+                                            Color::Accent.get(cx)
+                                        } else {
+                                            Color::Muted.get(cx).opacity(0.8)
+                                        })
+                                        .child(dur),
                                 )
                             })
                             .when(!block.redacted, |row| {
@@ -146,8 +185,7 @@ impl HiveApp {
                                     .size(px(11.))
                                     .text_color(Color::Muted.get(cx).opacity(0.65)),
                                 )
-                            })
-                            .child(div().flex_1()),
+                            }),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.prepare_conversation_expansion(&id);
@@ -169,13 +207,11 @@ impl HiveApp {
             .when(expanded && !block.redacted, |view| {
                 let text = block.text.clone();
                 view.child(
-                    v_flex()
+                    div()
                         .min_w_0()
                         .ml(px(7.))
                         .pl_3()
-                        .pr_1()
-                        .py_1()
-                        .gap_1()
+                        .py_0p5()
                         .border_l_1()
                         .border_color(if block.running {
                             Color::Accent.get(cx).opacity(0.45)
@@ -184,34 +220,52 @@ impl HiveApp {
                         } else {
                             Color::Divider.get(cx)
                         })
-                        .text_size(px(12.5))
-                        .line_height(rems(1.55))
-                        .text_color(Color::Secondary.get(cx))
-                        .child(crate::text_reading::selectable_text(
-                            SharedString::from(format!("thinking-body-{row}-{index}")),
-                            text.clone(),
-                        ))
                         .child(
-                            h_flex().justify_end().child(
-                                Button::new(SharedString::from(format!(
-                                    "copy-thinking-{row}-{index}"
-                                )))
-                                .custom(crate::palette::subtle_icon_variant(cx))
-                                .compact()
-                                .h(px(22.))
-                                .w(px(22.))
+                            v_flex()
+                                .min_w_0()
                                 .rounded_md()
-                                .icon(Glyph::Copy)
-                                .accessibility_label(if english() {
-                                    format!("Copy thinking block {}", index + 1)
-                                } else {
-                                    format!("复制思考过程，第 {} 段", index + 1)
-                                })
-                                .tooltip(tr("复制思考过程"))
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
-                                })),
-                            ),
+                                .border_1()
+                                .border_color(Color::Divider.get(cx).opacity(0.75))
+                                .bg(Color::Inset.get(cx).opacity(0.42))
+                                .px_2p5()
+                                .py_2()
+                                .gap_1p5()
+                                .text_size(px(12.5))
+                                .line_height(rems(1.55))
+                                .text_color(Color::Secondary.get(cx))
+                                .child(crate::text_reading::selectable_text(
+                                    SharedString::from(format!("thinking-body-{row}-{index}")),
+                                    text.clone(),
+                                ))
+                                .child(
+                                    h_flex().justify_end().child(
+                                        Button::new(SharedString::from(format!(
+                                            "copy-thinking-{row}-{index}"
+                                        )))
+                                        .custom(crate::palette::subtle_icon_variant(cx))
+                                        .compact()
+                                        .h(px(22.))
+                                        .w(px(22.))
+                                        .rounded_md()
+                                        .icon(if copied { Glyph::Check } else { Glyph::Copy })
+                                        .accessibility_label(if english() {
+                                            format!("Copy thinking block {}", index + 1)
+                                        } else {
+                                            format!("复制思考过程，第 {} 段", index + 1)
+                                        })
+                                        .tooltip(if copied {
+                                            tr("已复制")
+                                        } else {
+                                            tr("复制思考过程")
+                                        })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                text.clone(),
+                                            ));
+                                            this.mark_copied(copy_key.clone(), cx);
+                                        })),
+                                    ),
+                                ),
                         ),
                 )
             })

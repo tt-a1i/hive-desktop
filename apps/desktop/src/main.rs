@@ -40,6 +40,7 @@ mod project_scripts;
 mod git_workspace;
 mod history_navigation;
 mod keybindings;
+mod live_activity;
 mod image_viewer;
 mod interactions;
 mod maintenance;

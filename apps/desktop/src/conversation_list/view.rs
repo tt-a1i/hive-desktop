@@ -4,6 +4,7 @@ use crate::{
     palette::Color,
 };
 use gpui_kit::{
+    assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
         menu::{ContextMenuExt, PopupMenuItem},
@@ -14,11 +15,45 @@ use gpui_kit::{
     *,
 };
 
+pub(crate) fn is_collapsible_user_message(body: &str) -> bool {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // ~552px body width inside 580px bubble at 15px font (100 units = 1px).
+    const LINE_WIDTH_UNITS: usize = 55_200;
+    let mut line_count = 0usize;
+    for line in trimmed.split('\n') {
+        let mut units = 0usize;
+        for ch in line.chars() {
+            let width = match ch {
+                'i' | 'l' | 'j' | 't' | 'f' | 'r' | 'I' | '!' | '|' | '.' | ',' | ':' | ';'
+                | '\'' | '`' | ' ' => 450,
+                '1' | '-' | '(' | ')' | '[' | ']' | '{' | '}' | '/' | '\\' => 675,
+                'W' | 'M' | '@' => 1_200,
+                _ if ch.is_ascii() => 870,
+                _ => 1_500,
+            };
+            units += width;
+            if line_count + units.max(1).div_ceil(LINE_WIDTH_UNITS) > 8 {
+                return true;
+            }
+        }
+        line_count += units.max(1).div_ceil(LINE_WIDTH_UNITS);
+        if line_count > 8 {
+            return true;
+        }
+    }
+    false
+}
+
 impl HiveApp {
     pub(crate) fn render_conversation_message(
         &self,
         i: usize,
         markdown: Option<&Entity<TextViewState>>,
+        merge_prev: bool,
+        merge_next: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let message = &self.messages[i];
@@ -168,6 +203,27 @@ impl HiveApp {
             })
             .when(is_plain_user, |bubble| {
                 bubble.ml_auto().max_w(px(580.)).items_end()
+            })
+            .when(is_plain_user && message.steered && !merge_prev, |view| {
+                view.child(
+                    h_flex()
+                        .id(("steer-badge", i))
+                        .items_center()
+                        .gap_1()
+                        .px_1p5()
+                        .py(px(1.))
+                        .rounded_full()
+                        .bg(Color::AccentSoft.get(cx))
+                        .text_size(px(10.5))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(Color::Accent.get(cx))
+                        .tooltip(move |window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(tr("插话引导当前回合"))
+                                .build(window, cx)
+                        })
+                        .child(Icon::new(Glyph::CornerDownRight).size(px(10.)))
+                        .child(tr("插话")),
+                )
             })
             .when(!hide_speaker_header, |view| {
                 view.child(
@@ -319,6 +375,11 @@ impl HiveApp {
                     } else {
                         message.display_body().to_owned()
                     };
+                    let collapsible = is_plain_user && is_collapsible_user_message(&body);
+                    let user_expanded = message.user_expanded || find_matched;
+                    let collapsed = collapsible && !user_expanded;
+                    let bubble_bg = Color::Bubble.get(cx);
+                    let toggle_id = message.id.clone();
                     view.child(
                         div()
                             .id(("message-body", i))
@@ -335,14 +396,73 @@ impl HiveApp {
                                 bubble
                                     .px_3p5()
                                     .py_2()
-                                    .rounded_2xl()
-                                    .bg(Color::Bubble.get(cx))
+                                    .rounded_tl(px(16.))
+                                    .rounded_bl(px(16.))
+                                    .rounded_tr(px(if merge_prev { 6. } else { 16. }))
+                                    .rounded_br(px(if merge_next { 6. } else { 16. }))
+                                    .bg(bubble_bg)
                                     .border_1()
                                     .border_color(Color::Divider.get(cx).opacity(0.65))
                                     .text_color(Color::Text.get(cx))
                             })
-                            .child(body),
+                            .when(collapsed, |bubble| {
+                                bubble
+                                    .relative()
+                                    .max_h(px(176.))
+                                    .overflow_hidden()
+                                    .child(body.clone())
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .left_0()
+                                            .right_0()
+                                            .bottom_0()
+                                            .h(px(28.))
+                                            .bg(linear_gradient(
+                                                180.,
+                                                linear_color_stop(bubble_bg.opacity(0.), 0.),
+                                                linear_color_stop(bubble_bg, 1.),
+                                            )),
+                                    )
+                            })
+                            .when(!collapsed, |bubble| bubble.child(body)),
                     )
+                    .when(collapsible && !find_matched, |view| {
+                        view.child(
+                            h_flex().w_full().justify_end().child(
+                                Button::new(("toggle-user-expand", i))
+                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(22.))
+                                    .px_2()
+                                    .rounded_full()
+                                    .icon(if user_expanded {
+                                        Glyph::ChevronUp
+                                    } else {
+                                        Glyph::ChevronDown
+                                    })
+                                    .label(if user_expanded {
+                                        tr("收起")
+                                    } else {
+                                        tr("展开全部")
+                                    })
+                                    .accessibility_label(if user_expanded {
+                                        tr("收起长消息")
+                                    } else {
+                                        tr("展开全部消息")
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.prepare_conversation_expansion(&toggle_id);
+                                        if let Some(msg) = this.message_mut(&toggle_id) {
+                                            msg.user_expanded = !msg.user_expanded;
+                                            msg.layout_revision += 1;
+                                        }
+                                        cx.notify();
+                                    })),
+                            ),
+                        )
+                    })
                 },
             )
             .when_some(
@@ -655,5 +775,257 @@ impl HiveApp {
                     }),
             )
             .child(self.render_interactions(cx))
+    }
+
+    pub(crate) fn render_turn_diff_card(
+        &self,
+        anchor_id: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(summary) = self.conversation_list.active_turn_diffs.get(anchor_id) else {
+            return div().into_any_element();
+        };
+        let file_count = summary.files.len();
+        let can_browse = self.can_browse_project_files();
+        let first_path = summary
+            .files
+            .first()
+            .map(|f| f.git_path.clone())
+            .unwrap_or_default();
+        let patch_changes = summary.tool_changes.clone();
+        let fallback_changes = summary.tool_changes.clone();
+        let extra_count = file_count.saturating_sub(4);
+        v_flex()
+            .id(SharedString::from(format!("turn-diff-{anchor_id}")))
+            .min_w_0()
+            .w_full()
+            .gap_1p5()
+            .px_3p5()
+            .py_2p5()
+            .rounded_xl()
+            .bg(Color::Card.get(cx))
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .flex_wrap()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .min_w_0()
+                            .items_center()
+                            .gap_1p5()
+                            .child(
+                                Icon::new(Glyph::FileDiff)
+                                    .flex_shrink_0()
+                                    .size(px(13.))
+                                    .text_color(Color::Muted.get(cx)),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(Color::Text.get(cx))
+                                    .child(tr("本轮改动")),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_xs()
+                                    .text_color(Color::Muted.get(cx))
+                                    .child(if english() {
+                                        format!(
+                                            "· {file_count} {}",
+                                            if file_count == 1 { "file" } else { "files" }
+                                        )
+                                    } else {
+                                        format!("· {file_count} 个文件")
+                                    }),
+                            )
+                            .child(
+                                h_flex()
+                                    .flex_shrink_0()
+                                    .items_center()
+                                    .gap_1()
+                                    .font_family(Theme::global(cx).mono_font_family.clone())
+                                    .font_features(crate::palette::tabular_nums())
+                                    .text_xs()
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(Color::Success.get(cx))
+                                            .child(format!("+{}", summary.total_additions)),
+                                    )
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(Color::Error.get(cx))
+                                            .child(format!("-{}", summary.total_deletions)),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_shrink_0()
+                            .items_center()
+                            .gap_1()
+                            .when(can_browse && !first_path.is_empty(), |row| {
+                                let open_path = first_path.clone();
+                                let open_fallback = fallback_changes.clone();
+                                row.child(
+                                    Button::new(SharedString::from(format!(
+                                        "turn-diff-git-{anchor_id}"
+                                    )))
+                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(22.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .icon(Glyph::FileDiff)
+                                    .label(tr("在 Git 中查看"))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if this.can_browse_project_files()
+                                            && !window.has_active_dialog(cx)
+                                        {
+                                            this.open_git_file_diff(
+                                                open_path.clone(),
+                                                true,
+                                                window,
+                                                cx,
+                                            );
+                                        } else {
+                                            this.open_turn_diff(open_fallback.clone(), window, cx);
+                                        }
+                                    })),
+                                )
+                            })
+                            .child(
+                                Button::new(SharedString::from(format!(
+                                    "turn-diff-patch-{anchor_id}"
+                                )))
+                                .custom(crate::palette::subtle_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(22.))
+                                .px_2()
+                                .rounded_md()
+                                .label(tr("查看本轮补丁"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_turn_diff(patch_changes.clone(), window, cx);
+                                })),
+                            ),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .gap_0p5()
+                    .children(summary.files.iter().take(4).enumerate().map(|(idx, file)| {
+                        let git_path = file.git_path.clone();
+                        let file_fallback = summary.tool_changes.clone();
+                        Button::new(SharedString::from(format!(
+                            "turn-diff-file-{anchor_id}-{idx}"
+                        )))
+                        .custom(crate::palette::quiet_icon_variant(cx))
+                        .compact()
+                        .h(px(24.))
+                        .px_1p5()
+                        .rounded_md()
+                        .w_full()
+                        .min_w_0()
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .items_center()
+                                .gap_1p5()
+                                .child(
+                                    Icon::new(Glyph::FileText)
+                                        .flex_shrink_0()
+                                        .size(px(12.))
+                                        .text_color(Color::Muted.get(cx)),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_left()
+                                        .truncate()
+                                        .text_xs()
+                                        .font_family(Theme::global(cx).mono_font_family.clone())
+                                        .text_color(Color::Secondary.get(cx))
+                                        .child(file.display_path.clone()),
+                                )
+                                .child(
+                                    h_flex()
+                                        .flex_shrink_0()
+                                        .items_center()
+                                        .gap_1()
+                                        .font_family(Theme::global(cx).mono_font_family.clone())
+                                        .font_features(crate::palette::tabular_nums())
+                                        .text_size(px(11.))
+                                        .child(
+                                            div()
+                                                .text_color(Color::Success.get(cx))
+                                                .child(format!("+{}", file.additions)),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_color(Color::Error.get(cx))
+                                                .child(format!("-{}", file.deletions)),
+                                        ),
+                                ),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if this.can_browse_project_files() && !window.has_active_dialog(cx) {
+                                this.open_git_file_diff(git_path.clone(), true, window, cx);
+                            } else {
+                                this.open_turn_diff(file_fallback.clone(), window, cx);
+                            }
+                        }))
+                    }))
+                    .when(extra_count > 0, |col| {
+                        col.child(
+                            div()
+                                .px_1p5()
+                                .pt_0p5()
+                                .text_size(px(11.))
+                                .text_color(Color::Muted.get(cx))
+                                .child(if english() {
+                                    format!("+{extra_count} more")
+                                } else {
+                                    format!("还有 {extra_count} 个文件")
+                                }),
+                        )
+                    }),
+            )
+            .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_collapsible_user_message;
+
+    #[test]
+    fn collapsible_user_message_thresholds_handle_chars_and_lines() {
+        assert!(!is_collapsible_user_message(""));
+        assert!(!is_collapsible_user_message("short prompt"));
+        assert!(!is_collapsible_user_message("a\nb\nc\nd\ne\nf\ng\nh"));
+        assert!(is_collapsible_user_message("a\nb\nc\nd\ne\nf\ng\nh\ni"));
+        assert!(!is_collapsible_user_message(&"x".repeat(400)));
+        assert!(is_collapsible_user_message(&"x".repeat(601)));
+        assert!(is_collapsible_user_message(&"中".repeat(320)));
+        assert!(!is_collapsible_user_message(&"i".repeat(601)));
+        assert!(!is_collapsible_user_message(&"l".repeat(601)));
+        assert!(!is_collapsible_user_message(&".".repeat(601)));
+        assert!(is_collapsible_user_message(&"i".repeat(1200)));
     }
 }

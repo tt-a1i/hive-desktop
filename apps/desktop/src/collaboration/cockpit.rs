@@ -1016,6 +1016,7 @@ mod tests {
 
     #[test]
     fn member_live_state_and_activity_summary_cover_tool_interaction_and_error() {
+        let _locale = crate::language::test_locale_guard();
         let tool_member = sample_member(
             "working",
             Some(MemberDesktopActivity {
